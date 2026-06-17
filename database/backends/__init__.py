@@ -59,6 +59,17 @@ class BaseBackend(ABC):
         pass
 
     @abstractmethod
+    def update_match_applied(self, match_id: str, applied: int,
+                             applied_at: Optional[str] = None) -> None:
+        """Mark a match as applied / un-applied. v2.1 M2."""
+        pass
+
+    @abstractmethod
+    def update_match_feedback(self, match_id: str, feedback: str) -> None:
+        """Update user_feedback (e.g. 'read', 'rejected', 'accepted'). v2.1 M2."""
+        pass
+
+    @abstractmethod
     def insert_optimization(self, data: Dict) -> str:
         pass
 

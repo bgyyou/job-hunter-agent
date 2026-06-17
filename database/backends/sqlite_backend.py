@@ -259,6 +259,33 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
+    def update_match_applied(self, match_id: str, applied: int,
+                             applied_at: Optional[str] = None) -> None:
+        """v2.1 M2: 投递成功后回写 applied=1 + 时间戳。"""
+        if applied_at is None:
+            applied_at = datetime.now().isoformat()
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE match_history SET applied = ?, applied_at = ? WHERE id = ?",
+                (applied, applied_at, match_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_match_feedback(self, match_id: str, feedback: str) -> None:
+        """v2.1 M2: 用户反馈（accepted / read / rejected / interview）。"""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE match_history SET user_feedback = ? WHERE id = ?",
+                (feedback, match_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     # ==================== Optimizations ====================
 
     def insert_optimization(self, data: Dict) -> str:

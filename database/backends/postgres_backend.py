@@ -274,6 +274,27 @@ class PostgresBackend(BaseBackend):
         rows = self._fetchall(query, params)
         return [self._deserialize_list(r, ["matched_skills", "missing_skills", "gaps", "recommendations", "skill_mapping"]) for r in rows]
 
+    def update_match_applied(self, match_id: str, applied: int,
+                             applied_at: Optional[str] = None) -> None:
+        """v2.1 M2: 投递成功后回写 applied + 时间戳。Postgres 的 applied_at 为 TIMESTAMPTZ。"""
+        if applied_at is None:
+            self._execute(
+                "UPDATE match_history SET applied = %s, applied_at = NOW() WHERE id = %s",
+                (applied, match_id),
+            )
+        else:
+            self._execute(
+                "UPDATE match_history SET applied = %s, applied_at = %s WHERE id = %s",
+                (applied, applied_at, match_id),
+            )
+
+    def update_match_feedback(self, match_id: str, feedback: str) -> None:
+        """v2.1 M2: 用户反馈（accepted / read / rejected / interview）。"""
+        self._execute(
+            "UPDATE match_history SET user_feedback = %s WHERE id = %s",
+            (feedback, match_id),
+        )
+
     # ==================== Optimizations ====================
 
     def insert_optimization(self, data: Dict) -> str:

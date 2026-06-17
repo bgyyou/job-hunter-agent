@@ -114,10 +114,18 @@ if 'agent' not in st.session_state:
     st.session_state.agent = None
 if 'resume_data' not in st.session_state:
     st.session_state.resume_data = None
+if 'resume_id' not in st.session_state:
+    st.session_state.resume_id = None
 if 'jd_result' not in st.session_state:
     st.session_state.jd_result = None
+if 'jd_id' not in st.session_state:
+    st.session_state.jd_id = None
 if 'match_result' not in st.session_state:
     st.session_state.match_result = None
+if 'last_match_id' not in st.session_state:
+    st.session_state.last_match_id = None
+if 'last_opt_ids' not in st.session_state:
+    st.session_state.last_opt_ids = []  # v2.1 M2: 最近一次生成建议的 opt_id 列表
 if 'optimized_resume' not in st.session_state:
     st.session_state.optimized_resume = None
 if 'cover_letter' not in st.session_state:
@@ -262,8 +270,15 @@ with st.sidebar:
 st.markdown('<div class="main-header">💼 Job Hunter</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">智能求职助手 - 让找工作更简单</div>', unsafe_allow_html=True)
 
-# 标签页
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📄 上传简历", "🎯 分析职位", "📊 匹配度分析", "🚀 生成优化内容", "📚 知识库"])
+# 标签页（v2.1 M2: 新增 📈 投递历史）
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📄 上传简历",
+    "🎯 分析职位",
+    "📊 匹配度分析",
+    "🚀 生成优化内容",
+    "📚 知识库",
+    "📈 投递历史",
+])
 
 # =====================================================
 # 标签页 1: 上传简历
@@ -298,10 +313,11 @@ with tab1:
 
                             st.session_state.resume_data = resume_data
 
-                            # 持久化到数据库
+                            # 持久化到数据库（v2.1 M2：保留 resume_id 供后续 match/optimization 关联）
                             db = st.session_state.db
-                            db.insert_resume(resume_data)
-                            st.success("✅ 简历解析成功并已保存！")
+                            resume_id = db.insert_resume(resume_data)
+                            st.session_state.resume_id = resume_id
+                            st.success(f"✅ 简历解析成功并已保存！(ID: {resume_id[:8]})")
                         except Exception as e:
                             st.error(f"解析失败: {e}")
 
@@ -390,7 +406,8 @@ with tab2:
                     clf = Classifier()
                     tags = clf.classify(jd_for_db["title"], jd_text)
                     jd_for_db.update(tags)
-                    db.insert_jd(jd_for_db)
+                    jd_id = db.insert_jd(jd_for_db)
+                    st.session_state.jd_id = jd_id  # v2.1 M2: 供 Tab3 写 match_history
 
                     # 显示分类结果
                     st.info(f"📋 自动分类: **{classification['category']}** (置信度: {int(classification['confidence']*100)}%)")
@@ -467,6 +484,27 @@ with tab2:
                     loop.close()
 
                     st.session_state.jd_result = jd_result
+
+                    # v2.1 M2: 同步落到 jobhunter_v2.db，供 Tab3 写 match_history
+                    db = st.session_state.db
+                    jd_for_db = {
+                        "url": jd_url,
+                        "title": jd_result.get("title", ""),
+                        "company": jd_result.get("company", ""),
+                        "location": jd_result.get("location", ""),
+                        "salary_str": jd_result.get("salary_range"),
+                        "raw_text": jd_result.get("raw_text", jd_url),
+                        "source": "url",
+                        "requirements": jd_result.get("core_requirements", []),
+                        "preferred_requirements": jd_result.get("preferred_requirements", []),
+                        "skills_required": jd_result.get("keywords", []),
+                        "implicit_requirements": jd_result.get("implicit_requirements", ""),
+                        "parsed_data": jd_result,
+                    }
+                    from database.classifier import Classifier as _Clf
+                    _tags = _Clf().classify(jd_for_db["title"], jd_for_db["raw_text"])
+                    jd_for_db.update(_tags)
+                    st.session_state.jd_id = db.insert_jd(jd_for_db)
 
                     # 显示分类结果
                     st.info(f"📋 自动分类: **{classification['category']}** (置信度: {int(classification['confidence']*100)}%)")
@@ -553,6 +591,62 @@ with tab3:
 
                     st.session_state.match_result = match_result.get('match_result')
                     st.success("✅ 匹配度分析成功！")
+
+                    # v2.1 M2: 落库 match_history
+                    mr_payload = match_result.get('match_result') or {}
+                    rid = st.session_state.get('resume_id')
+                    jid = st.session_state.get('jd_id')
+                    if rid and jid:
+                        try:
+                            db = st.session_state.db
+                            match_id = db.insert_match({
+                                'resume_id': rid,
+                                'jd_id': jid,
+                                'score': int(mr_payload.get('score', 0) or 0),
+                                'reasoning': mr_payload.get('reasoning', ''),
+                                'matched_skills': mr_payload.get('matching_skills', []),
+                                'missing_skills': mr_payload.get('missing_skills', []),
+                                'gaps': mr_payload.get('gaps', []),
+                                'recommendations': mr_payload.get('recommendations', []),
+                                'skill_mapping': mr_payload.get('skill_mapping', []),
+                                'should_apply': 1 if mr_payload.get('should_apply') else 0,
+                            })
+                            st.session_state.last_match_id = match_id
+                            st.caption(f"💾 已记录匹配 ID: `{match_id[:8]}` (Tab6 投递历史可查)")
+
+                            # v2.1 M2: 同步把每条 recommendation 写入 optimizations 表
+                            opt_ids = []
+                            for rec in mr_payload.get('recommendations', []) or []:
+                                if not isinstance(rec, dict):
+                                    continue
+                                rec_type = rec.get('type', 'modify')
+                                # 兼容三种 type：modify / delete / suggest_add
+                                if rec_type == 'suggest_add':
+                                    suggested = rec.get('suggestion', '')
+                                    original = ''
+                                else:
+                                    suggested = rec.get('suggested', '')
+                                    original = rec.get('original', '')
+                                try:
+                                    opt_id = db.insert_optimization({
+                                        'resume_id': rid,
+                                        'jd_id': jid,
+                                        'optimization_type': rec_type,
+                                        'section': rec.get('section', ''),
+                                        'original_content': original,
+                                        'suggested_content': suggested,
+                                        'reason': rec.get('reason', ''),
+                                    })
+                                    opt_ids.append(opt_id)
+                                except Exception as exc:
+                                    logger.warning(f"optimization 写入失败: {exc}")
+                            st.session_state.last_opt_ids = opt_ids
+                            if opt_ids:
+                                st.caption(f"💾 已记录 {len(opt_ids)} 条优化建议（可在下方勾选「采纳」）")
+                        except Exception as exc:
+                            logger.warning(f"match_history 写入失败: {exc}")
+                    else:
+                        st.warning("⚠️ resume_id 或 jd_id 缺失，跳过 match_history 落库（请重新解析简历/JD）")
 
                     # 显示 LLM 调用信息
                     if hasattr(agent.llm_client, 'get_stats'):
@@ -650,9 +744,10 @@ with tab3:
 
             # ============ 详细优化建议 ============
             recs = mr.get("recommendations", [])
+            opt_ids_for_recs = st.session_state.get('last_opt_ids', [])
             if recs and len(recs) > 0 and isinstance(recs[0], dict):
                 st.markdown("### ✍️ 详细优化建议")
-                st.caption("每一条建议都说明了「改什么」和「为什么这样改」")
+                st.caption("每一条建议都说明了「改什么」和「为什么这样改」。勾选「✅ 采纳」会落库到 optimizations.user_adopted")
 
                 for i, rec in enumerate(recs):
                     rec_type = rec.get('type', 'modify')
@@ -687,6 +782,24 @@ with tab3:
                             st.markdown(f"<div style='background-color: #0c4a6e; color: white; padding:10px; border-radius:5px;'>{rec.get('suggestion', '')}</div>", unsafe_allow_html=True)
                             st.markdown("**💡 为什么补充:**")
                             st.info(rec.get('reason', ''))
+
+                        # v2.1 M2: 采纳开关
+                        if i < len(opt_ids_for_recs):
+                            opt_id_local = opt_ids_for_recs[i]
+                            adopted_now = st.toggle(
+                                "✅ 采纳此建议",
+                                value=False,
+                                key=f"adopt_{opt_id_local}",
+                                help=f"opt_id: {opt_id_local}",
+                            )
+                            if adopted_now != st.session_state.get(f"_adopted_state_{opt_id_local}", False):
+                                try:
+                                    st.session_state.db.update_optimization_adopted(
+                                        opt_id_local, 1 if adopted_now else 0
+                                    )
+                                    st.session_state[f"_adopted_state_{opt_id_local}"] = adopted_now
+                                except Exception as exc:
+                                    logger.warning(f"采纳状态写库失败: {exc}")
             else:
                 # 兼容旧格式
                 if recs:
@@ -1165,3 +1278,89 @@ Job 2: AI Engineer @ Company 2
     if st.button("清空当前数据库", type="primary"):
         count = kb.clear_database()
         st.success(f"已清空数据库，删除了 {count} 个 JD")
+
+# =====================================================
+# 标签页 6: 投递历史 (v2.1 M2)
+# =====================================================
+with tab6:
+    st.header("📈 投递历史")
+    st.caption("所有匹配分析结果都在这里，可标记投递状态、记录反馈，复盘求职转化率。")
+
+    db_t6 = st.session_state.db
+    matches = db_t6.list_matches(limit=200)
+
+    if not matches:
+        st.info("还没有匹配记录。在 Tab3 完成一次匹配分析后，这里会出现条目。")
+    else:
+        # 总览统计
+        total = len(matches)
+        applied = sum(1 for m in matches if m.get("applied"))
+        replied = sum(1 for m in matches if (m.get("user_feedback") or "") in ("replied", "interview", "offer"))
+        col_a, col_b, col_c, col_d = st.columns(4)
+        col_a.metric("总匹配数", total)
+        col_b.metric("已投递", applied)
+        col_c.metric("有回复", replied)
+        col_d.metric("投递率", f"{(applied/total*100):.0f}%" if total else "0%")
+
+        st.divider()
+
+        for m in matches:
+            jd_obj = db_t6.get_jd(m["jd_id"]) or {}
+            title = jd_obj.get("title", "(JD 已删除)")
+            company = jd_obj.get("company", "")
+            score = m.get("score", 0)
+            applied_flag = bool(m.get("applied"))
+            feedback = m.get("user_feedback") or "未反馈"
+            opts = db_t6.list_optimizations(jd_id=m["jd_id"])
+            adopted = sum(1 for o in opts if o.get("user_adopted"))
+            adopt_rate = f"{adopted}/{len(opts)}" if opts else "0/0"
+
+            header = f"{'✅' if applied_flag else '⚪️'} {score}% · {title} @ {company} — 反馈: {feedback} · 采纳率 {adopt_rate}"
+            with st.expander(header, expanded=False):
+                col1, col2, col3 = st.columns([2, 2, 2])
+                with col1:
+                    st.markdown(f"**Match ID**: `{m['id'][:8]}`")
+                    st.markdown(f"**创建时间**: {m.get('created_at', '')}")
+                    if m.get("applied_at"):
+                        st.markdown(f"**投递时间**: {m['applied_at']}")
+                with col2:
+                    st.markdown("**操作**:")
+                    if not applied_flag:
+                        if st.button("📮 标记已投递", key=f"apply_{m['id']}"):
+                            db_t6.update_match_applied(m["id"], 1)
+                            st.experimental_rerun()
+                    else:
+                        if st.button("↩️ 撤销投递", key=f"unapply_{m['id']}"):
+                            db_t6.update_match_applied(m["id"], 0, applied_at=None)
+                            st.experimental_rerun()
+                with col3:
+                    st.markdown("**反馈状态**:")
+                    fb_options = ["未反馈", "已读未回", "已回复", "进入面试", "拿到 Offer", "拒绝"]
+                    fb_map = {
+                        "未反馈": None,
+                        "已读未回": "read",
+                        "已回复": "replied",
+                        "进入面试": "interview",
+                        "拿到 Offer": "offer",
+                        "拒绝": "rejected",
+                    }
+                    rev_map = {v: k for k, v in fb_map.items()}
+                    current_label = rev_map.get(m.get("user_feedback"), "未反馈")
+                    new_label = st.selectbox(
+                        "选择反馈",
+                        fb_options,
+                        index=fb_options.index(current_label),
+                        key=f"fb_{m['id']}",
+                        label_visibility="collapsed",
+                    )
+                    if new_label != current_label:
+                        target = fb_map[new_label]
+                        if target is None:
+                            db_t6.update_match_feedback(m["id"], "")
+                        else:
+                            db_t6.update_match_feedback(m["id"], target)
+                        st.experimental_rerun()
+
+                if m.get("reasoning"):
+                    st.markdown("**匹配理由**:")
+                    st.caption(m["reasoning"])
