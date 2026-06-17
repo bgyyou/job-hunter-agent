@@ -14,11 +14,50 @@ from database.backends import BaseBackend
 class SqliteBackend(BaseBackend):
     """SQLite implementation of the database backend."""
 
+    # v2.1 M3.3: chunk_type 检索加权
+    _CHUNK_TYPE_WEIGHT = {
+        "responsibility": 1.2,
+        "requirement": 1.3,
+        "overview": 0.8,
+        "nice_to_have": 0.5,
+        "full": 1.0,
+    }
+
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
             db_path = str(Path(__file__).parent.parent.parent / "data" / "jobhunter_v2.db")
         self.db_path = db_path
         self._init_db()
+
+    # v2.1 M3.3: 嵌入向量 ↔ BLOB 互转
+    @staticmethod
+    def _embedding_to_blob(embedding) -> Optional[bytes]:
+        if embedding is None:
+            return None
+        if isinstance(embedding, (bytes, bytearray)):
+            return bytes(embedding)
+        try:
+            return json.dumps(list(embedding)).encode("utf-8")
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _blob_to_embedding(blob) -> Optional[List[float]]:
+        if blob is None:
+            return None
+        if isinstance(blob, (bytes, bytearray)):
+            try:
+                return json.loads(bytes(blob).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+        if isinstance(blob, str):
+            try:
+                return json.loads(blob)
+            except json.JSONDecodeError:
+                return None
+        if isinstance(blob, list):
+            return blob
+        return None
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -210,7 +249,13 @@ class SqliteBackend(BaseBackend):
     def soft_delete_jd(self, jd_id: str) -> None:
         conn = self._get_conn()
         try:
-            conn.execute("UPDATE jds SET deleted_at = ? WHERE id = ?", (datetime.now().isoformat(), jd_id))
+            now = datetime.now().isoformat()
+            conn.execute("UPDATE jds SET deleted_at = ? WHERE id = ?", (now, jd_id))
+            # v2.1 M3: 级联软删 knowledge_chunks，避免向量检索命中已删 JD 的残骸
+            conn.execute(
+                "UPDATE knowledge_chunks SET deleted_at = ? WHERE jd_id = ? AND deleted_at IS NULL",
+                (now, jd_id),
+            )
             conn.commit()
         finally:
             conn.close()
@@ -334,6 +379,10 @@ class SqliteBackend(BaseBackend):
 
     def insert_chunk(self, data: Dict) -> str:
         chunk_id = data.get("id") or str(uuid.uuid4())
+        emb_blob = self._embedding_to_blob(data.get("embedding"))
+        emb_dim = data.get("embedding_dim")
+        if emb_dim is None and isinstance(data.get("embedding"), (list, tuple)):
+            emb_dim = len(data["embedding"])
         conn = self._get_conn()
         try:
             conn.execute(
@@ -345,7 +394,7 @@ class SqliteBackend(BaseBackend):
                  data["chunk_index"], data["chunk_text"],
                  data.get("chunk_type", "full"),
                  self._json_serialize(data.get("keywords", [])),
-                 data.get("embedding"), data.get("embedding_dim"),
+                 emb_blob, emb_dim,
                  data.get("context", ""), self._json_serialize(data.get("heading_path", []))),
             )
             conn.commit()
@@ -361,6 +410,10 @@ class SqliteBackend(BaseBackend):
                 chunk["jd_id"] = jd_id
                 chunk["chunk_index"] = i
                 chunk_id = chunk.get("id") or str(uuid.uuid4())
+                emb_blob = self._embedding_to_blob(chunk.get("embedding"))
+                emb_dim = chunk.get("embedding_dim")
+                if emb_dim is None and isinstance(chunk.get("embedding"), (list, tuple)):
+                    emb_dim = len(chunk["embedding"])
                 conn.execute(
                     """INSERT INTO knowledge_chunks
                        (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
@@ -369,7 +422,7 @@ class SqliteBackend(BaseBackend):
                     (chunk_id, chunk.get("user_id", "default"), jd_id, i,
                      chunk["chunk_text"], chunk.get("chunk_type", "full"),
                      self._json_serialize(chunk.get("keywords", [])),
-                     chunk.get("embedding"), chunk.get("embedding_dim"),
+                     emb_blob, emb_dim,
                      chunk.get("context", ""), self._json_serialize(chunk.get("heading_path", []))),
                 )
                 ids.append(chunk_id)
@@ -388,6 +441,7 @@ class SqliteBackend(BaseBackend):
                 d = self._row_to_dict(row)
                 d["keywords"] = self._json_deserialize(d["keywords"])
                 d["heading_path"] = self._json_deserialize(d.get("heading_path", "[]"))
+                d["embedding"] = self._blob_to_embedding(d.get("embedding"))
                 results.append(d)
             return results
         finally:
@@ -435,11 +489,74 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-    # ==================== Search (no-op for SQLite) ====================
+    # ==================== Vector Search ====================
 
     def search_similar_chunks(self, query_text: str, top_k: int = 5,
                               filter_chunk_type: Optional[str] = None,
                               user_id: Optional[str] = None) -> List[Dict]:
+        """v2.1 M3.3: 本地 Embedder + numpy cosine + chunk_type 加权。
+
+        优先走向量检索；缺包/缺向量时降级 LIKE。
+        """
+        try:
+            import numpy as np  # noqa: F401
+            from tools.embedder import Embedder
+            embedder = Embedder()
+            q_vec = embedder.embed(query_text)
+        except Exception as exc:
+            logger.warning(f"Embedder unavailable, fallback to LIKE search: {exc}")
+            return self._like_search_chunks(query_text, top_k, filter_chunk_type, user_id)
+
+        conn = self._get_conn()
+        try:
+            conditions = ["deleted_at IS NULL", "embedding IS NOT NULL"]
+            params: list = []
+            if filter_chunk_type:
+                conditions.append("chunk_type = ?"); params.append(filter_chunk_type)
+            if user_id:
+                conditions.append("user_id = ?"); params.append(user_id)
+            query = "SELECT * FROM knowledge_chunks WHERE " + " AND ".join(conditions)
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+
+        import numpy as np
+        q = np.asarray(q_vec, dtype=np.float32)
+        q_norm = float(np.linalg.norm(q)) or 1.0
+
+        scored: List[tuple] = []
+        for row in rows:
+            d = self._row_to_dict(row)
+            vec = self._blob_to_embedding(d.get("embedding"))
+            if not vec:
+                continue
+            v = np.asarray(vec, dtype=np.float32)
+            if v.shape != q.shape:
+                continue
+            v_norm = float(np.linalg.norm(v)) or 1.0
+            cos = float(np.dot(q, v) / (q_norm * v_norm))
+            ct = d.get("chunk_type", "full")
+            weight = self._CHUNK_TYPE_WEIGHT.get(ct, 1.0)
+            ranked = cos * weight
+            scored.append((ranked, cos, ct, weight, d))
+
+        scored.sort(key=lambda t: t[0], reverse=True)
+        results: List[Dict] = []
+        for ranked, cos, ct, weight, d in scored[:top_k]:
+            d["keywords"] = self._json_deserialize(d.get("keywords"))
+            d["heading_path"] = self._json_deserialize(d.get("heading_path", "[]"))
+            d["embedding"] = None  # 不回传以避免 payload 膨胀
+            d["similarity"] = round(cos, 4)
+            d["chunk_type"] = ct
+            d["chunk_weight"] = weight
+            d["ranked_score"] = round(ranked, 4)
+            d.setdefault("metadata", {})
+            results.append(d)
+        return results
+
+    def _like_search_chunks(self, query_text: str, top_k: int,
+                            filter_chunk_type: Optional[str],
+                            user_id: Optional[str]) -> List[Dict]:
         """SQLite fallback: return nearest text chunks via LIKE."""
         conn = self._get_conn()
         try:
@@ -458,8 +575,9 @@ class SqliteBackend(BaseBackend):
                 d = self._row_to_dict(row)
                 d["keywords"] = self._json_deserialize(d["keywords"])
                 d["heading_path"] = self._json_deserialize(d.get("heading_path", "[]"))
-                d["similarity"] = 0.0  # SQLite text search has no similarity score
-                d.setdefault("metadata", {})  # ensure required key exists
+                d["embedding"] = None
+                d["similarity"] = 0.0
+                d.setdefault("metadata", {})
                 results.append(d)
             return results
         finally:

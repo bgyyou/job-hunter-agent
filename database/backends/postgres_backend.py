@@ -236,7 +236,13 @@ class PostgresBackend(BaseBackend):
         return [self._deserialize_list(r, ["requirements", "preferred_requirements", "skills_required", "parsed_data"]) for r in rows]
 
     def soft_delete_jd(self, jd_id: str) -> None:
-        self._execute("UPDATE jds SET deleted_at = %s WHERE id = %s", (datetime.now().isoformat(), jd_id))
+        now = datetime.now().isoformat()
+        self._execute("UPDATE jds SET deleted_at = %s WHERE id = %s", (now, jd_id))
+        # v2.1 M3: 级联软删 knowledge_chunks
+        self._execute(
+            "UPDATE knowledge_chunks SET deleted_at = %s WHERE jd_id = %s AND deleted_at IS NULL",
+            (now, jd_id),
+        )
 
     # ==================== Match History ====================
 
@@ -432,7 +438,16 @@ class PostgresBackend(BaseBackend):
     # ================================================================
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
-        """Embed text using OpenAI-compatible API (shared between insert & search)."""
+        """v2.1 M3.3: 优先用本地 Embedder（BGE-small-zh, 512 维）。
+
+        本地不可用时再回退到 OpenAI 兼容 API。
+        """
+        try:
+            from tools.embedder import Embedder
+            return Embedder().embed(text)
+        except Exception as exc:
+            logger.warning(f"Local embedder unavailable, fallback to remote API: {exc}")
+
         base_url = os.environ.get("EMBEDDING_URL", "")
         api_key = os.environ.get("EMBEDDING_API_KEY", "")
         if not base_url or not api_key:
@@ -614,6 +629,15 @@ class PostgresBackend(BaseBackend):
         )
         return jd_id
 
+    # v2.1 M3.3: chunk_type 检索加权（与 SqliteBackend 一致）
+    _CHUNK_TYPE_WEIGHT = {
+        "responsibility": 1.2,
+        "requirement": 1.3,
+        "overview": 0.8,
+        "nice_to_have": 0.5,
+        "full": 1.0,
+    }
+
     def search_similar_chunks(
         self,
         query_text: str,
@@ -621,10 +645,11 @@ class PostgresBackend(BaseBackend):
         filter_chunk_type: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> List[Dict]:
-        """Vector similarity search over chunks_vector table.
+        """v2.1 M3.3: pgvector cosine + chunk_type 加权检索 knowledge_chunks。
 
-        Returns chunks with: chunk_text, context, heading_path, metadata, similarity.
-        Falls back to text search if embedding is unavailable.
+        - 走 M3 写入的 knowledge_chunks（不是历史 chunks_vector）
+        - 取 top_k * 3 候选后用 Python 加权排序，避免 ORDER BY 表达式失效
+        - 兜底文本 LIKE
         """
         try:
             vec = self._get_embedding(query_text)
@@ -637,42 +662,55 @@ class PostgresBackend(BaseBackend):
 
         vec_str = self._embedding_to_pgvector(vec)
 
-        # Build optional filter conditions dynamically
-        filter_parts: List[str] = []
+        filter_parts: List[str] = ["deleted_at IS NULL", "embedding IS NOT NULL"]
         filter_vals: list = []
         if filter_chunk_type:
-            filter_parts.append("metadata->>'chunk_type' = %s")
+            filter_parts.append("chunk_type = %s")
             filter_vals.append(filter_chunk_type)
         if user_id:
-            filter_parts.append("metadata->>'user_id' = %s")
+            filter_parts.append("user_id = %s")
             filter_vals.append(user_id)
 
-        where_sql = ""
-        if filter_parts:
-            where_sql = " AND " + " AND ".join(filter_parts)
+        where_sql = " AND ".join(filter_parts)
+        candidate_k = max(top_k * 3, top_k)
 
         query = f"""
-            SELECT id, jd_id, chunk_index, chunk_text, chunk_context,
-                   embedding, metadata, heading_path,
+            SELECT id, jd_id, chunk_index, chunk_text, chunk_type, keywords,
+                   context, heading_path,
                    1 - (embedding <=> %s::vector) AS similarity
-            FROM chunks_vector
-            WHERE embedding IS NOT NULL{where_sql}
+            FROM knowledge_chunks
+            WHERE {where_sql}
             ORDER BY embedding <=> %s::vector
             LIMIT %s
         """
-        search_params = [vec_str, vec_str, top_k] + filter_vals
+        search_params = [vec_str] + filter_vals + [vec_str, candidate_k]
 
         rows = self._fetchall(query, search_params)
-        results = []
+
+        scored: List[tuple] = []
         for row in rows:
-            result = {
+            cos = float(row.get("similarity", 0.0) or 0.0)
+            ct = row.get("chunk_type", "full") or "full"
+            weight = self._CHUNK_TYPE_WEIGHT.get(ct, 1.0)
+            scored.append((cos * weight, cos, ct, weight, row))
+
+        scored.sort(key=lambda t: t[0], reverse=True)
+        results: List[Dict] = []
+        for ranked, cos, ct, weight, row in scored[:top_k]:
+            results.append({
                 "chunk_text": row.get("chunk_text", ""),
-                "context": row.get("chunk_context", ""),
+                "context": row.get("context", ""),
                 "heading_path": row.get("heading_path"),
-                "metadata": self._json_deserialize(row.get("metadata")),
-                "similarity": round(float(row.get("similarity", 0.0)), 4),
-            }
-            results.append(result)
+                "keywords": self._json_deserialize(row.get("keywords")),
+                "chunk_type": ct,
+                "chunk_weight": weight,
+                "similarity": round(cos, 4),
+                "ranked_score": round(ranked, 4),
+                "metadata": {
+                    "jd_id": row.get("jd_id"),
+                    "chunk_index": row.get("chunk_index"),
+                },
+            })
         return results
 
     def _embed_text_sync(self, text: str, url: str, key: str) -> list:

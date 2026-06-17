@@ -411,6 +411,15 @@ with tab2:
                     jd_id = db.insert_jd(jd_for_db)
                     st.session_state.jd_id = jd_id  # v2.1 M2: 供 Tab3 写 match_history
 
+                    # v2.1 M3.4: JD 入库后语义切分 + 向量化
+                    try:
+                        from tools.jd_indexer import embed_and_store_jd_chunks
+                        n_chunks = embed_and_store_jd_chunks(db, jd_id, jd_text)
+                        if n_chunks:
+                            st.caption(f"🧩 已切分 {n_chunks} 个语义 chunk 并向量化")
+                    except Exception as _ex:
+                        st.caption(f"⚠️ 向量化失败：{_ex}")
+
                     # 显示分类结果
                     st.info(f"📋 自动分类: **{classification['category']}** (置信度: {int(classification['confidence']*100)}%)")
                     if classification['reasoning']:
@@ -507,6 +516,17 @@ with tab2:
                     _tags = _Clf().classify(jd_for_db["title"], jd_for_db["raw_text"])
                     jd_for_db.update(_tags)
                     st.session_state.jd_id = db.insert_jd(jd_for_db)
+
+                    # v2.1 M3.4: JD 入库后语义切分 + 向量化
+                    try:
+                        from tools.jd_indexer import embed_and_store_jd_chunks
+                        n_chunks = embed_and_store_jd_chunks(
+                            db, st.session_state.jd_id, jd_for_db["raw_text"]
+                        )
+                        if n_chunks:
+                            st.caption(f"🧩 已切分 {n_chunks} 个语义 chunk 并向量化")
+                    except Exception as _ex:
+                        st.caption(f"⚠️ 向量化失败：{_ex}")
 
                     # 显示分类结果
                     st.info(f"📋 自动分类: **{classification['category']}** (置信度: {int(classification['confidence']*100)}%)")

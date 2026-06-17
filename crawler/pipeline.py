@@ -113,6 +113,14 @@ class CrawlPipeline:
                         f"'{cleaned['title']}' @ {cleaned['company']} (id={jd_id})")
         except Exception as exc:
             logger.error(f"[Pipeline] Failed to insert JD: {exc}")
+            return
+
+        # v2.1 M3.4: JD 入库后语义切分 + 向量化
+        try:
+            from tools.jd_indexer import embed_and_store_jd_chunks
+            embed_and_store_jd_chunks(self.db, jd_id, cleaned.get("raw_text", ""))
+        except Exception as exc:
+            logger.warning(f"[Pipeline] Indexing failed for {jd_id}: {exc}")
 
     @staticmethod
     def _clean(job: Dict[str, Any]) -> Dict[str, Any]:

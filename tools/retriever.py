@@ -39,6 +39,7 @@ class Retriever:
         top_k: int = 5,
         filter_chunk_type: Optional[str] = None,
         user_id: Optional[str] = None,
+        min_similarity: float = 0.55,
     ) -> List[Dict]:
         """Search for chunks similar to *query* using vector embeddings.
 
@@ -48,6 +49,8 @@ class Retriever:
             filter_chunk_type: If set, only return chunks of this type
                                (e.g. "responsibility").
             user_id: If set, scope results to this user.
+            min_similarity: v2.1 M3.5 — 余弦相似度阈值，低于此值不返回。
+                            设 0.0 可关闭过滤。
 
         Returns:
             List of dicts, each containing at least:
@@ -55,8 +58,11 @@ class Retriever:
             - ``chunk_text`` — raw chunk content
             - ``context`` — context description
             - ``heading_path`` — ancestor heading list
+            - ``chunk_type`` — overview/responsibility/requirement/nice_to_have
+            - ``chunk_weight`` — chunk_type 权重
             - ``metadata`` — dict with source/title/version info
             - ``similarity`` — float in [0, 1]
+            - ``ranked_score`` — similarity * chunk_weight（排序依据）
 
             Empty list if the backend does not support vector search
             or no results are found.
@@ -81,17 +87,23 @@ class Retriever:
         # Normalize: ensure every result has the required keys
         normalized = []
         for r in results:
+            sim = float(r.get("similarity", 0.0))
+            if sim < min_similarity:
+                continue
             entry = {
                 "chunk_text": r.get("chunk_text", ""),
                 "context": r.get("context", r.get("chunk_context", "")),
                 "heading_path": r.get("heading_path", []),
+                "chunk_type": r.get("chunk_type", "full"),
+                "chunk_weight": float(r.get("chunk_weight", 1.0)),
                 "metadata": r.get("metadata", {}),
-                "similarity": float(r.get("similarity", 0.0)),
+                "similarity": sim,
+                "ranked_score": float(r.get("ranked_score", sim)),
             }
             normalized.append(entry)
 
         logger.info(
-            f"Retriever: returned {len(normalized)} results for "
-            f"'{query[:50]}...' (top_k={top_k})"
+            f"Retriever: returned {len(normalized)}/{len(results)} results "
+            f"for '{query[:50]}...' (top_k={top_k}, min_sim={min_similarity})"
         )
         return normalized

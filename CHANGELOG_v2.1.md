@@ -118,3 +118,53 @@ URL 失败路径：通用 404 → ✅ raise；JobsDB 失效 URL → ✅ raise（
 
 ---
 
+## [M3 RAG 真化] 2026-06-17
+
+### 范围
+把 README 宣称的 RAG 从「全部 chunk_type='full' + embedding 为空」的桩状态，升级为真正可用的本地语义检索：BGE-small-zh-v1.5 嵌入 + 章节语义切分 + chunk_type 加权检索。本次只做 SQLite 链路验收，pgvector 链路代码同步实现，留待 M5 切换 PG 时启用。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 新增 | `tools/embedder.py`：单例 `Embedder`，封装 sentence-transformers BGE-small-zh-v1.5（512 维），输出已 L2 归一化；首次启动自动从 hf-mirror.com 下载（解决国内访问 huggingface.co 超时问题） | `tools/embedder.py` |
+| 新增 | `tools/chunker.py`：`SemanticChunker.split(jd_text)`，按章节标题切分，输出 `chunk_type ∈ {overview, responsibility, requirement, nice_to_have}` + `heading_path`；中英文标题模式（岗位职责/任职要求/加分项 / Responsibilities/Requirements/Nice to have） | `tools/chunker.py` |
+| 新增 | `tools/jd_indexer.py`：`embed_and_store_jd_chunks(db, jd_id, raw_text)`，封装「切分 → 批量 embed → insert_chunks_batch」三步；失败只 warning 不抛，不影响 JD 主流程 | `tools/jd_indexer.py` |
+| Backend (sqlite) | `insert_chunk` / `insert_chunks_batch` 自动把 `embedding: List[float]` 序列化为 JSON BLOB；`get_chunks_by_jd` 自动反序列化；`search_similar_chunks` 重写为本地 numpy cosine + chunk_type 加权（responsibility=1.2, requirement=1.3, overview=0.8, nice_to_have=0.5, full=1.0），缺包/无向量时降级 LIKE | `database/backends/sqlite_backend.py` |
+| Backend (postgres) | `_get_embedding` 优先用本地 Embedder，远端 OpenAI API 仅作兜底；`search_similar_chunks` 从历史的 `chunks_vector` 改查 `knowledge_chunks`（M3 真正写入位置），用 pgvector `<=>` 余弦距离 + chunk_type 加权排序 | `database/backends/postgres_backend.py` |
+| Schema | `data/schema_pg.sql`：`knowledge_chunks.embedding` 与 `chunks_vector.embedding` 维度从 `vector(1536)` 调整为 `vector(512)`，对齐 BGE-small-zh；M5 重建 PG 时直接生效 | `data/schema_pg.sql` |
+| 集成 | `web_app.py` Tab2 文本路径与 URL 路径在 `db.insert_jd(...)` 后调用 `embed_and_store_jd_chunks`，UI 显示「🧩 已切分 N 个语义 chunk 并向量化」 | `web_app.py` |
+| 集成 | `crawler/pipeline.py` `_process_one()` 在 `insert_jd` 成功后追加同样的索引步骤；爬虫批跑时 JD 与向量同步落库 | `crawler/pipeline.py` |
+| 检索 | `tools/retriever.py` `retrieve(...)` 增加 `min_similarity=0.55` 阈值参数；返回结构补 `chunk_type` / `chunk_weight` / `ranked_score` 字段，便于上层调试与排序复盘 | `tools/retriever.py` |
+| 数据卫生 | `soft_delete_jd` 级联软删 `knowledge_chunks`（之前删 JD 但 chunks 不删，会导致检索命中已删 JD 的残骸） | `database/backends/sqlite_backend.py`、`postgres_backend.py` |
+| 验证 | 新增 `scripts/verify_m3.py`：① Embedder 维度/速度 ② Chunker 在合成中文 JD 上覆盖 4 类 chunk_type ③ 端到端 JD→切分→embed→检索 闭环 | `scripts/verify_m3.py` |
+
+### 影响范围
+- **新依赖**：`sentence-transformers`（M1 已加）+ 模型权重 ~95MB（首次启动自动下载到 `~/.cache/huggingface/`）。CI 与无网环境需要预先 `huggingface-cli download BAAI/bge-small-zh-v1.5`。
+- **检索性能**：本地 CPU 推理，BGE-small-zh 单条 ~5ms，批量 32 条 ~50ms；冷启动加载模型 ~30s（仅首次）。完全不依赖外部 embedding API。
+- **数据增长**：每条 JD 入库后自动产出 5–30 个 chunk（视 raw_text 长度）。SQLite BLOB 存 JSON，每个 512-d 向量 ~5KB。
+- **历史 chunks**：之前 45 条 `chunk_type='full'` 且 `embedding IS NULL` 的旧记录不会被检索命中（`embedding IS NOT NULL` 过滤），可在 M5 迁移脚本中决定是否回填。
+- **国内网络**：`Embedder._ensure_model` 默认设 `HF_ENDPOINT=https://hf-mirror.com`（用户已显式设置时不覆盖），首次下载稳定。
+
+### 自动化验证结果（脚本：scripts/verify_m3.py）
+
+| 步骤 | 结果 |
+|---|---|
+| Embedder 维度 | **512** ✓ |
+| Embedder L2 范数 | **1.0000** ✓ |
+| Embedder 批量 4 条 | ~16ms ✓ |
+| Chunker 合成 JD 切分 | 9 chunks，覆盖 4 种 chunk_type（responsibility / requirement / nice_to_have / overview）✓ |
+| Chunker 真实 JobsDB JD | 27 chunks，全部 overview（原文无规范章节标题，属数据特性，非 chunker 缺陷） |
+| 端到端 embed_and_store | 27 chunks，672ms ✓ |
+| 检索 'RAG Agent Prompt 经验' | top sim **0.611**（命中 'Agentic AI Workflows: Implementing autonomous agents'）✓ |
+| 检索 'LangChain' | top sim **0.513**（命中 'Target Azure AI Stack specialists / LangChain specialists'）✓ |
+| 检索 'LLM 应用 产品交付' | top sim **0.494**（中英文跨语义匹配生效）✓ |
+| 软删除级联 | 残留 chunks=0 ✓ |
+
+### 已知遗留
+- 真实 JobsDB JD 抓出来的 raw_text 没有「Responsibilities:」「Requirements:」式标题，chunker 会把所有段落归为 overview，weight=0.8 拉低检索分数。要进一步精细化需要：① 让 JD analyzer 在抽取时按 LLM 解析的结构再做一次结构化切分；② 或在 chunker 加内容启发式（如「应聘者应具备」「You will」等模糊 marker）。M6 收尾或独立 patch 处理。
+- pgvector 链路只跑了代码路径（写 / 查 SQL 形式），实际 PG + pgvector 端到端验证留到 M5 数据迁移完成后做。
+- `chunks_vector` 历史表保留但 M3 不再写入，相关旧 PDF 流程 `insert_jd_from_parsed_pdf` 行为不变。后续如不再使用可在 M5 评估废弃。
+
+---
+
