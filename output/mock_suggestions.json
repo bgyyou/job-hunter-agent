@@ -1,0 +1,39 @@
+{
+  "overall_assessment": "简历与职位匹配度较高，但需要突出微服务架构和Redis经验。",
+  "suggestions": [
+    {
+      "section": "summary",
+      "target_id": "summary",
+      "before": "5年软件工程师经验，擅长Python开发，参与过多个大型项目。",
+      "issue": "缺少具体的技术栈描述",
+      "after": "5年后端开发经验，精通Python、Django框架，熟悉微服务架构设计和Redis缓存技术，参与过多个高并发项目。",
+      "reasoning": "职位要求微服务和Redis，需要在个人陈述中突出相关经验",
+      "priority": "high",
+      "index": 0
+    },
+    {
+      "section": "experience",
+      "target_id": "experience[0]",
+      "before": "负责后端开发工作，使用Python和Django框架。",
+      "issue": "描述过于简单，没有体现技术深度",
+      "after": "负责后端服务架构设计与开发，使用Python和Django框架，引入Redis缓存提高系统性能，实现高并发场景下的稳定运行。",
+      "reasoning": "增加微服务和缓存相关描述，体现技术能力",
+      "priority": "high",
+      "index": 1
+    },
+    {
+      "section": "projects",
+      "target_id": "projects[0]",
+      "before": "开发了一个大型电商平台。",
+      "issue": "缺少具体的技术成果和性能指标",
+      "after": "开发了一个支持日均百万访问的大型电商平台，采用微服务架构，使用Redis实现分布式缓存，系统响应时间降低50%。",
+      "reasoning": "量化项目成果，突出高并发和微服务架构经验",
+      "priority": "medium",
+      "index": 2
+    }
+  ],
+  "additional_tips": [
+    "可以在技能列表中补充Redis相关技术",
+    "可以补充团队协作的具体案例"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "suggestions": {
+    "overall_assessment": "简历基础良好，需要突出微服务经验。",
+    "suggestions": [
+      {
+        "section": "summary",
+        "target_id": "summary",
+        "before": "5年软件工程师经验。",
+        "issue": "缺少技术栈描述",
+        "after": "5年后端开发经验，精通Python、微服务架构和Redis缓存。",
+        "reasoning": "职位要求微服务技术",
+        "priority": "high",
+        "index": 0
+      }
+    ],
+    "additional_tips": []
+  },
+  "modified_resume": {
+    "header": {
+      "name": "张三",
+      "contact": {
+        "email": "zhang@example.com"
+      },
+      "summary": "5年后端开发经验，精通Python、微服务架构和Redis缓存。"
+    },
+    "experience": [
+      {
+        "title": "高级工程师",
+        "company": "公司A",
+        "duration": "2022-至今",
+        "description": "负责后端开发。"
+      }
+    ],
+    "projects": [],
+    "skills": {
+      "technical": [
+        "Python"
+      ],
+      "soft": []
+    }
+  },
+  "confirmations": {
+    "suggestions": [
+      {
+        "index": 0,
+        "confirmed": true
+      }
+    ]
+  }
+}

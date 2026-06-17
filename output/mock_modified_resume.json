@@ -1,0 +1,39 @@
+{
+  "header": {
+    "name": "张三",
+    "contact": {
+      "email": "zhangsan@example.com"
+    },
+    "summary": "5年后端开发经验，精通Python、Django框架，熟悉微服务架构设计和Redis缓存技术，参与过多个高并发项目。"
+  },
+  "experience": [
+    {
+      "title": "高级软件工程师",
+      "company": "科技公司A",
+      "duration": "2022-至今",
+      "description": "负责后端服务架构设计与开发，使用Python和Django框架，引入Redis缓存提高系统性能，实现高并发场景下的稳定运行。"
+    }
+  ],
+  "projects": [
+    {
+      "name": "电商平台",
+      "role": "后端开发负责人",
+      "tech_stack": [
+        "Python",
+        "Django",
+        "MySQL"
+      ],
+      "description": "开发了一个大型电商平台。"
+    }
+  ],
+  "skills": {
+    "technical": [
+      "Python",
+      "Django",
+      "MySQL"
+    ],
+    "soft": [
+      "沟通能力"
+    ]
+  }
+}

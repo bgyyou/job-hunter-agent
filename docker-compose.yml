@@ -1,0 +1,40 @@
+version: "3.9"
+
+# ============================================================
+# JobHunter v2 — PostgreSQL + pgvector
+# ============================================================
+# 启动:
+#   docker compose up -d postgres
+#
+# 停止:
+#   docker compose down postgres
+#
+# 连接:
+#   psql -U jobhunter -d jobhunter -h localhost -p 5432
+#
+# 验证 pgvector 是否安装成功:
+#   docker compose exec postgres psql -U jobhunter -d jobhunter -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: jobhunter-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jobhunter
+      POSTGRES_PASSWORD: jobhunter
+      POSTGRES_DB: jobhunter
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobhunter -d jobhunter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
+    driver: local
