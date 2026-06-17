@@ -830,6 +830,19 @@ JD：
             if not job_detail:
                 raise RuntimeError(f"JobsDB parse_job 返回空字典：{url}")
 
+            # v2.1 M2.5: JobsDB 对失效 URL 不返 404，会重定向到首页或显示 404 页，
+            # parse_job 提取出的 title 就是站点名 / 404 文案。在抓到内容但 title 是 sentinel
+            # 时立即 raise，避免被 LLM 把垃圾内容硬解析成"JD"
+            sentinel_titles = {
+                "jobsdb", "page not found", "404", "未找到页面", "Unknown Position", "未知职位"
+            }
+            raw_title = (job_detail.get("title") or "").strip()
+            if raw_title.lower() in {s.lower() for s in sentinel_titles} or len(raw_title) < 3:
+                raise RuntimeError(
+                    f"JobsDB 页面 title 异常 ({raw_title!r})，疑似失效 URL 或被反爬重定向。"
+                    f"原 URL: {url}"
+                )
+
             jd_text = self._format_jd_text(
                 title=job_detail.get("title", ""),
                 company=job_detail.get("company", ""),

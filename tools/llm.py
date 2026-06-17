@@ -302,6 +302,16 @@ class VolcanoClient(LLMClient):
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}"
             }
+            # v2.1 M2.5.4: 自动补全 OpenAI 兼容的 chat endpoint
+            # 之前 self.api_url 直接用入参（如 https://apihub.agnes-ai.com/v1），POST 后返回
+            # 404 "Invalid URL (POST /v1)" — 命中缓存的旧请求看不到，新 prompt 必失败
+            url = api_url.rstrip("/")
+            if url.endswith("/chat/completions"):
+                self.api_url = url
+            elif url.endswith("/v1"):
+                self.api_url = url + "/chat/completions"
+            else:
+                self.api_url = url + "/v1/chat/completions"
 
     async def analyze(
         self,

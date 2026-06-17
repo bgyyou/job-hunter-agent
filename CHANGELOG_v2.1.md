@@ -82,16 +82,39 @@ M2 验证暴露三个 v2.0 遗留 bug，与 M2 写入闭环无关但影响首次
 | URL JD bug 修复 | `_fetch_jobsdb_jd` 调用了**不存在**的 `scraper.get_jd_text(url)`（AttributeError 被外层 try 吞掉）→ 改为正确的 `scraper.parse_job(url)` 然后 `_format_jd_text` 拼接 | 同上 |
 | URL JD bug 修复 | JobsDB 默认 `headless=False`（之前 True 几乎必中 Cloudflare 反爬）；`JobsDBScraper.__init__` 新增 `user_data_dir="data/browser_profiles/jobsdb"`，复用首次登录后的会话/cookie | `tools/scraper/jobsdb_scraper.py` |
 | UI 报错 | Tab2 URL 路径捕获异常后给出明确指引：建议用文本路径 / 跑 `scripts/collectors/login_jobsdb.py` / 在弹出浏览器中过验证 | `web_app.py` |
+| **LLM 客户端** | **修复关键 bug**：`VolcanoClient` OpenAI 模式直接 POST `self.api_url`（如 `/v1`），返回 `404 Invalid URL`。`__init__` 自动补全为 `/v1/chat/completions`。**这才是 M2.5.1 LLM 抽取真正生效的前提条件**——之前用户报"匹配/优化质量有待商榷"很可能也是缓存假象 | `tools/llm.py` |
+| URL JD 假 200 | JobsDB 对失效 URL 不返 404 而是重定向到首页/404 页，`parse_job` 抓到 821 字符"成功"内容。新增 sentinel title 检查（`jobsdb`/`page not found`/`unknown position` 等），命中即 raise | `tools/scraper/jd_analyzer_enhanced.py` |
+| 验证脚本 | 新增 `scripts/verify_m2_5.py`：对比 LLM vs 正则路径的简历抽取完整度，验证 URL 失败必 raise。无需 Streamlit UI 即可端到端跑通 | `scripts/verify_m2_5.py` |
 
 ### 影响范围
 - **简历解析准确率**：依赖 LLM 时质量大幅提升（中英文混排、非常规排版、bullet 长描述都能完整抽出）；副作用是每次解析多调一次 LLM（约 2-5K tokens，按当前火山定价 < ¥0.01）。
 - **URL 路径首次使用**：用户首次解析 JobsDB URL 会看到 Edge 浏览器自动打开，需要手动过 Cloudflare 验证一次。验证完后会话存到 `data/browser_profiles/jobsdb/`，之后该平台的 URL 抓取直接复用，不再弹窗。
+- **LLM 调用副作用**：endpoint 修复后所有 `VolcanoClient` 新 prompt 才能真正打通——之前命中缓存的请求继续可用，但任何新 prompt（新简历、新 JD、新匹配）现在才走真实 API。预计 LLM 调用量短期会上升、但功能质量与稳定性同步上升。
 - **Tab6 决策**：保留 v2.0 完成的「📈 投递历史」原貌，作为用户手动打卡的工具。投递率/反馈状态语义保持不变。
+
+### 自动化验证结果（脚本：scripts/verify_m2_5.py）
+
+样本简历：`data/temp/Zheng Haowen CV(AI PM) .pdf`
+
+| 指标 | 正则路径 | LLM 路径 | 提升 |
+|---|---|---|---|
+| name 抽到 | ✓ | ✓ | 持平 |
+| email 抽到 | ✓ | ✓ | 持平 |
+| summary 字符数 | 0 | **134** | ↑ |
+| experience 数量 | 3 | 3 | 持平 |
+| 首条 description 字符数 | 77 | **115** | ↑ |
+| experience.title 是否纯净 | ❌（含时间） | ✅ | ↑ |
+| projects 数量 | 0 | **3** | ↑ |
+| technical skills 数量 | 4 | **16** | ↑ |
+| education 数量 | 0 | **1** | ↑ |
+
+URL 失败路径：通用 404 → ✅ raise；JobsDB 失效 URL → ✅ raise（sentinel 命中）。
 
 ### 已知遗留
 - Boss 直聘 URL 路径：`BossScraper` 仍基于 requests/BeautifulSoup（非 Playwright），反爬下基本拿不到内容。修复方案归到 M6 B.3.3「Boss 完善」，本次不动。
 - 通用平台（猎聘 / 51job / Linkedin / 其他）仍走 `_fetch_generic_jd` 的 BeautifulSoup 路径，遇到 SPA 或反爬会 raise；M6 B.3.2 上线猎聘专用爬虫后会接入。
 - LLM 简历解析返回的 `validation` 字段是事后从结构化数据反推的，不再来自正则路径的"是否找到关键词"，准确性略弱；下一次评估如有需要再调。
+- LLM endpoint 修复后，旧 cache 仍能命中并复用历史结果——若怀疑某次结果质量异常，可清空 `data/llm_cache/` 强制重打 API。
 
 ---
 
