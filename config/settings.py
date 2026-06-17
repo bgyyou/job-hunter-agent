@@ -132,6 +132,32 @@ class Settings(BaseSettings):
         """获取完整日志路径"""
         return str(Path(self.log_dir) / self.log_file)
 
+    # ==================== 日志轮转配置（v2.1 M1.5） ====================
+    log_rotation: str = Field("20 MB", env="LOG_ROTATION")
+    log_retention: str = Field("7 days", env="LOG_RETENTION")
+
+    def setup_logging(self) -> None:
+        """启用 loguru 滚动日志。由 web_app / CLI 入口调用一次。
+
+        - 文件按 LOG_ROTATION 大小轮转（默认 20 MB）
+        - 保留 LOG_RETENTION（默认 7 天）
+        - 同时保留 stderr 输出，便于开发观察
+        """
+        from loguru import logger
+        import sys
+
+        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+        logger.remove()
+        logger.add(sys.stderr, level=self.log_level)
+        logger.add(
+            self.log_path,
+            level=self.log_level,
+            rotation=self.log_rotation,
+            retention=self.log_retention,
+            encoding="utf-8",
+            enqueue=True,
+        )
+
 # 全局配置实例
 settings = Settings()
 

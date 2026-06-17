@@ -18,6 +18,10 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+# v2.1 M1.5: 启用 loguru 滚动日志（20MB / 7 天）
+from config.settings import settings
+settings.setup_logging()
+
 from tools.llm import VolcanoClient
 from tools.resume_parser import ResumeParser
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced
