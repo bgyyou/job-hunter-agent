@@ -224,3 +224,97 @@ core 模块覆盖率：
 
 ---
 
+## [M5 存储切换 PostgreSQL+pgvector] 2026-06-17
+
+### 范围
+把默认后端从 SQLite 切到 PostgreSQL+pgvector，回填历史 chunks 的 embedding，激活 `quality_checks` 表对每次 LLM 调用做埋点。SQLite 文件保留作 fallback，不删；双写不做，单源切换。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Bug 修复 | `PostgresBackend.insert_jd` SQL 28 列但 VALUES 只有 27 个 `%s`（v2.0 遗留 typo）→ 补齐。这是 v2.0→M5 第一次跑真实 PG 写入才暴露的 bug | `database/backends/postgres_backend.py` |
+| Schema | `data/schema_pg.sql` 已在 M3 改 `vector(1536)`→`vector(512)`；但 PG 容器里旧表已建，需要 `ALTER TABLE ... ALTER COLUMN embedding TYPE vector(512) USING NULL` 配合 `DROP+CREATE INDEX chunks_vector_idx` 才能真正生效 | PG 容器内一次性 SQL |
+| 迁移脚本 | 新增 `scripts/migrate_sqlite_to_pg.py`：按 FK 依赖顺序（resumes→jds→knowledge_chunks→match_history→optimizations→quality_checks）逐表读写；默认 `--dry-run` 预览，`--apply` 才落库；knowledge_chunks 在迁移过程中重新跑 Embedder 生成 512 维 BGE 向量（旧库 0/45 有向量） | `scripts/migrate_sqlite_to_pg.py` |
+| 埋点 | `tools/llm.py` `LLMClient._record_quality_check(latency_ms, tokens, cache_hit, ok, error)`：写入 `quality_checks(check_type='llm_call', details={model, latency_ms, tokens, cache_hit, ok, error})`；DB 不可达时静默 debug，绝不影响主流程 | `tools/llm.py` |
+| 埋点 | `VolcanoClient.analyze` 在调用前后记 latency；缓存命中也落一条（`cache_hit=True, latency_ms=0`）；异常路径同样落一条 `ok=False, error=str(e)` | `tools/llm.py` |
+| 默认配置 | `.env` 新增 `DATABASE_URL=postgresql://jobhunter:jobhunter@localhost:5432/jobhunter`；`.env.example` 同步把 PG 设为默认，SQLite 改为 fallback 注释 | `.env`、`.env.example` |
+| 杂项 | `docker-compose.yml` 去掉 `version: "3.9"`（compose v2 已忽略，且每次命令都打 warning） | `docker-compose.yml` |
+
+### 影响范围
+- **首次启动**：用户需要 `docker compose up -d postgres`，schema 由 `PostgresBackend._init_db` 自动建。如需迁历史数据再跑 `python scripts/migrate_sqlite_to_pg.py --apply`。
+- **运行时**：所有 `get_db()` 调用返回 PostgresBackend；sqlite 文件作 fallback（`DATABASE_URL=sqlite:///data/jobhunter_v2.db` 时切回）。
+- **可观测性**：每次 LLM 调用都会留一条 quality_checks；后续可用 `SELECT details->>'latency_ms', details->>'tokens' FROM quality_checks WHERE check_type='llm_call'` 直接看延迟与 token 消耗趋势。
+- **测试**：pytest 默认仍 sqlite（`DATABASE_URL` 未设），35/35 全绿，未回归。
+
+### 自动化验证结果
+
+```bash
+# 1. PG 启动 + pgvector 验证
+docker compose up -d postgres
+docker compose exec postgres psql -U jobhunter -d jobhunter -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+# → 0.8.2 ✓
+
+# 2. schema 应用（首次）
+docker compose exec postgres psql -U jobhunter -d jobhunter -f data/schema_pg.sql
+# → 8 tables ✓
+
+# 3. dim 修正（旧表残留 1536）
+ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(512) USING NULL;
+ALTER TABLE chunks_vector   ALTER COLUMN embedding TYPE vector(512) USING NULL;
+DROP INDEX IF EXISTS chunks_vector_idx;
+CREATE INDEX chunks_vector_idx ON chunks_vector USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+# 4. 迁移（dry-run → apply）
+python scripts/migrate_sqlite_to_pg.py            # 预览 3/7/126/1/4/0
+python scripts/migrate_sqlite_to_pg.py --apply    # 写入
+
+# 5. 验证 PG 数据
+docker compose exec postgres psql -U jobhunter -d jobhunter -c "
+  SELECT chunk_type, COUNT(*) FROM knowledge_chunks GROUP BY chunk_type;
+  SELECT COUNT(*) FROM knowledge_chunks WHERE embedding IS NULL;
+"
+# → overview=81, full=45; embedding NULL=0 ✓
+
+# 6. PG 端到端检索
+DATABASE_URL=postgresql://... python -c "
+  from database.factory import get_db
+  db = get_db()
+  print(db.search_similar_chunks('LLM RAG Agent', top_k=3))
+"
+# → top-3 命中 LLM/RAG chunk，sim=0.644 ✓
+
+# 7. quality_check 埋点
+DATABASE_URL=postgresql://... python -c "
+  from tools.llm import VolcanoClient, LLMMessage
+  import asyncio
+  asyncio.run(VolcanoClient(model='stub',...).analyze([...]))
+  print(get_db().list_quality_checks(check_type='llm_call'))
+"
+# → 1 row, details={model, latency_ms, tokens, cache_hit, ok, error} ✓
+
+# 8. 测试不回归
+pytest tests/ -v
+# → 35 passed ✓
+```
+
+| 检查项 | 期望 | 实际 |
+|---|---|---|
+| pgvector 版本 | ≥0.5 | 0.8.2 ✓ |
+| knowledge_chunks 总数 | =sqlite 126 | 126 ✓ |
+| embedding IS NULL 数 | 0 | 0 ✓ |
+| chunk_type 种类 | ≥2 | overview=81, full=45 ✓ |
+| PG list_jds | =sqlite 7 | 7 ✓ |
+| 检索 top-3 sim | 0.5-0.95 | 0.644 ✓ |
+| quality_check 落库 | 1 条/stub 调用 | 1 条 ✓ |
+| pytest | 35 passed | 35 passed ✓ |
+
+### 已知遗留
+- `chunks_vector` 表已建好索引但代码路径未真正写入（M3 起所有写入走 `knowledge_chunks.embedding`）。表与索引保留，作为未来 HNSW 大规模检索（>100k chunks）时的迁移目标，目前 126 条用 `knowledge_chunks` + Python rerank 性能足够。
+- `migrate_sqlite_to_pg.py` 是一次性脚本，未做幂等：重复跑会在 `INSERT OR IGNORE/ON CONFLICT DO NOTHING` 下不重复插，但 `knowledge_chunks` 用 `insert_chunk` 没 `ON CONFLICT` 子句，重跑会插重复行。如需重跑先 `TRUNCATE ... CASCADE`。
+- `quality_checks.target_id` 字段是 INTEGER 类型，但 LLM 调用没有合适的整数 ID 可填，目前固定 None。若后续要把 quality_checks 与具体 match_id 关联，需要改 schema 把 target_id 改为 TEXT 或新增 `target_text` 列。
+- PG only 测试尚未补；M4 已立的 todo「PG-only 测试需要 docker compose 起 pgvector」推到 M6 收尾时一并处理。
+
+---
+

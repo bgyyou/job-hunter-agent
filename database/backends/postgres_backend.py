@@ -178,7 +178,7 @@ class PostgresBackend(BaseBackend):
                 industry_tag, function_tag, position_tag, auto_classified,
                 is_public, crawled_at, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (url, user_id) DO NOTHING""",
             (jd_id, data.get("user_id", "default"), data.get("url", ""),
              data.get("title", ""), data.get("company", ""), data.get("location", ""),

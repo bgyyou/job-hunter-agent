@@ -202,6 +202,34 @@ class LLMClient(ABC):
             "metadata": metadata or {}
         })
 
+    def _record_quality_check(self, latency_ms: int, tokens: int,
+                              cache_hit: bool, ok: bool, error: Optional[str]) -> None:
+        """v2.1 M5: 把每次 LLM 调用落到 quality_checks 表，便于复盘延迟与命中率。
+
+        策略：失败不影响主流程；DB 不可达或表缺失时静默 warning。
+        """
+        try:
+            from database.factory import get_db
+            db = get_db()
+            db.insert_quality_check({
+                "check_type": "llm_call",
+                "target_table": "llm_calls",
+                "target_id": None,
+                "score": 100.0 if ok else 0.0,
+                "details": {
+                    "model": self.model,
+                    "latency_ms": latency_ms,
+                    "tokens": tokens,
+                    "cache_hit": cache_hit,
+                    "ok": ok,
+                    "error": error,
+                },
+                "user_id": "default",
+            })
+        except Exception as exc:
+            # 埋点失败绝不影响业务
+            self.logger.debug(f"quality_check record skipped: {exc}")
+
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
         return {
@@ -344,7 +372,17 @@ class VolcanoClient(LLMClient):
             )
             cached = self._get_cache(cache_key)
             if cached:
+                # v2.1 M5: 缓存命中也落一条，方便统计命中率
+                self._record_quality_check(
+                    latency_ms=0, tokens=cached.tokens_used,
+                    cache_hit=True, ok=True, error=None,
+                )
                 return cached
+
+        # v2.1 M5: 记录 LLM 调用埋点（latency / tokens / hit cache）
+        import time as _time
+        _t0 = _time.perf_counter()
+        _cache_hit = False
 
         try:
             # 调用 API
@@ -389,10 +427,27 @@ class VolcanoClient(LLMClient):
             if use_cache:
                 self._set_cache(cache_key, result)
 
+            # v2.1 M5: 落 quality_checks
+            self._record_quality_check(
+                latency_ms=int((_time.perf_counter() - _t0) * 1000),
+                tokens=result.tokens_used,
+                cache_hit=False,
+                ok=True,
+                error=None,
+            )
+
             return result
 
         except Exception as e:
             self.logger.error(f"LLM 调用失败: {e}")
+            # v2.1 M5: 失败也落一条
+            self._record_quality_check(
+                latency_ms=int((_time.perf_counter() - _t0) * 1000),
+                tokens=0,
+                cache_hit=False,
+                ok=False,
+                error=str(e),
+            )
             raise
 
     async def analyze_stream(
