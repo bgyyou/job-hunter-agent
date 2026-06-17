@@ -24,13 +24,16 @@ class JobsDBScraper(BaseScraper):
     使用 Playwright 进行浏览器自动化，模拟人类行为
     """
 
-    def __init__(self, headless: bool = False, human_speed: float = 0.5):
+    def __init__(self, headless: bool = False, human_speed: float = 0.5,
+                 user_data_dir: Optional[str] = "data/browser_profiles/jobsdb"):
         """
         初始化 JobsDBScraper
 
         Args:
             headless: 是否无头模式
             human_speed: 人类速度倍数
+            user_data_dir: 浏览器持久化目录（v2.1 M2.5：默认 data/browser_profiles/jobsdb，
+                           复用一次登录后的 cookie/会话，避免每次都被反爬识别）
         """
         super().__init__(
             platform_name="jobsdb",
@@ -41,6 +44,7 @@ class JobsDBScraper(BaseScraper):
         self.playwright_scraper: Optional[HumanPlaywrightScraper] = None
         self.headless = headless
         self.human_speed = human_speed
+        self.user_data_dir = user_data_dir
 
     async def __aenter__(self):
         """异步上下文管理器入口"""
@@ -58,7 +62,8 @@ class JobsDBScraper(BaseScraper):
                 platform_name="jobsdb",
                 headless=self.headless,
                 human_speed=self.human_speed,
-                browser_type="msedge"
+                browser_type="msedge",
+                user_data_dir=self.user_data_dir,
             )
             await self.playwright_scraper.start()
 

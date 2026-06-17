@@ -65,3 +65,33 @@
 
 ---
 
+## [M2.5 质量修复] 2026-06-17
+
+### 范围
+M2 验证暴露三个 v2.0 遗留 bug，与 M2 写入闭环无关但影响首次跑通的用户体验。本次集中修掉，不展开做 RAG 之前先把根上的解析问题清掉。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 简历解析 | `ResumeParser.__init__(llm_client=None)` 接受可选 LLM 客户端；`parse()` 优先走 LLM 结构化抽取（schema 含 header/experience/projects/skills/education），失败自动降级到原正则路径 | `tools/resume_parser.py` |
+| 简历解析 | 新增 `_parse_with_llm(text)`：用 `analyze_with_structured_output(max_tokens=8000, temp=0.1)`，prompt 强制 LLM 把每条 bullet 都抽进 description、不允许翻译、不允许瞎编 | 同上 |
+| 简历解析 | `web_app.py` Tab1 把 `st.session_state.agent.llm_client` 传进 `ResumeParser` | `web_app.py` |
+| 简历解析 | 移除 `ResumeParser.__init__` 里 `logger.add()` 重复挂载（与 M1 全局 setup_logging 冲突） | `tools/resume_parser.py` |
+| URL JD bug 修复 | `_fetch_jd_text` 抓不到内容时由 `return ""` 改为 `raise RuntimeError`，UI 才能显示真实失败原因（之前用户看到的是"成功但全空"） | `tools/scraper/jd_analyzer_enhanced.py` |
+| URL JD bug 修复 | `_fetch_jobsdb_jd` 调用了**不存在**的 `scraper.get_jd_text(url)`（AttributeError 被外层 try 吞掉）→ 改为正确的 `scraper.parse_job(url)` 然后 `_format_jd_text` 拼接 | 同上 |
+| URL JD bug 修复 | JobsDB 默认 `headless=False`（之前 True 几乎必中 Cloudflare 反爬）；`JobsDBScraper.__init__` 新增 `user_data_dir="data/browser_profiles/jobsdb"`，复用首次登录后的会话/cookie | `tools/scraper/jobsdb_scraper.py` |
+| UI 报错 | Tab2 URL 路径捕获异常后给出明确指引：建议用文本路径 / 跑 `scripts/collectors/login_jobsdb.py` / 在弹出浏览器中过验证 | `web_app.py` |
+
+### 影响范围
+- **简历解析准确率**：依赖 LLM 时质量大幅提升（中英文混排、非常规排版、bullet 长描述都能完整抽出）；副作用是每次解析多调一次 LLM（约 2-5K tokens，按当前火山定价 < ¥0.01）。
+- **URL 路径首次使用**：用户首次解析 JobsDB URL 会看到 Edge 浏览器自动打开，需要手动过 Cloudflare 验证一次。验证完后会话存到 `data/browser_profiles/jobsdb/`，之后该平台的 URL 抓取直接复用，不再弹窗。
+- **Tab6 决策**：保留 v2.0 完成的「📈 投递历史」原貌，作为用户手动打卡的工具。投递率/反馈状态语义保持不变。
+
+### 已知遗留
+- Boss 直聘 URL 路径：`BossScraper` 仍基于 requests/BeautifulSoup（非 Playwright），反爬下基本拿不到内容。修复方案归到 M6 B.3.3「Boss 完善」，本次不动。
+- 通用平台（猎聘 / 51job / Linkedin / 其他）仍走 `_fetch_generic_jd` 的 BeautifulSoup 路径，遇到 SPA 或反爬会 raise；M6 B.3.2 上线猎聘专用爬虫后会接入。
+- LLM 简历解析返回的 `validation` 字段是事后从结构化数据反推的，不再来自正则路径的"是否找到关键词"，准确性略弱；下一次评估如有需要再调。
+
+---
+

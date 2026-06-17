@@ -305,7 +305,9 @@ with tab1:
                 else:
                     with st.spinner("正在解析简历..."):
                         try:
-                            parser = ResumeParser()
+                            # v2.1 M2.5: 优先用 LLM 抽取，失败自动降级到正则
+                            llm_client = st.session_state.agent.llm_client if st.session_state.agent else None
+                            parser = ResumeParser(llm_client=llm_client)
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
                             resume_data = loop.run_until_complete(parser.parse(str(temp_path)))
@@ -526,7 +528,16 @@ with tab2:
                     else:
                         st.success("✅ JD 分析成功！")
                 except Exception as e:
-                    st.error(f"分析失败: {e}")
+                    # v2.1 M2.5: URL 抓取失败给出明确指引
+                    err_msg = str(e)
+                    st.error(f"❌ URL 分析失败：{err_msg}")
+                    if "登录" in err_msg or "反爬" in err_msg or "Cloudflare" in err_msg or "未能" in err_msg:
+                        st.info(
+                            "💡 解决方案：\n"
+                            "1. 改用「直接粘贴 JD」路径（推荐，最稳定）；\n"
+                            "2. 或运行 `python scripts/collectors/login_jobsdb.py` 完成首次登录后重试；\n"
+                            "3. 或在弹出的浏览器中手动过验证后再次尝试。"
+                        )
 
     if st.session_state.jd_result:
         st.divider()

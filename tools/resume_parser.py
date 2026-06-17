@@ -16,6 +16,13 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from loguru import logger
 
+# v2.1 M2.5: LLM 抽取支持（可选依赖；无 LLM client 时降级到正则）
+try:
+    from tools.llm import LLMClient, LLMMessage
+except Exception:
+    LLMClient = None  # type: ignore
+    LLMMessage = None  # type: ignore
+
 
 @dataclass
 class ResumeData:
@@ -76,9 +83,15 @@ class ResumeParser:
         '体系构建', '文案写作', '学习能力', '组织能力'
     ]
 
-    def __init__(self):
-        """初始化解析器"""
-        logger.add("logs/resume_parser.log", rotation="10 MB", retention="7 days")
+    def __init__(self, llm_client: Optional["LLMClient"] = None):
+        """初始化解析器
+
+        Args:
+            llm_client: 可选的 LLM 客户端。传入则优先用 LLM 做结构化抽取，失败时降级到正则；
+                       未传入则直接走正则路径（兼容旧调用方）。
+        """
+        self.llm_client = llm_client
+        # 不再让 parser 自己加 logger sink — 由 config.settings.setup_logging() 统一管理（v2.1 M1）
 
     async def parse(self, pdf_path: str) -> Dict[str, Any]:
         """
@@ -94,19 +107,33 @@ class ResumeParser:
 
         # 提取文本
         text = self._extract_text(pdf_path)
+
+        # v2.1 M2.5: 优先走 LLM 路径，失败降级到正则
+        if self.llm_client is not None:
+            try:
+                result = await self._parse_with_llm(text)
+                header = result.get("header", {})
+                logger.info(
+                    f"[LLM] 解析完成: 姓名={header.get('name', 'Unknown')}, "
+                    f"经历={len(result.get('experience', []))}条, "
+                    f"项目={len(result.get('projects', []))}条"
+                )
+                return result
+            except Exception as e:
+                logger.warning(f"LLM 抽取失败，降级到正则解析: {e}")
+
+        return self._parse_with_regex(text)
+
+    def _parse_with_regex(self, text: str) -> Dict[str, Any]:
+        """正则解析路径（旧逻辑，作为 LLM 失败时的兜底）"""
         lines = [line.strip() for line in text.split('\n') if line.strip()]
 
-        # 识别章节位置
         sections = self._identify_sections(lines)
-
-        # 解析各个部分
         header = self._parse_header(lines, text)
         experience = self._parse_experience(lines, sections)
         projects = self._parse_projects(lines, sections)
         skills = self._parse_skills(lines, sections, text)
         education = self._parse_education(lines, sections)
-
-        # 验证完整性
         validation = self._validate_completeness(header, experience, skills, education)
 
         result = {
@@ -115,12 +142,93 @@ class ResumeParser:
             "projects": projects,
             "skills": skills,
             "education": education,
-            "validation": validation
+            "validation": validation,
+        }
+        logger.info(
+            f"[Regex] 解析完成: 姓名={header.get('name', 'Unknown')}, "
+            f"经历={len(experience)}条, 项目={len(projects)}条"
+        )
+        return result
+
+    async def _parse_with_llm(self, text: str) -> Dict[str, Any]:
+        """LLM 结构化抽取路径"""
+        if LLMMessage is None:
+            raise RuntimeError("LLMMessage 不可用（tools.llm 未加载）")
+
+        schema = {
+            "header": {
+                "name": "姓名",
+                "contact": {"phone": "电话（原文保留）", "email": "邮箱"},
+                "summary": "个人简介/自我评价（不超过 300 字）",
+            },
+            "experience": [
+                {
+                    "company": "公司全称",
+                    "title": "职位",
+                    "start_date": "开始时间（如 2022.07 / Jul 2022）",
+                    "end_date": "结束时间（在职填'至今'/'Present'）",
+                    "location": "工作地点（无则 null）",
+                    "description": "工作内容/职责描述，把所有 bullet 用换行连起来，保留原文细节",
+                }
+            ],
+            "projects": [
+                {
+                    "name": "项目名",
+                    "description": "项目描述",
+                    "role": "项目角色（无则 null）",
+                    "tech_stack": ["技术栈1", "技术栈2"],
+                }
+            ],
+            "skills": {
+                "technical": ["硬技能1", "硬技能2"],
+                "soft": ["软技能1", "软技能2"],
+            },
+            "education": [
+                {
+                    "school": "学校",
+                    "degree": "学位（如 硕士 / Master）",
+                    "major": "专业",
+                    "start_date": "开始时间",
+                    "end_date": "结束时间",
+                    "location": "地点（无则 null）",
+                    "gpa": "GPA（无则 null）",
+                }
+            ],
         }
 
-        logger.info(f"解析完成: 姓名={header.get('name', 'Unknown')}, "
-                   f"经历={len(experience)}条, 项目={len(projects)}条")
+        prompt = (
+            "你是简历解析助手。下面是一份简历的纯文本（来自 PDF 文本提取，可能格式不规整）。\n"
+            "请把简历内容**完整**抽取为结构化 JSON。注意：\n"
+            "1. experience.description 必须包含**所有** bullet 点的内容，按行用 \\n 分隔，不要遗漏任何一条职责；\n"
+            "2. 中英文混排时按原文保留，不要翻译；\n"
+            "3. skills.technical 收录所有出现过的技术/工具/平台名词（包括中文），不要漏；\n"
+            "4. 找不到的字段填 null 或空数组，不要瞎编；\n"
+            "5. 时间格式按原文。\n\n"
+            "简历正文：\n"
+            "===\n"
+            f"{text}\n"
+            "===\n"
+        )
 
+        messages = [LLMMessage(role="user", content=prompt)]
+        # 简历文本量较大，给到 8K 输出 token，温度低保证稳定
+        result = await self.llm_client.analyze_with_structured_output(
+            messages=messages,
+            output_schema=schema,
+            max_tokens=8000,
+            temperature=0.1,
+        )
+
+        # 兜底校验 + 补 validation 字段（保持与正则路径返回结构一致）
+        result.setdefault("header", {})
+        result["header"].setdefault("contact", {"phone": None, "email": None})
+        result.setdefault("experience", [])
+        result.setdefault("projects", [])
+        result.setdefault("skills", {"technical": [], "soft": []})
+        result.setdefault("education", [])
+        result["validation"] = self._validate_completeness(
+            result["header"], result["experience"], result["skills"], result["education"]
+        )
         return result
 
     def _extract_text(self, pdf_path: str) -> str:

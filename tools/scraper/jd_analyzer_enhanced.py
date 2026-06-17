@@ -743,31 +743,37 @@ JD：
         """
         从平台获取 JD 文本
 
+        v2.1 M2.5: 失败时改为 raise（之前 silent return ""，导致用户看到"成功但全空"）
+
         Args:
             url: JD URL
             platform: 平台名称
 
         Returns:
-            JD 文本
+            JD 文本（不会返回空字符串；失败一律 raise）
+
+        Raises:
+            RuntimeError: 抓取失败或返回内容为空
         """
         self.logger.info(f"从 {platform} 获取 JD: {url}")
 
-        try:
-            # Boss 直聘 - 使用专用爬虫
-            if platform == "boss":
-                return await self._fetch_boss_jd(url)
+        # Boss 直聘 - 使用专用爬虫
+        if platform == "boss":
+            jd_text = await self._fetch_boss_jd(url)
+        # JobsDB - 使用 Playwright 爬虫
+        elif platform == "jobsdb":
+            jd_text = await self._fetch_jobsdb_jd(url)
+        # 未知平台 - 通用爬取
+        else:
+            jd_text = await self._fetch_generic_jd(url)
 
-            # JobsDB - 使用 Playwright 爬虫
-            elif platform == "jobsdb":
-                return await self._fetch_jobsdb_jd(url)
-
-            # 未知平台 - 通用爬取
-            else:
-                return await self._fetch_generic_jd(url)
-
-        except Exception as e:
-            self.logger.error(f"获取 JD 失败: {e}")
-            return ""
+        if not jd_text or not jd_text.strip():
+            raise RuntimeError(
+                f"未能从 {platform} 抓取到 JD 内容（URL: {url}）。"
+                "可能原因：登录态失效 / 反爬拦截 / URL 已失效 / 平台未适配。"
+                "建议：改用「直接粘贴 JD」路径，或先运行 scripts/collectors/ 下对应平台的登录脚本。"
+            )
+        return jd_text
 
     async def _fetch_boss_jd(self, url: str) -> str:
         """从 Boss 直聘获取 JD"""
@@ -800,34 +806,50 @@ JD：
             return await self._fetch_generic_jd(url)
 
     async def _fetch_jobsdb_jd(self, url: str) -> str:
-        """从 JobsDB 获取 JD"""
+        """从 JobsDB 获取 JD（v2.1 M2.5）
+
+        修复要点：
+        1. 之前调用了不存在的 `scraper.get_jd_text(url)` → AttributeError 被外层吞掉返回 ""
+        2. 之前 headless=True 触发 JobsDB 反爬概率高
+        3. 现在用 parse_job 拿结构化 dict 后用 _format_jd_text 拼接，并默认 headless=False
+           让用户能在浏览器里看见加载过程；失败时抛错由上层统一处理
+        """
         self.logger.info("使用 Playwright 获取 JobsDB JD")
 
-        try:
-            scraper_class = self._playwright_scrapers.get("jobsdb")
-            if not scraper_class:
-                self.logger.error("JobsDB scraper class not found")
-                return ""
+        scraper_class = self._playwright_scrapers.get("jobsdb")
+        if not scraper_class:
+            raise RuntimeError("JobsDB scraper class not registered")
 
-            scraper = scraper_class(headless=True)
+        # headless=False：JobsDB 需要 Cloudflare 校验，无头模式经常被拦
+        # JobsDBScraper 默认 user_data_dir=data/browser_profiles/jobsdb，会复用上次会话
+        scraper = scraper_class(headless=False)
 
-            async with scraper:
-                if not await scraper.is_logged_in():
-                    self.logger.warning("需要登录，但无头模式下无法处理")
-                    pass
+        async with scraper:
+            job_detail = await scraper.parse_job(url)
 
-                jd_text = await scraper.get_jd_text(url)
+            if not job_detail:
+                raise RuntimeError(f"JobsDB parse_job 返回空字典：{url}")
 
-                if jd_text:
-                    self.logger.info(f"成功获取 JobsDB JD: {len(jd_text)} 字符")
-                    return jd_text
-                else:
-                    self.logger.warning("未能获取 JD 文本")
-                    return ""
+            jd_text = self._format_jd_text(
+                title=job_detail.get("title", ""),
+                company=job_detail.get("company", ""),
+                location=job_detail.get("location", ""),
+                salary=job_detail.get("salary_str", ""),
+                experience="",
+                education="",
+                description=job_detail.get("description", "") or job_detail.get("raw_text", ""),
+                skills=job_detail.get("skills_required", []),
+            )
 
-        except Exception as e:
-            self.logger.error(f"Playwright 获取 JD 失败: {e}")
-            return ""
+            if not jd_text or len(jd_text.strip()) < 50:
+                raise RuntimeError(
+                    f"JobsDB JD 内容过短（{len(jd_text)} 字符），可能被反爬拦截。"
+                    f"请在弹出的浏览器中手动通过 Cloudflare 验证后重试，"
+                    f"或运行 scripts/collectors/login_jobsdb.py 完成首次登录"
+                )
+
+            self.logger.info(f"成功获取 JobsDB JD: {len(jd_text)} 字符")
+            return jd_text
 
     async def _fetch_generic_jd(self, url: str) -> str:
         """通用 JD 获取方法"""
