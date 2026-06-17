@@ -289,12 +289,61 @@ class CoordinatorAgent(BaseAgent):
                 self.end_span(False, str(e))
             return {"status": "error", "error": f"匹配度分析失败: {str(e)}"}
 
-    async def chat(self, user_message: str) -> Dict[str, Any]:
-        """测试 LLM 连接"""
+    async def chat_assistant(self, user_message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """v2.1 M6.A.3: AI 浮窗后端（轻量对话，不做意图路由）。
+
+        注入项目上下文（当前简历 / 最近 JD / 匹配分）让回答贴合用户实际进度，
+        而不是通用闲聊。context 为空时退化为通用 LLM 问答。
+
+        与 chat() 区别：chat() 做意图分类 + 工具路由（重，每次 1-2 次 LLM 调用），
+        本方法只走一次 LLM 直接对话，适合浮窗高频问答。
+        """
         from tools.llm import LLMMessage
-        messages = [LLMMessage(role="user", content=user_message)]
-        response = await self.llm_client.analyze(messages=messages, max_tokens=100)
-        return {"status": "success", "reply": response.content}
+
+        ctx = context or {}
+        system_parts = [
+            "你是 JobHunter 的求职助手。用户在 Streamlit 内通过浮窗与你对话。",
+            "回答简洁、聚焦求职决策；不要编造用户没提供的经历或公司。",
+        ]
+
+        resume = ctx.get("resume")
+        if resume:
+            name = (resume.get("header") or {}).get("name") or resume.get("name") or "候选人"
+            skills = resume.get("skills") or {}
+            tech = skills.get("technical") if isinstance(skills, dict) else skills
+            system_parts.append(
+                f"【当前简历】姓名：{name}；技能：{', '.join(tech[:15]) if tech else 'N/A'}；"
+                f"经验年数：{resume.get('experience_years', 'N/A')}"
+            )
+
+        jd = ctx.get("jd")
+        if jd:
+            system_parts.append(
+                f"【最近 JD】{jd.get('title', 'N/A')} @ {jd.get('company', 'N/A')}；"
+                f"关键词：{', '.join((jd.get('keywords') or [])[:10])}"
+            )
+
+        score = ctx.get("match_score")
+        if score is not None:
+            system_parts.append(f"【最近匹配分】{score}")
+
+        history = ctx.get("history") or []
+        messages = [LLMMessage(role="system", content="\n".join(system_parts))]
+        for h in history[-6:]:
+            if isinstance(h, LLMMessage):
+                messages.append(h)
+            else:
+                messages.append(LLMMessage(role=h.get("role", "user"),
+                                           content=h.get("content", "")))
+        messages.append(LLMMessage(role="user", content=user_message))
+
+        try:
+            response = await self.llm_client.analyze(
+                messages=messages, max_tokens=800, temperature=0.5, use_cache=False,
+            )
+            return {"status": "success", "reply": response.content}
+        except Exception as e:
+            return {"status": "error", "reply": f"⚠️ LLM 调用失败：{e}"}
 
     async def _calculate_match(self, resume_data: Any, jd_result: Dict[str, Any]) -> Dict[str, Any]:
         """计算匹配度 - 智能语义匹配 + 可迁移技能分析"""

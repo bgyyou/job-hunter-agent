@@ -137,6 +137,8 @@ class BossCrawler(BaseCrawler):
                     "[BossCrawler] 403 — cookies may be expired or invalid. "
                     "Try --cookies or --use-browser"
                 )
+                # v2.1 M6.B.3.3: 给明确指引而非静默失败
+                self._hint_relogin()
                 self._domain_limiter.mark_blocked(self._domain)
                 return []
 
@@ -202,6 +204,10 @@ class BossCrawler(BaseCrawler):
                         "[BossCrawler] Still no job cards after reload. "
                         "Page may be prompting for login."
                     )
+                    # v2.1 M6.B.3.3: 登录态健康检查 + 明确指引
+                    logged_in = await self.check_login()
+                    if not logged_in:
+                        self._hint_relogin()
                     # Take screenshot for debugging
                     import os
                     screenshot_path = str(
@@ -440,6 +446,48 @@ class BossCrawler(BaseCrawler):
             self._page = page
 
         return self._page
+
+    async def check_login(self) -> bool:
+        """v2.1 M6.B.3.3: 登录态健康检查。
+
+        打开 Boss 首页，未登录会跳到 /login/ 或显示「扫码登录」按钮。
+        命中以下任一信号即视为已登录：
+          - URL 没有跳到 /login/
+          - 找不到 .btn-login / 「扫码登录」节点
+        """
+        page = await self._get_browser_page()
+        if page is None:
+            return False
+        try:
+            await page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        url = page.url or ""
+        if "/login" in url or "/login/" in url:
+            logger.warning("[BossCrawler] 登录态失效：URL 跳转到登录页")
+            return False
+        try:
+            login_btns = await page.query_selector_all(
+                ".btn-login, .sign-in, a[href*='/login'], .scan-login"
+            )
+            if login_btns:
+                logger.warning("[BossCrawler] 登录态失效：页面出现登录按钮")
+                return False
+        except Exception:
+            pass
+        return True
+
+    def _hint_relogin(self) -> None:
+        """登录态失效时给用户的明确指引。"""
+        logger.error(
+            "[BossCrawler] ❌ 登录态失效，已停止爬取。\n"
+            "  解决步骤：\n"
+            "  1. 在本机 Edge 中打开 https://www.zhipin.com 并登录 Boss 直聘；\n"
+            "  2. 关闭所有 Edge 窗口（含托盘进程），确保 Playwright 能独占 user-data 目录；\n"
+            "  3. 重新运行 `python crawler/run_crawler.py --site boss --use-browser ...`。\n"
+            "  （cookies 路径：可改为 --cookies data/cookies/boss.json，从浏览器导出。）"
+        )
 
     def _check_leftover_processes(self) -> List[str]:
         """Scan for leftover msedge.exe processes that may lock the user-data dir."""

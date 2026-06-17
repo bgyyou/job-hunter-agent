@@ -318,3 +318,106 @@ pytest tests/ -v
 
 ---
 
+## [M6 主线收尾] 2026-06-17
+
+### 范围
+v2.1 升级最后一个里程碑：把 v2.0 计划里挂起的 4 个主线功能补齐——批量 JD 预览、AI 聊天浮窗、猎聘爬虫、Boss 登录态健康检查。本里程碑不涉及数据迁移，全部为增量功能。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| A.2 批量预览 | Tab2 新增「批量粘贴 JD」选项：用 `---` 或两空行分隔多条；预览阶段解析为卡片列表，每条带 checkbox；「全选 / 反选」按钮；「💾 批量保存」逐条跑 `parse_from_text → Classifier → insert_jd → embed_and_store_jd_chunks`，进度条显示，单条失败不影响其他 | `web_app.py` |
+| A.3 AI 浮窗 | `CoordinatorAgent.chat_assistant(user_message, context)` 新方法：注入当前简历 / 最近 JD / 最近匹配分到 system prompt；历史对话最近 6 条；与原 `chat()` 区分（chat 做意图路由，重；chat_assistant 只走一次 LLM 直接对话，适合浮窗高频问答） | `agents/coordinator.py` |
+| A.3 AI 浮窗 | web_app.py 末尾新增 sidebar expander「💬 AI 求职助手」：`st.chat_input` + `st.chat_message` 渲染气泡；调用 `chat_assistant`；历史超过 20 条自动截断到 12 条；Tab3 匹配成功时写入 `last_match_score` 供浮窗引用 | `web_app.py` |
+| B.3.2 猎聘 | 新增 `tools/scraper/liepin_scraper.py`：复用 `HumanPlaywrightScraper`（Edge profile 复用）；`search_jobs(keyword, city, page, limit)` 构造 `/zhaopin/?key=...&city=...&curPage=...`；`_extract_jobs_from_page` 扫 `a[href*='/job/']`；`parse_job(job_url)` 抽 title/company/location/description；`check_login()` 检测登录态失效 | `tools/scraper/liepin_scraper.py` |
+| B.3.2 猎聘 | 新增 `scripts/collectors/login_liepin.py`：开 Edge 让用户手动登录后回车关浏览器；落 profile 到 `data/browser_profiles/liepin/`；与 `login_jobsdb.py` 同款套路 | `scripts/collectors/login_liepin.py` |
+| B.3.3 Boss 完善 | `BossCrawler.check_login()`：开首页看 URL 是否跳 `/login/` 或页面是否有登录按钮节点；命中即视为失效 | `crawler/sites/boss.py` |
+| B.3.3 Boss 完善 | `BossCrawler._hint_relogin()`：失效时打印明确指引（登录步骤 + 关 Edge 窗口 + cookies 路径）；`_fetch_via_browser` 在 job cards 找不到时调用；`_fetch_via_api` 403 时调用 | `crawler/sites/boss.py` |
+| 配套 | `run_crawler.py` `SUPPORTED_SITES["liepin"]` 仍标 not-yet-implemented（LiepinScraper 是 Playwright 类，与 `BaseCrawler` 接口不同；M6 只交付 scraper 本身，pipeline 集成留独立 patch；通过 `LiepinScraper().search_jobs()` 直接调用即可） | `crawler/run_crawler.py`（未改） |
+
+### 影响范围
+- **UI 行为**：Tab2 多一个「批量粘贴 JD」选项；侧栏多一个「💬 AI 求职助手」expander；其他 Tab 行为不变。
+- **爬虫调用**：用户跑猎聘需先 `python scripts/collectors/login_liepin.py` 完成首次登录，之后 `LiepinScraper(headless=False).search_jobs('AI产品经理', city='深圳')`。
+- **Boss 调用**：`--use-browser` 模式下若登录态失效，会有明确指引而非静默空结果；`--cookies` 模式 403 同样给指引。
+- **测试**：pytest 35/35 仍全绿（M6 不动核心 repository/chunker/embedder 路径）；浮窗 chat_assistant 用 FakeLLM 验证 system prompt 注入正确。
+
+### 自动化验证结果
+
+```bash
+# A.2 批量预览
+# Tab2 选「批量粘贴 JD」→ 粘贴 3 条 JD（--- 分隔）→ 预览解析 → 全选 → 批量保存
+# 期望：进度条推进 3 次，DB jds 总数 +3
+python -c "
+from dotenv import load_dotenv; load_dotenv()
+from database.factory import get_db
+print('jds total:', len(get_db().list_jds()))
+"
+
+# A.3 AI 浮窗
+python -c "
+import asyncio
+from agents.coordinator import CoordinatorAgent
+class FakeResp:
+    content='建议补强 RAG 经验。'
+    model='fake'; tokens_used=50; finish_reason='stop'
+class FakeLLM:
+    model='fake'
+    async def analyze(self, messages, **kw):
+        sys_msg = next((m for m in messages if m.role=='system'), None)
+        if sys_msg: print('SYS:', sys_msg.content[:200])
+        return FakeResp()
+agent = CoordinatorAgent.__new__(CoordinatorAgent)
+agent.llm_client = FakeLLM()
+ctx = {'resume': {'header': {'name': 'Leon'}, 'skills': {'technical': ['Python', 'LLM']}, 'experience_years': 5},
+       'jd': {'title': 'AI PM', 'company': 'ACME', 'keywords': ['LLM', 'RAG']},
+       'match_score': 85}
+print(asyncio.run(agent.chat_assistant('怎么提升匹配度？', context=ctx)))
+"
+# 期望：system prompt 含「姓名: Leon / 技能: Python, LLM / 经验年数: 5 / AI PM @ ACME / 匹配分: 85」；返回 reply 字符串
+
+# B.3.2 猎聘（需先 login_liepin.py 完成登录）
+python -c "
+import asyncio
+from tools.scraper.liepin_scraper import LiepinScraper
+async def go():
+    async with LiepinScraper(headless=False) as s:
+        print('login:', await s.check_login())
+        jobs = await s.search_jobs('AI产品经理', city='深圳', limit=5)
+        print('jobs:', len(jobs))
+asyncio.run(go())
+"
+# 期望：check_login=True；jobs >= 1
+
+# B.3.3 Boss 登录态失效提示（不实际跑爬虫，验证方法存在）
+python -c "
+from crawler.sites.boss import BossCrawler
+assert hasattr(BossCrawler, 'check_login')
+assert hasattr(BossCrawler, '_hint_relogin')
+print('OK')
+"
+
+# 回归
+pytest tests/ -v
+# 期望：35 passed
+```
+
+| 检查项 | 期望 | 实际 |
+|---|---|---|
+| web_app 启动 | HTTP 200 | 200 OK ✓ |
+| 批量 JD 切分（--- 分隔） | 3 条 | ✓ |
+| AI 浮窗 system prompt 含上下文 | 简历+JD+分数 | ✓ |
+| pytest 无回归 | 35 passed | 35 passed ✓ |
+| LiepinScraper.check_login 存在 | True | ✓ |
+| BossCrawler.check_login 存在 | True | ✓ |
+| BossCrawler._hint_relogin 存在 | True | ✓ |
+
+### 已知遗留
+- **猎聘 pipeline 集成未做**：`crawler/run_crawler.py` 仍标 liepin 为 not-yet-implemented，因为 `LiepinScraper` 是 Playwright 类（继承 `BaseScraper`），与 `BaseCrawler`（httpx + fake_useragent）接口不兼容。M6 只交付 scraper 本身；如需 CLI 入口可独立写 `scripts/collectors/run_liepin.py` 调用 `LiepinScraper`。这是设计上的取舍，不是 bug。
+- **Boss 两个 boss 实现并存**：`tools/scraper/boss_scraper.py`（571 行，requests/BeautifulSoup 老路）与 `crawler/sites/boss.py`（621 行，httpx + Playwright 新路）功能重叠。M6.B.3.3 选择「在新的里补 check_login」而非合并，因为旧版只在 `tools/scraper/__init__.py` 暴露给 `ScraperManager` 用，删了影响其他模块；后续如确认 `ScraperManager` 不再使用旧版可独立 PR 删掉。
+- **A.2 批量保存的 LLM 解析失败兜底**：单条 LLM 解析失败时会降级为只存 raw_text（title/company 留空），用户后续可在 Tab6 看到 title 为空的记录。可考虑后续加一个「重试 LLM 解析」按钮。
+- **A.3 浮窗历史长度**：上限 20 条，超过自动截到 12 条。会丢早期对话，符合「浮窗轻对话」定位；若用户要长对话应去 LLM 客户端原厂界面。
+- **PG-only 测试**：仍未补，与 M5 遗留一致；不在 M6 范围内。
+
+---
+

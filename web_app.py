@@ -12,6 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import streamlit as st
 import json
 import asyncio
+import re
 from loguru import logger
 
 from dotenv import load_dotenv
@@ -367,7 +368,7 @@ with tab1:
 with tab2:
     st.header("分析职位描述")
 
-    input_type = st.radio("选择输入方式", ["直接粘贴 JD", "上传 PDF 文件", "输入职位 URL"])
+    input_type = st.radio("选择输入方式", ["直接粘贴 JD", "批量粘贴 JD", "上传 PDF 文件", "输入职位 URL"])
 
     if input_type == "直接粘贴 JD":
         jd_text = st.text_area("职位描述 (JD)", height=300, placeholder="请复制粘贴完整的职位描述...")
@@ -441,6 +442,112 @@ with tab2:
                         st.success("✅ JD 分析成功！")
                 except Exception as e:
                     st.error(f"分析失败: {e}")
+
+    elif input_type == "批量粘贴 JD":
+        # v2.1 M6.A.2: 批量预览/确认
+        st.markdown(
+            "一次粘贴多条 JD，**用 `---` 或连续空行分隔**。"
+            "下一行会解析出列表预览，可勾选后批量保存（自动跑分类 + 切分 + 向量化）。"
+        )
+        batch_text = st.text_area(
+            "批量 JD（多条）", height=300,
+            placeholder="JD 1...\n\n---\n\nJD 2...\n\n---\n\nJD 3...",
+            key="batch_jd_input",
+        )
+
+        # 切分：先按 --- 分，再按 2+ 连续空行兜底
+        def _split_batch(raw: str):
+            if not raw or not raw.strip():
+                return []
+            parts = [p.strip() for p in re.split(r"^\s*---+\s*$", raw, flags=re.MULTILINE) if p.strip()]
+            if len(parts) <= 1:
+                parts = [p.strip() for p in re.split(r"\n\s*\n\s*\n+", raw) if p.strip()]
+            return parts
+
+        if st.button("预览解析", key="batch_preview_btn") and batch_text:
+            pieces = _split_batch(batch_text)
+            if not pieces:
+                st.warning("未检测到有效 JD，请确认用 `---` 或两空行分隔。")
+            else:
+                st.session_state["batch_pieces"] = pieces
+                st.success(f"已切出 {len(pieces)} 条 JD，下方可勾选保存。")
+
+        pieces = st.session_state.get("batch_pieces") or []
+        if pieces:
+            st.markdown(f"### 预览（{len(pieces)} 条）")
+            cols = st.columns([1, 6])
+            with cols[0]:
+                if st.button("全选", key="batch_sel_all"):
+                    st.session_state["batch_sel"] = list(range(len(pieces)))
+                if st.button("反选", key="batch_sel_inv"):
+                    cur = set(st.session_state.get("batch_sel", []))
+                    st.session_state["batch_sel"] = [i for i in range(len(pieces)) if i not in cur]
+            selected = []
+            for i, p in enumerate(pieces):
+                preview = p[:120].replace("\n", " ")
+                if len(p) > 120:
+                    preview += "…"
+                with cols[1]:
+                    chk = st.checkbox(f"#{i+1}  {preview}", key=f"batch_chk_{i}")
+                if chk:
+                    selected.append(i)
+            st.session_state["batch_sel"] = selected
+
+            if st.button("💾 批量保存", type="primary", key="batch_save_btn"):
+                if not selected:
+                    st.warning("请至少勾选一条 JD。")
+                else:
+                    db = st.session_state.db
+                    llm_client = st.session_state.agent.llm_client if st.session_state.agent else None
+                    analyzer = JDAnalyzerEnhanced(llm_client=llm_client) if llm_client else None
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    from database.classifier import Classifier as _Bclf
+                    bclf = _Bclf()
+                    ok, fail = 0, 0
+                    progress = st.progress(0.0)
+                    for idx, i in enumerate(selected):
+                        jd_text_i = pieces[i]
+                        try:
+                            jd_for_db = {
+                                "url": f"pasted://batch/{i}/{len(jd_text_i)}chars",
+                                "title": "",
+                                "company": "",
+                                "raw_text": jd_text_i,
+                                "source": "manual_batch",
+                            }
+                            if analyzer is not None:
+                                try:
+                                    jd_result = loop.run_until_complete(analyzer.parse_from_text(jd_text_i))
+                                    jd_for_db.update({
+                                        "title": jd_result.get("title", ""),
+                                        "company": jd_result.get("company", ""),
+                                        "location": jd_result.get("location", ""),
+                                        "salary_str": jd_result.get("salary_range"),
+                                        "requirements": jd_result.get("core_requirements", []),
+                                        "preferred_requirements": jd_result.get("preferred_requirements", []),
+                                        "skills_required": jd_result.get("keywords", []),
+                                        "implicit_requirements": jd_result.get("implicit_requirements", ""),
+                                        "parsed_data": jd_result,
+                                    })
+                                except Exception as _ae:
+                                    st.caption(f"⚠️ #{i+1} LLM 解析失败，仅按 raw_text 入库：{_ae}")
+                            tags = bclf.classify(jd_for_db["title"], jd_text_i)
+                            jd_for_db.update(tags)
+                            jid = db.insert_jd(jd_for_db)
+                            try:
+                                from tools.jd_indexer import embed_and_store_jd_chunks
+                                embed_and_store_jd_chunks(db, jid, jd_text_i)
+                            except Exception as _ie:
+                                st.caption(f"⚠️ #{i+1} 向量化失败：{_ie}")
+                            ok += 1
+                        except Exception as e:
+                            fail += 1
+                            st.caption(f"❌ #{i+1} 保存失败：{e}")
+                        progress.progress((idx + 1) / len(selected))
+                    loop.close()
+                    st.success(f"批量保存完成：✅ {ok} 成功 / ❌ {fail} 失败")
+                    st.caption(f"DB 当前 JD 总数：{len(db.list_jds())}")
 
     elif input_type == "上传 PDF 文件":
         st.markdown("上传 JD 相关的 PDF 文件（简历、职位描述等），系统将自动解析、分块并向量化入库。")
@@ -643,6 +750,8 @@ with tab3:
                                 'should_apply': 1 if mr_payload.get('should_apply') else 0,
                             })
                             st.session_state.last_match_id = match_id
+                            # v2.1 M6.A.3: 供 AI 浮窗上下文使用
+                            st.session_state.last_match_score = mr_payload.get('score')
                             st.caption(f"💾 已记录匹配 ID: `{match_id[:8]}` (Tab6 投递历史可查)")
 
                             # v2.1 M2: 同步把每条 recommendation 写入 optimizations 表
@@ -1395,3 +1504,57 @@ with tab6:
                 if m.get("reasoning"):
                     st.markdown("**匹配理由**:")
                     st.caption(m["reasoning"])
+
+
+# =====================================================
+# v2.1 M6.A.3: 右下角 AI 聊天浮窗
+# =====================================================
+with st.sidebar:
+    with st.expander("💬 AI 求职助手", expanded=False):
+        st.caption("基于当前简历 / 最近 JD / 匹配分回答。无需切换 Tab。")
+
+        # 初始化对话历史
+        if "ai_chat_history" not in st.session_state:
+            st.session_state.ai_chat_history = []
+
+        # 历史气泡（仅展示最近 6 条避免侧栏爆长）
+        for msg in st.session_state.ai_chat_history[-6:]:
+            role = msg.get("role", "user")
+            with st.chat_message(role):
+                st.markdown(msg.get("content", ""))
+
+        user_input = st.chat_input("问点关于求职的…")
+        if user_input:
+            if not st.session_state.get("agent"):
+                st.error("⚠️ 请先在 Tab1 配置 LLM agent")
+            else:
+                st.session_state.ai_chat_history.append({"role": "user", "content": user_input})
+                with st.chat_message("user"):
+                    st.markdown(user_input)
+
+                # 注入项目上下文
+                ctx = {
+                    "resume": st.session_state.get("resume_data"),
+                    "jd": st.session_state.get("jd_result"),
+                    "match_score": st.session_state.get("last_match_score"),
+                    "history": st.session_state.ai_chat_history,
+                }
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    result = loop.run_until_complete(
+                        st.session_state.agent.chat_assistant(user_input, context=ctx)
+                    )
+                    loop.close()
+                    reply = result.get("reply", "(空)")
+                except Exception as e:
+                    reply = f"⚠️ 调用失败：{e}"
+
+                st.session_state.ai_chat_history.append({"role": "assistant", "content": reply})
+                with st.chat_message("assistant"):
+                    st.markdown(reply)
+
+                # 限制历史长度，避免无限增长
+                if len(st.session_state.ai_chat_history) > 20:
+                    st.session_state.ai_chat_history = st.session_state.ai_chat_history[-12:]
+                st.experimental_rerun()
