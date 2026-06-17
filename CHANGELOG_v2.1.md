@@ -168,3 +168,59 @@ URL 失败路径：通用 404 → ✅ raise；JobsDB 失效 URL → ✅ raise（
 
 ---
 
+## [M4 测试骨架] 2026-06-17
+
+### 范围
+为 v2.1 核心模块铺设 pytest 单测骨架与 CI 雏形。目标不是高覆盖率，而是「核心 5 模块各 ≥3 用例 + CI 可执行」，把 M2/M3 已落地的写入与 RAG 路径锁死，下游 M5/M6 改动时可第一时间发现回归。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 测试基建 | 新增 `pytest.ini`：testpaths=tests / asyncio auto / strict-markers / 自定义 marker（slow/integration/requires_model）/ 默认过滤 DeprecationWarning | `pytest.ini` |
+| 测试基建 | 新增 `tests/conftest.py`：`tmp_db`（每用例独立 SqliteBackend）、`mock_embedder`（SHA-256 派生 8 维向量、零依赖、离线）、`mock_llm_client`（VolcanoClient stub） | `tests/conftest.py` |
+| 单测 — Repository | 新增 `tests/unit/test_repository.py`：覆盖 resumes/jds/match_history/optimizations/knowledge_chunks/quality_checks 的 insert ↔ get round-trip；soft_delete_jd 级联 chunks；update_match_applied / update_match_feedback / update_optimization_adopted；embedding JSON BLOB round-trip — 共 14 用例 | `tests/unit/test_repository.py` |
+| 单测 — Chunker | 新增 `tests/unit/test_chunker.py`：4 类 chunk_type 中文 + 英文章节标题命中、bullet 前缀剥除、heading_path 保留、超长按句号切分、过短过滤、无标题兜底 overview、空输入 — 共 9 用例 | `tests/unit/test_chunker.py` |
+| 单测 — Embedder | 新增 `tests/unit/test_embedder.py`：通过 monkeypatch 重置单例 + 注入 fake `SentenceTransformer`，验证 `dim` / `embed` / `embed_batch` / 空字符串 / 空列表 / L2 归一化 / 单例语义；不下载真实 95MB 模型 — 共 7 用例 | `tests/unit/test_embedder.py` |
+| 单测 — Classifier | 新增 `tests/unit/test_classifier.py`：Layer 1 精确命中 + 长度优先 + 中文标题；Layer 3 fallback 全 None；返回字段契约 — 共 5 用例 | `tests/unit/test_classifier.py` |
+| 集成测 | 新增 `tests/integration/test_match_flow.py`：JD 入库 → `embed_and_store_jd_chunks`（mock 8 维向量）→ `search_similar_chunks`（含 chunk_type 加权）→ `insert_match` → 软删 JD 后检索不再命中；空 raw_text 静默 skip — 共 2 用例 | `tests/integration/test_match_flow.py` |
+| CI | 新增 `.github/workflows/test.yml`：Python 3.11 + 仅安装最小依赖（pytest/pytest-asyncio/pytest-cov/loguru/numpy/pydantic/python-dotenv）+ 跑全量 sqlite-only 测试 + 上传 coverage.xml artifact；mock_embedder 让 CI 不依赖 sentence-transformers/playwright 等大件 | `.github/workflows/test.yml` |
+| 清理 | `tests/test_integration.py`（v2 升级遗留 smoke 脚本）改名为 `tests/_legacy_smoke.py`，避开 pytest collection；同名归档版仍在 `scripts/legacy/`，行为不变 | `tests/_legacy_smoke.py` |
+
+### 影响范围
+- **本地开发**：`pip install pytest pytest-asyncio pytest-cov` 后 `pytest tests/ -v` 全绿（4 秒内）。无需联网，无需下载模型，无需 docker。
+- **CI**：push / PR / 手动触发都跑；目前仅 sqlite 路径，pgvector 集成等 M5 切到 PG 后再加。
+- **未引入新 prod 依赖**：所有测试用 fixture 或 monkeypatch 替换重物，prod 代码零改动。
+
+### 自动化验证结果
+
+```
+$ pytest tests/ -v
+============================= 35 passed in 4.08s ==============================
+
+$ pytest tests/ --cov=database --cov=tools --cov-report=term
+core 模块覆盖率：
+  database/backends/sqlite_backend.py  65%   ≥60% ✓
+  database/classifier.py               89%   ≥60% ✓
+  tools/chunker.py                    100%   ≥60% ✓
+  tools/embedder.py                    81%   ≥60% ✓
+  tools/jd_indexer.py                  65%   ≥60% ✓
+```
+
+| 模块 | 用例数 | 通过 |
+|---|---|---|
+| Repository (round-trip) | 14 | ✓ |
+| Chunker | 9 | ✓ |
+| Embedder (mock) | 7 | ✓ |
+| Classifier (3 层) | 5 | ✓ |
+| Match flow (集成) | 2 | ✓ |
+| **总计** | **35** | **35** |
+
+### 已知遗留
+- `tools/llm.py` 仅 26% 覆盖（async + 缓存路径），`tools/resume_parser.py` 0%（依赖真 PDF/LLM），都属于「测试成本 > 收益」的暗路径，留待 M6 收尾时根据需要补 mock。
+- `database/backends/postgres_backend.py` 0%：M5 切 PG 后用同样 fixture 思路加一层 PG-only 测试（需要 docker compose 起 pgvector）。
+- 集成测里的 `mock_embedder` 用 8 维 SHA-256 向量，能验证「写入→检索→排序」的链路通顺，但语义相关性不真，**不能替代** `scripts/verify_m3.py` 的端到端验证。两条路并行保留。
+- chunker 的 `_cap_length` 依赖句号后有空白才能触发切分，对纯中文连排（无空格）会保留长 chunk；这是已知边界，未拆解为单独 patch。
+
+---
+

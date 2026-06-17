@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install minimal test deps
+        # M4 雏形：仅装运行测试所需的轻量依赖；不装 sentence-transformers / playwright 等重物。
+        # mock_embedder fixture 用 SHA-256 派生向量，离线零依赖。
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio pytest-cov loguru numpy pydantic python-dotenv
+
+      - name: Run unit + integration tests (sqlite only)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=database \
+            --cov=tools/chunker \
+            --cov=tools/embedder \
+            --cov=tools/jd_indexer \
+            --cov-report=term-missing \
+            --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
