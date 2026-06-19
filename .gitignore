@@ -97,3 +97,12 @@ Thumbs.db
 *.tmp
 *.bak
 *.swp
+
+# Claude Code 本地状态
+.claude/
+
+# 运行时知识库（用户 JD 数据，不入仓库）
+data/knowledge_bases/
+
+# 推送清单（仅本地使用，不入仓库历史）
+PUSH_CHECKLIST.md

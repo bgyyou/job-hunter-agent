@@ -1,0 +1,39 @@
+#!/bin/sh
+# JobHunter v2.1 secret-scan pre-commit hook
+# 阻止任何 sk-* 形式的硬编码密钥或 .env 真文件入仓
+# 例外：.env.example、本 hook 文件本身、CHANGELOG/README 文档示例
+
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+violations=0
+
+for f in $staged; do
+    case "$f" in
+        .env|*/.env)
+            echo "❌ 拒绝提交真 .env 文件：$f" >&2
+            echo "   .env 应永远在 .gitignore 中。如需发布模板请改 .env.example。" >&2
+            violations=$((violations + 1))
+            ;;
+        .env.example|*.md|.git/hooks/pre-commit)
+            ;;
+        *)
+            if git diff --cached "$f" | grep -E '^\+.*api[_-]?key\s*=\s*["'\'']sk-[A-Za-z0-9]{20,}' >/dev/null 2>&1; then
+                echo "❌ 检测到硬编码 API key：$f" >&2
+                echo "   请改为 os.environ.get(\"VOLCANO_API_KEY\") 或类似形式。" >&2
+                violations=$((violations + 1))
+            fi
+            ;;
+    esac
+done
+
+if [ "$violations" -gt 0 ]; then
+    echo "" >&2
+    echo "🛑 提交被阻断，发现 $violations 处密钥风险。" >&2
+    echo "   如确认无误想跳过本次检查，可加 --no-verify（不推荐）。" >&2
+    exit 1
+fi
+
+exit 0

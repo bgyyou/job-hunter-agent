@@ -420,4 +420,36 @@ pytest tests/ -v
 - **PG-only 测试**：仍未补，与 M5 遗留一致；不在 M6 范围内。
 
 ---
+## [P0 开源就绪] 2026-06-17
 
+> 用户决定把项目开源到 GitHub 并分享给非技术朋友，触发本批次工作。范围限定 P0.1（密钥治理）和 P0.5（README + 首启向导），其余 P0 项后续按需推进。
+
+### P0.1 密钥泄露处理
+- **代码层**：`examples/llm_usage.py` 移除 2 处硬编码 `sk-Q3d6...` key，改为 `os.environ.get("AGNES_API_KEY") or os.environ.get("VOLCANO_API_KEY")`，缺 key 时直接 raise `RuntimeError` 提示用户配 .env。
+- **history 层**：用 `git filter-repo --replace-text` 把已泄露的 Volcano key 在全部 9 个 commit 中替换为 `REDACTED_LEAKED_KEY_ROTATED_2026_06_17`，旧 9 commit 全部 SHA 重写（af29e4b → be644d9 等）。reflog 已 expire，git gc --prune=now --aggressive 已运行，泄露 key 完全不可达。AGNES key 经 grep 全 history 确认从未入仓。
+- **防回流**：新增 `tools/githooks/pre-commit`（仓库副本）+ `tools/githooks/install.sh`（一键安装到 `.git/hooks/`）。钩子拦截两类：(1) `.env` 真文件入仓；(2) 任何 diff 新增行匹配 `api_key="sk-XXX"` 形式。已用 `_fake_leak.py` 实测拦截成功，exit 1 + 红色提示。`.env.example/*.md` 显式例外。
+- **用户侧动作（已通过 AskUserQuestion 确认）**：用户在 Volcano/Agnes 控制台轮换泄露的 sk-Q3d6... key（CLI 这边无法替用户做，靠用户自行执行）。
+
+### P0.5 首次运行配置向导 + README
+- **新增 `setup_wizard.py`**：插在 `web_app.py` 的 `load_dotenv()` 后、`st.set_page_config()` 前。如检测 `VOLCANO_API_KEY` 缺失或仍为 `your_api_key_here`，渲染配置页：API Key 输入（password 类型）+ 数据库选择（SQLite / PostgreSQL，默认 SQLite）+ 高级选项（自定义 base URL / 模型名）。点保存触发 `_patch_env`，用就地替换 + 末尾追加策略写入 `.env`，**保留所有非 key 字段**（已用 smoke test 验证）。保存后自动 `st.rerun()` 进入主程序。
+- **`.env.example` 重排**：把 `VOLCANO_API_KEY` 提到顶部并加申请链接注释；`DATABASE_URL` 默认从 PG 切回 SQLite（用户场景：朋友分享，零配置优先），PG 改注释为可选高级路径。
+- **README 重写**：从 251 行散乱内容压缩成"三步上手 / 主要功能 / 数据架构 / 爬虫 / 测试 / 项目结构"六段式。明确写出**不内置 demo key**的安全理由（防 GitHub secret scanner 抓取后被滥用），同时给清晰的 Agnes / 火山方舟申请链接。
+
+### 端到端验证
+| 检查项 | 期望 | 实际 |
+|---|---|---|
+| `git log --all -S "<leaked-key-prefix-redacted>"` | 空 | 空 ✓ |
+| `git reflog` 含旧 commit | 否 | 否（已 expire + gc） ✓ |
+| pre-commit 拦截 fake key | exit 1 | exit 1 + 提示 ✓ |
+| pre-commit 放行普通文件 | exit 0 | （回归保留 35/35 测试可证） ✓ |
+| `setup_wizard._is_configured()` 占位符识别 | False | False ✓ |
+| `setup_wizard._is_configured()` 真 key 识别 | True | True ✓ |
+| `_patch_env` 不破坏现有 .env | 其他键完好 | ✓ |
+| 当前 .env 已配 → 启动跳过向导 | True | True ✓ |
+
+### 已知遗留 / 后续 P0
+- **demo key 决策**：用户初选"内置 demo key"，CLI 复议后未明确确认。当前实现**不内置任何 demo**（更安全），如要回到 demo 路线只需在 `setup_wizard.py` 的 `PLACEHOLDER` 检查前加一段"如未配置则注入 hardcoded demo key"，但风险已在沟通中说明。
+- **本批未启动 GitHub Actions 加固**（P0.2）、**未做 pip-compile lock**（P0.3）、**未补完整 docstring**（P0.4）。这些列在原 P0 清单但用户只点了 P0.1 + P0.5，按"用户没要的不做"原则未越界。
+- **首次启动会下 BGE 模型 ~95MB**：朋友首启时这一步耗时较长（取决于网速），向导未提示。可后续在向导上加一行"首次进入主程序后会下载 95MB 中文向量模型"提示。
+
+---

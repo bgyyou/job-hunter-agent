@@ -19,6 +19,10 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+# v2.1 P0.5: 首次运行配置向导（无 key 时阻断在 set_page_config 之前）
+from setup_wizard import run_if_needed as _run_setup_wizard
+_run_setup_wizard()
+
 # v2.1 M1.5: 启用 loguru 滚动日志（20MB / 7 天）
 from config.settings import settings
 settings.setup_logging()
