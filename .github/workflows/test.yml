@@ -50,7 +50,8 @@ jobs:
             "loguru==0.7.3" \
             "numpy==2.4.6" \
             "pydantic==2.13.4" \
-            "python-dotenv==1.2.2"
+            "python-dotenv==1.2.2" \
+            "diskcache==5.6.3"
 
       - name: Run unit + integration tests (sqlite only)
         env:
