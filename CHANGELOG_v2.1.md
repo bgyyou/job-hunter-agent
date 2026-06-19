@@ -453,3 +453,46 @@ pytest tests/ -v
 - **首次启动会下 BGE 模型 ~95MB**：朋友首启时这一步耗时较长（取决于网速），向导未提示。可后续在向导上加一行"首次进入主程序后会下载 95MB 中文向量模型"提示。
 
 ---
+## [P0.2 + P0.3 + P0.4 开源就绪批二] 2026-06-18
+
+> 用户在 P0.1/P0.5 跑通后追加："先继续p0.2 0.3和0.4吧"。本次三项并行收尾。
+
+### P0.2 GitHub Actions 加固
+- **`.github/workflows/test.yml`**：actions 全部从浮动 tag (`@v4`) 改为 SHA pin（防 tag 被重指向恶意 commit）；新增 `concurrency` 取消同 ref 重复 run；新增最小权限 `permissions: contents: read`；matrix 扩到 Python 3.11 + 3.12；`timeout-minutes: 15` 防 hang；`cache-dependency-path: requirements.lock` 让缓存正确失效。
+- **新增 `.github/workflows/secret-scan.yml`**：gitleaks v2（SHA pinned）扫全 history + diff，触发条件覆盖 push / PR / 每周一定时。即便本地 pre-commit 钩子被 `--no-verify` 绕过，也能在 PR 阶段拦下。
+- **新增 `.gitleaks.toml`**：在默认规则集（数百种）之上追加项目专属规则（`sk-XXX` 形式 Volcano/Agnes/Anthropic key），以及白名单（`.env.example`、`README*.md`、`CHANGELOG*.md`、`tools/githooks/` 中的占位符）。
+- **新增 `.github/dependabot.yml`**：每周一同时扫 GitHub Actions + pip 依赖；commit prefix 区分 ci/deps；版本策略 `increase-if-necessary`，让 dependabot 改 `requirements.in`，再由维护者手动 `pip-compile` 更新 lock。
+
+### P0.3 pip-compile 依赖锁定
+- **`requirements.in`**（新）：保留 loose 上限，作为人工编辑的真理之源。注释从中文改成英文（避免 Windows GBK 解码冲突）。`paddleocr` 标为按需手装（避免在 lock 里拖 2GB Paddle 依赖进 CI）。
+- **`requirements.lock`**（新，350 行）：`pip-compile --strip-extras` 全量解析，所有传递依赖固化到精确版本（`aiohttp==3.14.1` 等）。
+- **`requirements.txt`** 退化为 1 行 `-r requirements.lock`，向后兼容老安装命令；附顶部说明指引"改依赖请改 .in"。
+- **`requirements-dev.in`**（新）：在运行时依赖之上加 `pip-tools` / `ruff` / `interrogate`；与 main 分离，避免产线机器拖开发工具。
+- **CI 改进**：把 lock 中真实解析出的版本（`pytest==9.1.0` 等）固定到 workflow，避免 `pip install pytest` 这类隐式抓最新版的不可复现行为。
+- **本地验证**：35/35 测试通过；lock 文件 350 行；解析出 streamlit 1.51 / sentence-transformers 5.x / numpy 2.4.6 等核心依赖。
+
+### P0.4 核心模块 docstring 补全
+- **`database/backends/__init__.py`** 重写为带完整 docstring 的契约。每个 `@abstractmethod` 描述输入键、返回类型、副作用（软删 / 级联）。两个实现类无需重复，`help(backend.insert_resume)` 通过 MRO 看到这条 docstring。这是真正的"DRY 文档"。
+- **`tools/embedder.py`**：补 class / `_ensure_model` / `dim` / `embed` / `embed_batch` 的 docstring，强调 L2 归一化、HF 镜像 fallback、惰性加载语义。
+- **`tools/chunker.py`**：补 `Chunk` dataclass 各字段语义、`SemanticChunker` 类策略说明（为什么 bullet/段落级而非句级）、`_match_heading` / `_split_body` / `_cap_length` 的内部行为。
+- **`pyproject.toml`**（新）：interrogate 配置，`fail-under = 80`，忽略 init/magic/private（这些不是用户面的 API）。
+- **CI 新增 docstring-coverage job**：每次 push/PR 都跑 `interrogate -c pyproject.toml`，低于 80% 直接红。当前实测 83.8%，余出 3.8 个百分点的退化空间。
+
+### 端到端验证
+| 检查项 | 期望 | 实际 |
+|---|---|---|
+| `pip-compile` 出 lock 文件 | 350 行无报错 | ✓ |
+| `pip install -r requirements.txt` 仍能装 | 等价于 -r lock | ✓ |
+| pytest 全 35 个保持绿 | 35 passed | 35 passed in 3.40s ✓ |
+| interrogate 通过（≥80%） | passed | 83.8% ✓ |
+| `gitleaks --config .gitleaks.toml detect` 不报本地工作树 | 无 finding | （仅 CI 跑，本地未实测） |
+| GitHub Action SHA 全部 pin | 4/4 actions | ✓（checkout/setup-python/upload-artifact/gitleaks-action） |
+
+### 已知遗留
+- **CI 没装 `requirements.lock` 完整环境**：仍用手动列出的 7 个轻包，因为 `lock` 含 streamlit/torch/sentence-transformers，CI 不需要。完整 install 测试可在 release 节点单独跑（后续做）。
+- **`paddleocr` 不在 lock 中**：扫描件 OCR 路径在 CI 不验证。需要 OCR 的用户按 `requirements.in` 顶部提示自行 `pip install paddleocr`。
+- **interrogate 8 个文件仍 <80%**：`database/repository.py` (13%)、`backends/sqlite_backend.py` (21%)、`backends/postgres_backend.py` (33%)。基类已有契约 docstring，实现类不强求重复，所以阈值 80% 已是合理基线。后续若 raise 到 90%，需要给私有方法补，性价比低。
+- **依赖更新策略未自动化**：dependabot 提 PR 后仍需手动 `pip-compile` 重生成 lock。可后续加 `pre-commit-ci` 或 `actions/setup-python` + `pip-compile-action` 自动化，但跨平台兼容性（Windows GBK 已踩过坑）需要先解决。
+- **gitleaks 私有 license**：workflow 里引用了 `secrets.GITLEAKS_LICENSE`。公开仓库可省略；首次推 GitHub 后如告警 missing secret 可直接忽略。
+
+---

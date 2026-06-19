@@ -1,0 +1,35 @@
+# gitleaks 自定义配置
+# 继承默认规则集（覆盖 AWS / GCP / GitHub / Slack / Stripe / OpenAI 等数百种）
+# 然后追加我们项目专属的 Volcano / Agnes / Anthropic 规则与例外清单。
+[extend]
+useDefault = true
+
+[[rules]]
+id = "volcano-agnes-key"
+description = "Volcano / Agnes / OpenAI-compatible API key (sk-...)"
+regex = '''(?i)(api[_-]?key|api[_-]?token|secret)["'\s:=]{1,5}["']?(sk-[a-zA-Z0-9]{20,})["']?'''
+tags = ["api-key"]
+
+[[rules]]
+id = "anthropic-key"
+description = "Anthropic API key"
+regex = '''sk-ant-[a-zA-Z0-9_-]{20,}'''
+tags = ["api-key", "anthropic"]
+
+# ===== 例外（allowlist）=====
+# 文档 / 配置模板里的占位符不算泄露
+[allowlist]
+description = "Project-specific safe placeholders"
+regexes = [
+    '''your_api_key_here''',
+    '''REDACTED_LEAKED_KEY''',
+    '''sk-FAKEKEY''',
+    '''sk-realfake''',
+]
+paths = [
+    '''(?i)\.env\.example$''',
+    '''(?i)\.gitleaks\.toml$''',
+    '''(?i)CHANGELOG.*\.md$''',
+    '''(?i)README.*\.md$''',
+    '''(?i)tools/githooks/.*''',
+]

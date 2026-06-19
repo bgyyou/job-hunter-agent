@@ -1,0 +1,16 @@
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = true
+ignore-magic = true            # __aenter__/__aexit__/__new__/__init__ etc.
+ignore-private = true          # _internal helpers
+ignore-property-decorators = false
+ignore-module = false
+ignore-nested-functions = true
+ignore-nested-classes = true
+ignore-setters = true
+fail-under = 80                # baseline; raise gradually as we add docstrings
+exclude = ["tests", "scripts/legacy", ".venv", "build", "docs"]
+ignore-regex = ["^test_", "^_"]
+verbose = 1
+quiet = false
+color = true

@@ -48,22 +48,47 @@ _BULLET_PREFIX = re.compile(r"^\s*[•\-\*·▪◦‣⁃►▶]\s+|^\s*\d+[\.、
 
 @dataclass
 class Chunk:
+    """One semantic unit extracted from a JD.
+
+    Attributes:
+        chunk_text: The text content (between ``MIN_CHUNK_LEN`` and ``MAX_CHUNK_LEN`` chars).
+        chunk_type: One of ``CHUNK_TYPES`` — used for retrieval-time weighting.
+        heading_path: Stack of heading lines that led here (currently single-level).
+        keywords: Reserved for future TF-IDF style extraction; empty for now.
+    """
     chunk_text: str
     chunk_type: str
     heading_path: List[str]
     keywords: List[str]
 
     def to_dict(self) -> Dict:
+        """Serialize to a plain dict (suitable for ``insert_chunks_batch``)."""
         return asdict(self)
 
 
 class SemanticChunker:
-    """JD 文本 → 语义 chunk 列表。"""
+    """Section-aware JD text splitter.
 
-    MIN_CHUNK_LEN = 8       # 短于此则丢弃（单字符 bullet、空行残骸）
-    MAX_CHUNK_LEN = 800     # 长于此则按句号再切
+    The chunker walks the input line by line, classifies each line as either
+    a heading (mapped to one of ``CHUNK_TYPES``) or body text, then groups
+    body text under the most recent heading into bullet- or paragraph-sized
+    chunks. Long chunks are sentence-split to stay under ``MAX_CHUNK_LEN``.
+
+    Why this granularity: BGE-small-zh has a 512-token window, JD bullets
+    are typically <200 chars, so per-bullet chunks preserve semantic
+    coherence without exceeding the encoder budget. Going finer (sentence-level)
+    fragments meaning; going coarser (whole-section) loses retrieval precision.
+    """
+
+    MIN_CHUNK_LEN = 8       # Drop anything shorter (bullet residues, blank lines).
+    MAX_CHUNK_LEN = 800     # Force sentence-split above this.
 
     def split(self, text: str) -> List[Chunk]:
+        """Split JD text into ``Chunk`` objects.
+
+        Returns ``[]`` for empty input. If the text has no recognizable
+        headings AND is short, returns a single ``overview`` chunk as fallback.
+        """
         if not text or not text.strip():
             return []
 
@@ -120,6 +145,11 @@ class SemanticChunker:
         return chunks
 
     def _match_heading(self, line: str):
+        """Return chunk_type if ``line`` matches a heading pattern, else ``None``.
+
+        Lines longer than 40 chars are never treated as headings (long lines
+        with verb phrases like "negotiate contracts and..." would false-match).
+        """
         if len(line) > 40:
             return None
         for ct, pat in _HEADING_PATTERNS:
@@ -128,7 +158,12 @@ class SemanticChunker:
         return None
 
     def _split_body(self, body: List[str]) -> List[str]:
-        """把一节内容拆成单元：优先按 bullet，否则按空行段落。"""
+        """Split a single section's body lines into discrete units.
+
+        Bullet lines (``• item``, ``- item``, ``1. item``) become standalone units;
+        contiguous non-bullet lines are joined into paragraph units; blank lines
+        flush the paragraph buffer.
+        """
         units: List[str] = []
         buf: List[str] = []
 
@@ -154,6 +189,11 @@ class SemanticChunker:
         return units
 
     def _cap_length(self, text: str) -> List[str]:
+        """Sentence-split a too-long unit to keep each piece ≤ ``MAX_CHUNK_LEN``.
+
+        Uses Chinese (``。！？``) and English (``.!?``) sentence terminators.
+        Falls back to a hard char slice if no terminators are found.
+        """
         if len(text) <= self.MAX_CHUNK_LEN:
             return [text]
         # 用中英文句号粗切

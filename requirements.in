@@ -1,0 +1,60 @@
+# ==================== Core LLM ====================
+aiohttp>=3.9.0
+
+# ==================== Web Automation ====================
+playwright>=1.40.0
+
+# ==================== Data Processing ====================
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+
+# ==================== PDF/Document ====================
+pypdf>=4.0.0
+docx2txt>=0.8
+python-docx>=1.0.0
+PyMuPDF>=1.23.0
+# paddleocr is optional (only needed for scanned-image OCR);
+# kept out of the lock to avoid pulling 2GB of paddle deps into CI.
+# Install on demand: pip install "paddleocr>=2.7.0"
+
+# ==================== Utilities ====================
+rich>=13.7.0
+pyyaml>=6.0.1
+
+# ==================== Testing ====================
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# ==================== Monitoring & Tracing ====================
+opentelemetry-api>=1.21.0
+opentelemetry-sdk>=1.21.0
+
+# ==================== Encryption ====================
+cryptography>=41.0.0
+
+# ==================== Cache ====================
+diskcache>=5.6.3
+
+# ==================== Logger ====================
+loguru>=0.7.2
+
+# ==================== Web UI (Streamlit) ====================
+streamlit>=1.28.0
+
+# ==================== Crawler ====================
+httpx>=0.27.0
+fake-useragent>=1.4.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# ==================== PostgreSQL / pgvector ====================
+psycopg2-binary>=2.9.9
+pgvector>=0.2.0
+
+# ==================== Embedding / RAG (v2.1 M3) ====================
+sentence-transformers>=2.7.0
+numpy>=1.26.0
+
+# ==================== Migration tooling (v2.1 M5) ====================
+alembic>=1.13.0

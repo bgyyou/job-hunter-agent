@@ -1,0 +1,31 @@
+# Dependabot：每周扫一次过期依赖，避免 supply-chain 风险积累。
+# 频次设为 weekly 而非 daily，免得 PR 噪音淹没 main 工作流。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    open-pull-requests-limit: 5
+    # 锁文件由 pip-compile 维护；让 dependabot 改 requirements.in 后我们手动重 compile。
+    versioning-strategy: increase-if-necessary
+    labels:
+      - "dependencies"
+      - "python"

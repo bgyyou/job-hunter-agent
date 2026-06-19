@@ -20,7 +20,18 @@ _DEFAULT_DIM = 512
 
 
 class Embedder:
-    """本地语义嵌入（单例）。"""
+    """Process-wide singleton wrapping sentence-transformers BGE-small-zh-v1.5.
+
+    The model is loaded lazily on the first ``embed`` / ``embed_batch`` /
+    ``dim`` access — instantiating ``Embedder()`` is cheap and safe at import
+    time. Subsequent ``Embedder()`` calls return the same instance.
+
+    All output vectors are L2-normalized, so cosine similarity reduces to a
+    dot product. Default dim = 512 (BGE-small-zh).
+
+    Override the model with the ``EMBEDDING_MODEL`` env var, e.g. swap to
+    ``BAAI/bge-m3`` (1024-dim, multilingual).
+    """
 
     _instance: Optional["Embedder"] = None
     _lock = threading.Lock()
@@ -41,6 +52,11 @@ class Embedder:
         logger.info(f"Embedder initialized (lazy): model={self.model_name}")
 
     def _ensure_model(self):
+        """Load the underlying SentenceTransformer on first use.
+
+        On Chinese networks, sets ``HF_ENDPOINT=https://hf-mirror.com`` if
+        unset, so that HuggingFace Hub downloads succeed without a VPN.
+        """
         if self._model is not None:
             return
         # v2.1 M3.1: 国内访问 huggingface.co 经常超时，未配置时默认走镜像 hf-mirror.com
@@ -60,15 +76,28 @@ class Embedder:
 
     @property
     def dim(self) -> int:
+        """Output vector dimension (forces model load on first access)."""
         self._ensure_model()
         return self._dim or _DEFAULT_DIM
 
     def embed(self, text: str) -> List[float]:
-        """单条文本 → 归一化向量。"""
+        """Encode a single string into a unit-norm vector of length ``self.dim``."""
         return self.embed_batch([text])[0]
 
     def embed_batch(self, texts: List[str], batch_size: int = 32) -> List[List[float]]:
-        """批量文本 → 归一化向量列表。空文本返回零向量。"""
+        """Encode a batch of strings into unit-norm vectors.
+
+        Empty / whitespace-only inputs are silently replaced with ``" "`` to
+        keep the output length aligned with the input length (callers can rely
+        on positional correspondence).
+
+        Args:
+            texts: Strings to embed.
+            batch_size: Inner SentenceTransformer batch size; tune down on low-RAM hosts.
+
+        Returns:
+            ``len(texts)`` lists of floats, each of length ``self.dim``.
+        """
         if not texts:
             return []
         self._ensure_model()

@@ -1,0 +1,7 @@
+# Dev-only tools — used during development, not at runtime.
+# Compile: PYTHONUTF8=1 pip-compile --output-file=requirements-dev.lock requirements-dev.in
+-r requirements.in
+
+pip-tools>=7.4
+ruff>=0.5
+interrogate>=1.7
