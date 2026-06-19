@@ -3,6 +3,8 @@
 本地运行的 AI 求职闭环：简历解析 / JD 抓取 / 匹配评分 / 优化建议 / 投递追踪 / RAG 检索。
 零云依赖，全部数据存本机。
 
+![主界面](docs/screenshots/02_main_ui.png)
+
 ---
 
 ## 三步上手
@@ -29,6 +31,8 @@ streamlit run web_app.py
 - 粘贴你自己的 API Key（[Agnes 申请入口](https://apihub.agnes-ai.com/) / [火山方舟](https://www.volcengine.com/product/ark)）
 - 选数据库（默认 SQLite，零配置）
 - 点保存 → 自动写入 `.env` → 进入主程序
+
+![首次配置向导](docs/screenshots/01_setup_wizard.png)
 
 > 我们**不内置任何 demo key**——既防 GitHub 抓取后被滥用，也确保你的额度只属于你。
 
@@ -138,5 +142,8 @@ job-hunter-agent/
 ---
 
 ## License & 免责声明
+
+本仓库代码采用 [MIT License](LICENSE)，欢迎 fork、改造、二次分发。
+想贡献回来？先看 [CONTRIBUTING.md](CONTRIBUTING.md)（三分钟读完）。
 
 爬虫部分需遵守目标站点的 robots.txt / 服务条款，速率限制默认偏保守，请勿擅自调高 `CRAWLER_DAILY_LIMIT`。

@@ -496,3 +496,31 @@ pytest tests/ -v
 - **gitleaks 私有 license**：workflow 里引用了 `secrets.GITLEAKS_LICENSE`。公开仓库可省略；首次推 GitHub 后如告警 missing secret 可直接忽略。
 
 ---
+## [开源就绪批三：截图 + LICENSE + CONTRIBUTING + 推送清单] 2026-06-18
+
+> **目的**：把仓库从"代码可跑"拉到"陌生人能 fork"——README 有图、有 license、有贡献流程，推 GitHub 有手册。
+
+### 新增文件
+- `LICENSE` — MIT License。理由：朋友 fork 友好，后续要收紧到 Apache 2.0 也不破坏既有依赖。
+- `CONTRIBUTING.md` — 三分钟流程：本地装环境 / 提交规范 / PR 自检清单 / 不收的 PR 类型 / issue 模板。明文写"不收恢复 demo key 的 PR"，封堵安全后门。
+- `PUSH_CHECKLIST.md` — 推 GitHub 的精确步骤（已在 .gitignore，不进仓库历史）。`gh repo create --private --push` 一步到位 + 三条 CI 验证 + 转公开命令。
+- `scripts/capture_screenshots.py` — 一次性截图脚本：临时挪 `.env` → 跑独立 streamlit 实例 → playwright 全屏截图 → 恢复 `.env`。可随版本迭代重跑。
+- `docs/screenshots/01_setup_wizard.png` — 首次配置向导截图（73KB）。
+- `docs/screenshots/02_main_ui.png` — 主界面截图（74KB）。
+
+### README 改动
+- 顶部加主界面截图，"首次启动"段下加配置向导截图。访客打开 GitHub 即可直观看到产品形态。
+- 末尾"License & 免责声明"加 [MIT License](LICENSE) 与 [CONTRIBUTING.md](CONTRIBUTING.md) 链接。
+
+### 仍待用户手动完成
+- `gh auth login` + `gh repo create --private --source=. --push`（按 `PUSH_CHECKLIST.md` 走，约 5 分钟）。无法在 sandbox 内代办，因为需要浏览器登录交互。
+- 推后看 `gh run list`，三条 workflow 应全 success；secret-scan 若报 missing `GITLEAKS_LICENSE` secret，公开仓库可忽略。
+
+### 验证
+| 项 | 命令 | 期望 |
+|---|------|------|
+| LICENSE 存在 | `ls LICENSE` | 文件存在 |
+| CONTRIBUTING 存在 | `ls CONTRIBUTING.md` | 文件存在 |
+| 截图存在 | `ls docs/screenshots/*.png` | 2 个文件 |
+| README 引用截图 | `grep -c screenshots README.md` | ≥2 |
+
