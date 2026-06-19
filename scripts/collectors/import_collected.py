@@ -19,7 +19,7 @@ import json
 from loguru import logger
 
 from tools.knowledge_base import KnowledgeBase
-from tools.llm import VolcanoClient
+from tools.llm import OpenAICompatibleClient
 from dotenv import load_dotenv
 import os
 
@@ -53,24 +53,24 @@ async def import_collected_jobs():
     print(f"\n找到 {len(job_files)} 个收集的职位\n")
 
     # 初始化 LLM 和知识库
-    api_key = os.getenv("VOLCANO_API_KEY", "")
-    api_url = os.getenv("VOLCANO_CODING_API_URL", "https://apihub.agnes-ai.com/v1")
-    model = os.getenv("VOLCANO_MODEL", "agnes-2.0-flash")
+    api_key = os.getenv("LLM_API_KEY", "")
+    api_url = os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1")
+    model = os.getenv("LLM_MODEL", "agnes-2.0-flash")
 
     if not api_key:
-        print("⚠️  没有找到 VOLCANO_API_KEY，请设置后再运行")
+        print("⚠️  没有找到 LLM_API_KEY，请设置后再运行")
         print("可以在 .env 文件中设置，或者设置环境变量")
 
     print("初始化知识库...")
     kb = KnowledgeBase()
 
     if api_key:
-        llm = VolcanoClient(
+        llm = OpenAICompatibleClient(
             api_key=api_key,
             api_url=api_url,
             model=model,
             is_coding_api=True,
-            use_anthropic_format=os.getenv("VOLCANO_USE_ANTHROPIC_FORMAT", "false").lower() == "true",
+            use_anthropic_format=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true",
         )
         kb.set_llm_client(llm)
         print("✅ LLM 已初始化，将自动分类职位")

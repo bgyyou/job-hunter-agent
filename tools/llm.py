@@ -270,9 +270,9 @@ class LLMClient(ABC):
         return input_cost + output_cost
 
 
-class VolcanoClient(LLMClient):
+class OpenAICompatibleClient(LLMClient):
     """
-    火山引擎客户端（支持豆包等模型）
+    OpenAI 兼容协议 LLM 客户端（默认接 Agnes，可切火山方舟 / DeepSeek / OpenAI 等）
     支持 OpenAI 兼容接口和 Anthropic 格式接口
     """
 
@@ -287,17 +287,15 @@ class VolcanoClient(LLMClient):
         use_anthropic_format: bool = False
     ):
         """
-        初始化火山引擎客户端
+        初始化 OpenAI 兼容客户端
 
         Args:
             api_key: API Key
-            api_url: API 地址
-                - Chat API: https://apihub.agnes-ai.com/v1
-                - Coding API: https://apihub.agnes-ai.com/v1
+            api_url: API 地址（如 https://apihub.agnes-ai.com/v1）
             model: 模型名称（如：agnes-2.0-flash）
             cache_dir: 缓存目录
             pricing: 自定义定价（元/千tokens）
-            is_coding_api: 是否使用 Coding API（默认 False，使用 Chat API）
+            is_coding_api: 历史保留参数（早期火山 Coding API 使用），不影响当前路径
             use_anthropic_format: 是否使用 Anthropic 格式（默认 False，设为 True 以使用 Claude Code 相同的方式）
         """
         super().__init__(model, cache_dir)

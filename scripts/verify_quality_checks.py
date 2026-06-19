@@ -1,6 +1,6 @@
 """验证 quality_checks 埋点真实落库（M5/N2 兜底）。
 
-不依赖 Streamlit UI：直接调 VolcanoClient.analyze 跑一次真实 LLM，
+不依赖 Streamlit UI：直接调 OpenAICompatibleClient.analyze 跑一次真实 LLM，
 然后从 quality_checks 表读回，确认 details 包含 model/latency_ms/tokens 等字段。
 
 用法：
@@ -23,27 +23,25 @@ load_dotenv(ROOT / ".env")
 
 async def main() -> int:
     from database.factory import get_db
-    from tools.llm import LLMMessage, VolcanoClient
+    from tools.llm import LLMMessage, OpenAICompatibleClient
 
     db = get_db()
     backend_name = type(db).__name__
     before = len(db.list_quality_checks(check_type="llm_call"))
     print(f"[setup] backend={backend_name}  llm_call rows before = {before}")
 
-    api_key = os.environ.get("VOLCANO_API_KEY")
+    api_key = os.environ.get("LLM_API_KEY")
     if not api_key or api_key == "your_api_key_here":
-        print("[fatal] VOLCANO_API_KEY 未配置")
+        print("[fatal] LLM_API_KEY 未配置")
         return 2
 
-    api_url = os.environ.get("VOLCANO_CODING_API_URL") or os.environ.get(
-        "VOLCANO_CHAT_API_URL", "https://ark.cn-beijing.volces.com/api/v3"
-    )
-    model = os.environ.get("VOLCANO_MODEL", "deepseek-v3-1-250821")
-    use_anthropic = os.environ.get("VOLCANO_USE_ANTHROPIC_FORMAT", "false").lower() == "true"
+    api_url = os.environ.get("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1")
+    model = os.environ.get("LLM_MODEL", "agnes-2.0-flash")
+    use_anthropic = os.environ.get("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true"
 
     print(f"[setup] model={model}  url={api_url}  anthropic_fmt={use_anthropic}")
 
-    client = VolcanoClient(
+    client = OpenAICompatibleClient(
         api_key=api_key,
         api_url=api_url,
         model=model,

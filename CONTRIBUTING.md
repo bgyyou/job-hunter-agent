@@ -15,7 +15,7 @@ pip install -r requirements-dev.in    # ruff / interrogate / pip-tools
 
 # 配置自己的 API Key（不要用任何"公共 demo key"——没有这种东西）
 cp .env.example .env
-# 编辑 .env，把 VOLCANO_API_KEY 替换成你自己的
+# 编辑 .env，把 LLM_API_KEY 替换成你自己的
 
 # 装 pre-commit 钩子（拦截 sk-XXX / .env 误提交）
 bash tools/githooks/install.sh

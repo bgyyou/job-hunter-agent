@@ -570,3 +570,34 @@ pytest tests/ -v
 - 真跑一次 `streamlit run web_app.py` 走完匹配流程 → `quality_checks` 表见到第一条 `llm_call` 记录。
 - 按 `PUSH_CHECKLIST.md` 推 GitHub 验证三条 workflow。
 
+
+---
+
+## 批五 N7 — 命名脱敏：VOLCANO_* → LLM_*（2026-06-20）
+
+### 动机
+项目现接 Agnes（apihub.agnes-ai.com），但代码里仍以 `VOLCANO_*` 命名变量、把客户端类叫 `VolcanoClient`，外人读不懂、对接其他 OpenAI 兼容服务（DeepSeek / OpenAI / 火山方舟）也别扭。Agnes API 公开免费，没有"火山引擎专属"的事实约束，趁推 GitHub 之前一次性收口为 provider-neutral 命名。
+
+### 改动一览
+| 维度 | 改动 | 涉及 |
+|------|------|------|
+| 配置字段 | `volcano_api_key/coding_api_url/chat_api_url/model/use_coding_api/use_anthropic_format` 6 个字段合并为 `llm_api_key/base_url/model/use_anthropic_format` 4 个；`chat_api_url` 与 `use_coding_api` 是死配置直接删 | `config/settings.py` |
+| 客户端类 | `VolcanoClient` → `OpenAICompatibleClient`，docstring 同步去掉"火山引擎"措辞；`is_coding_api` 入参保留作 noop 兼容（外部调用还在传 False，不影响行为） | `tools/llm.py`、`tools/__init__.py` 重导出 |
+| Streamlit 入口 | 配置向导与侧边栏字段统一读 `LLM_API_KEY/BASE_URL/MODEL`；UI 文案"火山引擎 API Key"改为"LLM API Key" | `web_app.py`、`setup_wizard.py` |
+| 验证 / 采集脚本 | `scripts/verify_quality_checks.py`、`verify_jobsdb_real.py`、`verify_m2_5.py`、`scripts/collectors/import_collected.py`、`manual_collector.py`、`capture_screenshots.py` 全部跟新命名 | `scripts/**` |
+| 测试 | `tests/conftest.py`、`tests/unit/test_llm_client.py`、`tests/unit/test_llm_quality_checks.py` 改用 `OpenAICompatibleClient` | `tests/**` |
+| pre-commit hook | 错误提示文案改读 `LLM_API_KEY` 而不是 `VOLCANO_API_KEY` | `tools/githooks/pre-commit` |
+| 文档 / 示例 | `.env.example` 重写顶部块为 `LLM_*`、加注释说明可切到任何 OpenAI 兼容服务；`CONTRIBUTING.md` 同步 | `.env.example`、`CONTRIBUTING.md` |
+| 用户 .env | 用户本地 `.env` 同步（只重命名，不动密钥值），同时清理无人消费的死字段 `AGNES_API_KEY/AGNES_BASE_URL/AGNES_MODEL` | `.env`（gitignored，仅本地落地） |
+
+### 显式不动
+- `scripts/legacy/v1_archive/**` 历史归档保留原样
+- 本 CHANGELOG 早期批次中提到的 `VolcanoClient` / `VOLCANO_API_KEY` 不回溯改写——历史叙事保持原文方便复盘
+
+### 验证
+- `pytest tests/ -q` → **81 passed in 9.23s**（所有用例零回归）
+- `grep -r 'VolcanoClient\|VOLCANO_\|volcano_' --include='*.py'` 在生效代码路径下零命中（仅 CHANGELOG 历史叙事 + legacy 归档保留）
+
+### 不做向后兼容别名
+按 CLAUDE.md 一次性硬切——保留 `VolcanoClient = OpenAICompatibleClient` 这种过渡 alias 反而会让下次读者再花精力删一次。
+

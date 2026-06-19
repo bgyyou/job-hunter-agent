@@ -10,13 +10,13 @@ PROJECT_ROOT = Path(__file__).parent.parent
 class Settings(BaseSettings):
     """配置管理 - 支持从 .env 文件加载"""
 
-    # ==================== 火山引擎 API 配置 ====================
-    volcano_api_key: str = Field("", env="VOLCANO_API_KEY")
-    volcano_coding_api_url: str = Field("", env="VOLCANO_CODING_API_URL")
-    volcano_chat_api_url: str = Field("", env="VOLCANO_CHAT_API_URL")
-    volcano_model: str = Field("", env="VOLCANO_MODEL")
-    volcano_use_coding_api: str = Field("false", env="VOLCANO_USE_CODING_API")
-    volcano_use_anthropic_format: bool = Field(True, env="VOLCANO_USE_ANTHROPIC_FORMAT")
+    # ==================== LLM API 配置（OpenAI 兼容协议）====================
+    # 当前接 Agnes（apihub.agnes-ai.com）。代码协议 provider-neutral，
+    # 切回火山引擎 / OpenAI / DeepSeek 只需改 .env 三个变量。
+    llm_api_key: str = Field("", env="LLM_API_KEY")
+    llm_base_url: str = Field("", env="LLM_BASE_URL")
+    llm_model: str = Field("", env="LLM_MODEL")
+    llm_use_anthropic_format: bool = Field(False, env="LLM_USE_ANTHROPIC_FORMAT")
 
     # ==================== Anthropic API 配置 ====================
     anthropic_api_key: str = Field("your_api_key_here", env="ANTHROPIC_API_KEY")

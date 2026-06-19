@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for VolcanoClient quality_checks instrumentation.
+"""Tests for OpenAICompatibleClient quality_checks instrumentation.
 
 埋点目标：每次 LLM 调用（成功 / 失败 / 缓存命中）落一条 quality_checks
 记录 latency_ms / tokens / cache_hit / ok / error，便于复盘延迟分布与命中率。
@@ -18,11 +18,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-from tools.llm import LLMMessage, LLMResponse, VolcanoClient
+from tools.llm import LLMMessage, LLMResponse, OpenAICompatibleClient
 
 
 def _make_client(tmp_path):
-    return VolcanoClient(
+    return OpenAICompatibleClient(
         api_key="sk-FAKEKEY",
         api_url="https://example.invalid/v1",
         model="agnes-2.0-flash",

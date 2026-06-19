@@ -27,7 +27,7 @@ _run_setup_wizard()
 from config.settings import settings
 settings.setup_logging()
 
-from tools.llm import VolcanoClient
+from tools.llm import OpenAICompatibleClient
 from tools.resume_parser import ResumeParser
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced
 from tools.scraper.scraper_manager import ScraperManager
@@ -155,17 +155,17 @@ with st.sidebar:
 
     st.markdown("### 🔧 设置")
 
-    api_key = st.text_input("火山引擎 API Key", type="password", value=os.getenv("VOLCANO_API_KEY", ""))
-    api_url = st.text_input("API URL", value=os.getenv("VOLCANO_CODING_API_URL", "https://apihub.agnes-ai.com/v1"))
-    model = st.text_input("模型", value=os.getenv("VOLCANO_MODEL", "agnes-2.0-flash"))
-    use_anthropic_format = st.checkbox("使用 Anthropic 格式", value=os.getenv("VOLCANO_USE_ANTHROPIC_FORMAT", "false").lower() == "true")
+    api_key = st.text_input("LLM API Key", type="password", value=os.getenv("LLM_API_KEY", ""))
+    api_url = st.text_input("API Base URL", value=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1"))
+    model = st.text_input("模型", value=os.getenv("LLM_MODEL", "agnes-2.0-flash"))
+    use_anthropic_format = st.checkbox("使用 Anthropic 格式", value=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true")
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("初始化 Agent", type="primary"):
             try:
                 with st.spinner("正在初始化 Agent..."):
-                    llm_client = VolcanoClient(
+                    llm_client = OpenAICompatibleClient(
                         api_key=api_key,
                         api_url=api_url.rstrip('/'),
                         model=model,
@@ -188,7 +188,7 @@ with st.sidebar:
             else:
                 try:
                     with st.spinner("正在测试 LLM 连接..."):
-                        llm_client = VolcanoClient(
+                        llm_client = OpenAICompatibleClient(
                             api_key=api_key,
                             api_url=api_url.rstrip('/'),
                             model=model,

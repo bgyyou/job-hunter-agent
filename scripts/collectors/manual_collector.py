@@ -149,19 +149,19 @@ async def import_to_knowledge_base(jd_dir: Path):
 
     try:
         from tools.knowledge_base import KnowledgeBase
-        from tools.llm import VolcanoClient
+        from tools.llm import OpenAICompatibleClient
         import os
         from dotenv import load_dotenv
 
         load_dotenv()
 
         # 初始化 LLM 客户端
-        llm_client = VolcanoClient(
-            api_key=os.getenv("VOLCANO_API_KEY", ""),
-            api_url=os.getenv("VOLCANO_CODING_API_URL", "https://apihub.agnes-ai.com/v1"),
-            model=os.getenv("VOLCANO_MODEL", "agnes-2.0-flash"),
+        llm_client = OpenAICompatibleClient(
+            api_key=os.getenv("LLM_API_KEY", ""),
+            api_url=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1"),
+            model=os.getenv("LLM_MODEL", "agnes-2.0-flash"),
             is_coding_api=True,
-            use_anthropic_format=os.getenv("VOLCANO_USE_ANTHROPIC_FORMAT", "false").lower() == "true"
+            use_anthropic_format=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true"
         )
 
         kb = KnowledgeBase()

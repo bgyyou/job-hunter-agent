@@ -18,7 +18,7 @@ import os
 import json
 
 from agents.base import BaseAgent, AgentPlan
-from tools.llm import VolcanoClient, LLMMessage
+from tools.llm import OpenAICompatibleClient, LLMMessage
 from tools.resume_parser import ResumeParser, ResumeData
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced
 from tools.scraper.auto_submitter import AutoSubmitter
@@ -42,7 +42,7 @@ class CoordinatorAgent(BaseAgent):
     7. 投递决策
     """
 
-    def __init__(self, llm_client: VolcanoClient, cache: Optional[Cache] = None):
+    def __init__(self, llm_client: OpenAICompatibleClient, cache: Optional[Cache] = None):
         """
         初始化协调者 Agent
 

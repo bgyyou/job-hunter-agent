@@ -22,7 +22,7 @@ for f in $staged; do
         *)
             if git diff --cached "$f" | grep -E '^\+.*api[_-]?key\s*=\s*["'\'']sk-[A-Za-z0-9]{20,}' >/dev/null 2>&1; then
                 echo "❌ 检测到硬编码 API key：$f" >&2
-                echo "   请改为 os.environ.get(\"VOLCANO_API_KEY\") 或类似形式。" >&2
+                echo "   请改为 os.environ.get(\"LLM_API_KEY\") 或类似形式。" >&2
                 violations=$((violations + 1))
             fi
             ;;

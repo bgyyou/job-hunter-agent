@@ -82,7 +82,7 @@ async def capture_wizard():
     try:
         port = _free_port()
         # 强制 placeholder 让 wizard 触发
-        proc = _start_streamlit({"VOLCANO_API_KEY": "your_api_key_here"}, port)
+        proc = _start_streamlit({"LLM_API_KEY": "your_api_key_here"}, port)
         try:
             ok = _wait_for_port(port, timeout=30)
             if not ok:

@@ -4,7 +4,7 @@
 提供：
 - tmp_db: 临时 sqlite 后端，每个 test 一个独立 db 文件
 - mock_embedder: 替换 tools.embedder.Embedder 为 deterministic 假向量，避免下载模型
-- mock_llm_client: 提供 VolcanoClient 协议的 stub，无需真实 API
+- mock_llm_client: 提供 OpenAICompatibleClient 协议的 stub，无需真实 API
 """
 from __future__ import annotations
 
@@ -75,11 +75,11 @@ def mock_embedder(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Mock LLM client：暴露与 VolcanoClient 一样的最小接口
+# Mock LLM client：暴露与 OpenAICompatibleClient 一样的最小接口
 # ---------------------------------------------------------------------------
 
 class _FakeLLMClient:
-    """模拟 VolcanoClient，返回固定结构。"""
+    """模拟 OpenAICompatibleClient，返回固定结构。"""
 
     def __init__(self, *args, **kwargs):
         self.model = "fake-llm"

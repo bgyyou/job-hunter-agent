@@ -1,7 +1,7 @@
 # tools/__init__.py
 from .llm import (
     LLMClient,
-    VolcanoClient,
+    OpenAICompatibleClient,
     LLMModel,
     LLMMessage,
     LLMResponse,
@@ -17,7 +17,7 @@ from .parser import (
 
 __all__ = [
     "LLMClient",
-    "VolcanoClient",
+    "OpenAICompatibleClient",
     "LLMModel",
     "LLMMessage",
     "LLMResponse",

@@ -1,6 +1,6 @@
 """首次运行配置向导。
 
-当 .env 缺失或 VOLCANO_API_KEY 仍是占位符 (your_api_key_here) 时，
+当 .env 缺失或 LLM_API_KEY 仍是占位符 (your_api_key_here) 时，
 显示一个友好的 Streamlit 配置页让用户填 key + 选数据库后一键写入 .env。
 
 设计原则（呼应 v2.1 P0.5）：
@@ -23,7 +23,7 @@ PLACEHOLDER = "your_api_key_here"
 
 
 def _is_configured() -> bool:
-    key = (os.environ.get("VOLCANO_API_KEY") or "").strip()
+    key = (os.environ.get("LLM_API_KEY") or "").strip()
     return bool(key) and key != PLACEHOLDER
 
 
@@ -96,11 +96,11 @@ def run_if_needed() -> None:
     with st.expander("高级选项（可跳过）", expanded=False):
         api_url = st.text_input(
             "API Base URL",
-            value=os.environ.get("VOLCANO_CODING_API_URL", "https://apihub.agnes-ai.com/v1"),
+            value=os.environ.get("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1"),
         )
         model_name = st.text_input(
             "模型名",
-            value=os.environ.get("VOLCANO_MODEL", "agnes-2.0-flash"),
+            value=os.environ.get("LLM_MODEL", "agnes-2.0-flash"),
         )
 
     col1, col2 = st.columns([1, 1])
@@ -125,17 +125,15 @@ def run_if_needed() -> None:
 
         _patch_env(
             {
-                "VOLCANO_API_KEY": api_key.strip(),
-                "VOLCANO_CODING_API_URL": api_url.strip(),
-                "VOLCANO_CHAT_API_URL": api_url.strip(),
-                "VOLCANO_MODEL": model_name.strip(),
+                "LLM_API_KEY": api_key.strip(),
+                "LLM_BASE_URL": api_url.strip(),
+                "LLM_MODEL": model_name.strip(),
                 "DATABASE_URL": db_url,
             }
         )
-        os.environ["VOLCANO_API_KEY"] = api_key.strip()
-        os.environ["VOLCANO_CODING_API_URL"] = api_url.strip()
-        os.environ["VOLCANO_CHAT_API_URL"] = api_url.strip()
-        os.environ["VOLCANO_MODEL"] = model_name.strip()
+        os.environ["LLM_API_KEY"] = api_key.strip()
+        os.environ["LLM_BASE_URL"] = api_url.strip()
+        os.environ["LLM_MODEL"] = model_name.strip()
         os.environ["DATABASE_URL"] = db_url
 
         st.success("✅ 配置已写入 .env，3 秒后自动进入主程序…")

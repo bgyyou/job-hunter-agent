@@ -19,7 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-from tools.llm import VolcanoClient  # noqa: E402
+from tools.llm import OpenAICompatibleClient  # noqa: E402
 from tools.resume_parser import ResumeParser  # noqa: E402
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced  # noqa: E402
 
@@ -28,10 +28,10 @@ SAMPLE_PDF = PROJECT_ROOT / "data" / "temp" / "Zheng Haowen CV(AI PM) .pdf"
 
 
 def make_llm():
-    return VolcanoClient(
-        api_key=os.environ["VOLCANO_API_KEY"],
-        api_url=os.getenv("VOLCANO_CODING_API_URL", "https://apihub.agnes-ai.com/v1").rstrip("/"),
-        model=os.getenv("VOLCANO_MODEL", "agnes-2.0-flash"),
+    return OpenAICompatibleClient(
+        api_key=os.environ["LLM_API_KEY"],
+        api_url=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1").rstrip("/"),
+        model=os.getenv("LLM_MODEL", "agnes-2.0-flash"),
     )
 
 
@@ -147,7 +147,7 @@ async def test_url_failure():
 async def main():
     print("\n##########  M2.5 自动化验证  ##########")
     print(f"项目根目录: {PROJECT_ROOT}")
-    print(f"模型: {os.getenv('VOLCANO_MODEL', 'agnes-2.0-flash')}")
+    print(f"模型: {os.getenv('LLM_MODEL', 'agnes-2.0-flash')}")
 
     # Test 1
     llm_result = await test_resume_parser()

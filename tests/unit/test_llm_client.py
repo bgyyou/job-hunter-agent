@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v2.1 N4: VolcanoClient + LLMClient 基础工具单测。
+"""v2.1 N4: OpenAICompatibleClient + LLMClient 基础工具单测。
 
 覆盖目标：
 - token 估算与消息计数
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.llm import LLMClient, LLMMessage, LLMResponse, VolcanoClient
+from tools.llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleClient
 
 
 def _client(tmp_path, **overrides):
@@ -27,7 +27,7 @@ def _client(tmp_path, **overrides):
         cache_dir=str(tmp_path / "llm_cache"),
     )
     kw.update(overrides)
-    return VolcanoClient(**kw)
+    return OpenAICompatibleClient(**kw)
 
 
 # ----- token estimation -----

@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
-from tools.llm import VolcanoClient  # noqa: E402
+from tools.llm import OpenAICompatibleClient  # noqa: E402
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced  # noqa: E402
 
 
@@ -31,10 +31,10 @@ async def main():
     print(f"[INFO] 规范化 URL: {url}")
     print("[INFO] 即将弹出 Edge 浏览器；若卡在 Cloudflare 验证页，请在 30 秒内手动通过\n")
 
-    llm = VolcanoClient(
-        api_key=os.environ["VOLCANO_API_KEY"],
-        api_url=os.getenv("VOLCANO_CODING_API_URL", "https://apihub.agnes-ai.com/v1").rstrip("/"),
-        model=os.getenv("VOLCANO_MODEL", "agnes-2.0-flash"),
+    llm = OpenAICompatibleClient(
+        api_key=os.environ["LLM_API_KEY"],
+        api_url=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1").rstrip("/"),
+        model=os.getenv("LLM_MODEL", "agnes-2.0-flash"),
     )
     analyzer = JDAnalyzerEnhanced(llm_client=llm)
 
