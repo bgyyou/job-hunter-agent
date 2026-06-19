@@ -52,6 +52,23 @@ class JobHunterDB:
         except (json.JSONDecodeError, TypeError):
             return []
 
+    @staticmethod
+    def _embedding_to_blob(embedding) -> Optional[bytes]:
+        """Serialize an embedding (list/tuple/bytes) to a JSON-encoded BLOB.
+
+        SQLite cannot bind raw Python lists; v2.1 SqliteBackend stores the
+        JSON bytes and decodes on read. The facade mirrors that contract so
+        callers that still hit JobHunterDB don't silently corrupt vectors.
+        """
+        if embedding is None:
+            return None
+        if isinstance(embedding, (bytes, bytearray)):
+            return bytes(embedding)
+        try:
+            return json.dumps(list(embedding)).encode("utf-8")
+        except (TypeError, ValueError):
+            return None
+
     # ================================================================
     # Resumes
     # ================================================================
@@ -450,6 +467,10 @@ class JobHunterDB:
 
     def insert_chunk(self, data: Dict) -> str:
         chunk_id = data.get("id") or str(uuid.uuid4())
+        emb = data.get("embedding")
+        emb_dim = data.get("embedding_dim")
+        if emb_dim is None and isinstance(emb, (list, tuple)):
+            emb_dim = len(emb)
         conn = self._get_conn()
         try:
             conn.execute(
@@ -465,8 +486,8 @@ class JobHunterDB:
                     data["chunk_text"],
                     data.get("chunk_type", "full"),
                     self._json_serialize(data.get("keywords", [])),
-                    data.get("embedding"),
-                    data.get("embedding_dim"),
+                    self._embedding_to_blob(emb),
+                    emb_dim,
                 ),
             )
             conn.commit()
@@ -482,6 +503,10 @@ class JobHunterDB:
                 chunk["jd_id"] = jd_id
                 chunk["chunk_index"] = i
                 chunk_id = chunk.get("id") or str(uuid.uuid4())
+                emb = chunk.get("embedding")
+                emb_dim = chunk.get("embedding_dim")
+                if emb_dim is None and isinstance(emb, (list, tuple)):
+                    emb_dim = len(emb)
                 conn.execute(
                     """INSERT INTO knowledge_chunks
                        (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
@@ -495,8 +520,8 @@ class JobHunterDB:
                         chunk["chunk_text"],
                         chunk.get("chunk_type", "full"),
                         self._json_serialize(chunk.get("keywords", [])),
-                        chunk.get("embedding"),
-                        chunk.get("embedding_dim"),
+                        self._embedding_to_blob(emb),
+                        emb_dim,
                     ),
                 )
                 ids.append(chunk_id)

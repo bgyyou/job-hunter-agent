@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
     heading_path TEXT NOT NULL DEFAULT '[]',
     embedding BLOB,
     embedding_dim INTEGER,
+    legacy INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     deleted_at TEXT,
 

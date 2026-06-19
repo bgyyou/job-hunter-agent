@@ -73,7 +73,15 @@ class SqliteBackend(BaseBackend):
             return
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript(schema_path.read_text(encoding="utf-8"))
+            self._apply_idempotent_migrations(conn)
         logger.info(f"SQLite backend initialized: {self.db_path}")
+
+    def _apply_idempotent_migrations(self, conn: sqlite3.Connection) -> None:
+        """Bring older DBs up to current schema (CREATE IF NOT EXISTS does NOT add columns)."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
+        if "legacy" not in cols:
+            conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0")
+            logger.info("migration: added knowledge_chunks.legacy column")
 
     def _row_to_dict(self, row: sqlite3.Row) -> Optional[Dict]:
         return dict(row) if row else None
@@ -509,7 +517,7 @@ class SqliteBackend(BaseBackend):
 
         conn = self._get_conn()
         try:
-            conditions = ["deleted_at IS NULL", "embedding IS NOT NULL"]
+            conditions = ["deleted_at IS NULL", "embedding IS NOT NULL", "legacy = 0"]
             params: list = []
             if filter_chunk_type:
                 conditions.append("chunk_type = ?"); params.append(filter_chunk_type)
@@ -560,7 +568,7 @@ class SqliteBackend(BaseBackend):
         """SQLite fallback: return nearest text chunks via LIKE."""
         conn = self._get_conn()
         try:
-            conditions = ["deleted_at IS NULL AND chunk_text LIKE ?"]
+            conditions = ["deleted_at IS NULL AND chunk_text LIKE ?", "legacy = 0"]
             params: list = [f"%{query_text}%"]
             if filter_chunk_type:
                 conditions.append("chunk_type = ?"); params.append(filter_chunk_type)

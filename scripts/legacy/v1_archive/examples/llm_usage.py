@@ -1,15 +1,26 @@
 # examples/llm_usage.py
 """
-火山引擎 API 使用示例
+火山引擎 / Agnes API 使用示例
+
+运行前需先在 .env 中配置 VOLCANO_API_KEY 或 AGNES_API_KEY。
+本文件不再硬编码任何密钥，所有 key 走环境变量。
 """
 import asyncio
+import os
 from tools.llm import VolcanoClient, LLMMessage, LLMModel
 
 
 async def main():
+    api_key = os.environ.get("AGNES_API_KEY") or os.environ.get("VOLCANO_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "未找到 API key。请在 .env 中设置 AGNES_API_KEY 或 VOLCANO_API_KEY，"
+            "参考 .env.example。"
+        )
+
     # 方式一：使用 Agnes API
     coding_client = VolcanoClient(
-        api_key="REDACTED_LEAKED_KEY_ROTATED_2026_06_17",
+        api_key=api_key,
         api_url="https://apihub.agnes-ai.com/v1",
         model="agnes-2.0-flash",
         is_coding_api=True
@@ -17,7 +28,7 @@ async def main():
 
     # 方式二：使用 Chat API（其他模型）
     chat_client = VolcanoClient(
-        api_key="REDACTED_LEAKED_KEY_ROTATED_2026_06_17",
+        api_key=api_key,
         api_url="https://apihub.agnes-ai.com/v1",
         model="agnes-2.0-flash",
         is_coding_api=False

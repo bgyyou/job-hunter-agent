@@ -524,3 +524,49 @@ pytest tests/ -v
 | 截图存在 | `ls docs/screenshots/*.png` | 2 个文件 |
 | README 引用截图 | `grep -c screenshots README.md` | ≥2 |
 
+## [批四：剩余收尾 N1-N6] 2026-06-18
+
+> **目的**：M3/M5 计划承诺但未真正落地的两个尾巴（legacy chunks 重切、quality_checks 埋点）+ 测试覆盖率补全 + 根目录 v1 时代遗留清理。
+
+### N1 — legacy chunks 真 backfill（M3 兑现）
+- `data/schema.sql` `knowledge_chunks` 加 `legacy INTEGER DEFAULT 0` 列。
+- `database/backends/sqlite_backend.py`：`_init_db` 新增 `_apply_idempotent_migrations`，给老库自动 `ALTER TABLE ... ADD COLUMN legacy`。`search_similar_chunks` 与文本检索路径双双加 `legacy=0` 过滤，老条不再被命中。
+- 新增 `scripts/backfill_chunks.py`（dry-run + 实际跑两档），读取 chunk_type='full' 的 45 条 → SemanticChunker 重切 → BGE 重 embed → 新条入库 → 老 45 条标 legacy=1。
+- **验证**：跑后 `legacy=0` 集合 embedding NULL 数 = 0；老 45 条全部 `legacy=1`；新增 126 条 chunks 有完整 512 维向量。
+
+### N2 — quality_checks 埋点（M5 兑现）
+- `tools/llm.py` `VolcanoClient.analyze` 已在 v2.1 早期接入了 `_record_quality_check`（成功 / 失败 / 缓存命中三条路径），本批补 6 条单测覆盖：成功落库、失败落库、埋点失败不影响业务、analyze 端到端、缓存命中独立计入、API 异常向上传播。
+- 真表 0 行的原因：mock 测试用的 tmp_db；本机最近没真跑过 LLM。下次 `streamlit run web_app.py` 跑一遍匹配流程，`quality_checks` 应至少 +1 行。
+
+### N3 — `database/repository.py` 测试补全
+- 新增 `tests/unit/test_repository_facade.py`（19 用例），覆盖 JobHunterDB 的全部 CRUD + JSON helper + NotImplemented 占位。
+- 顺手修了一个 v2.0 老 bug：`insert_chunk` / `insert_chunks_batch` 直接把 list embedding 绑给 sqlite，导致 `ProgrammingError: type 'list' is not supported`。新增 `_embedding_to_blob`（与 SqliteBackend 同款）做 JSON 序列化。
+- **验证**：repository.py 覆盖率 12% → **96%**。
+
+### N4 — `tools/llm.py` 测试补全
+- 新增 `tests/unit/test_llm_client.py`（21 用例），覆盖 token 估算 / 缓存键稳定性 / OpenAI & Anthropic URL 自动补全 / message conversion / record_call & stats / estimate_cost / analyze_with_structured_output 三种围栏 / 缓存命中短路 / abstract instantiation guard。
+- **验证**：tools/llm.py 覆盖率 26% → **71%**。
+
+### N5 — 根目录 v1 遗留清理
+- 通过 grep 扫 `from <pkg>` 确认引用边界。`agents/` 仍依赖 `core/ models/ protocols/`，`backends/` 仍依赖 `document_parser/`，保留这些。
+- 归档到 `scripts/legacy/v1_archive/`（10 项）：
+  - 文档：`tasks.md` `progress.md` `CRAWLER_README.md` `README_CRAWLER.md`（v1/v2.0 时代的开发清单与重叠 README）
+  - 代码：`jd_crawler/`（19 个文件的旧 crawler，与新 `crawler/` 重叠）`examples/` `output/`（mock 数据快照）`templates/`（无人引用的 HTML 模板）`src/` `utils/`（仅含空 `__init__.py`）
+- **验证**：根目录 .py 只剩 `web_app.py` `setup_wizard.py`；.md 只剩 `CHANGELOG_v2.1.md` `CONTRIBUTING.md` `PUSH_CHECKLIST.md` `README.md`；`web_app` / `setup_wizard` / `crawler.run_crawler` / `agents.coordinator` import 全过；pytest 81/81 全过。
+
+### N6 — 总验证
+| 项 | 实测 | 目标 | 状态 |
+|---|---|---|---|
+| pytest tests/ | 81 passed | ≥35 | ✅ |
+| interrogate ≥80% | 83.8% | ≥80% | ✅ |
+| repository.py coverage | 96% | ≥60% | ✅ |
+| tools/llm.py coverage | 71% | ≥50% | ✅ |
+| 老 chunks legacy=1 | 45/45 | 全部 | ✅ |
+| 新 chunks embedding NULL | 0 | 0 | ✅ |
+| quality_checks 单测 | 6/6 pass | 全过 | ✅ |
+| quality_checks 真表行数 | 0 | ≥1（待真跑） | ⏳ |
+
+### 仍待用户手动完成
+- 真跑一次 `streamlit run web_app.py` 走完匹配流程 → `quality_checks` 表见到第一条 `llm_call` 记录。
+- 按 `PUSH_CHECKLIST.md` 推 GitHub 验证三条 workflow。
+
