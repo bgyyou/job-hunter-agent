@@ -50,8 +50,10 @@ jobs:
             "loguru==0.7.3" \
             "numpy==2.4.6" \
             "pydantic==2.13.4" \
+            "pydantic-settings==2.6.0" \
             "python-dotenv==1.2.2" \
-            "diskcache==5.6.3"
+            "diskcache==5.6.3" \
+            "aiohttp==3.10.10"
 
       - name: Run unit + integration tests (sqlite only)
         env:
