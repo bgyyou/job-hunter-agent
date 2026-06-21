@@ -26,7 +26,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -52,6 +52,43 @@ DEFAULT_KEYWORDS = [
     "Project Manager",
     "Marketing Manager",
     "Finance Manager",
+]
+
+# 全行业关键词（v2.1 N9：凑 500 条用）。覆盖科技/产品/数据/管理/市场/财务/
+# HR/运营/客服/创意/咨询等。JobsDB 是香港站，英文关键词命中率最高。
+ALL_INDUSTRY_KEYWORDS = [
+    # 科技 / 工程
+    "Software Engineer", "Frontend Developer", "Backend Developer",
+    "Full Stack Developer", "Mobile Developer", "DevOps Engineer",
+    "QA Engineer", "Security Engineer", "Cloud Engineer", "AI Engineer",
+    "Machine Learning Engineer", "Data Engineer", "Blockchain Developer",
+    # 数据 / 分析
+    "Data Scientist", "Data Analyst", "Business Analyst", "BI Analyst",
+    "Research Analyst", "Quantitative Analyst",
+    # 产品 / 设计
+    "Product Manager", "Product Designer", "UX Designer", "UI Designer",
+    "Graphic Designer", "Content Designer",
+    # 管理 / PMO
+    "Project Manager", "Program Manager", "Scrum Master", "Team Lead",
+    "Office Manager", "Executive Assistant",
+    # 市场 / 销售
+    "Marketing Manager", "Digital Marketing", "Marketing Executive",
+    "Sales Manager", "Account Manager", "Business Development",
+    "Sales Executive", "E-commerce Manager",
+    # 财务 / 法务
+    "Finance Manager", "Financial Analyst", "Accountant", "Auditor",
+    "Legal Counsel", "Compliance Officer", "Tax Manager",
+    # 人力资源 / 行政
+    "HR Manager", "Recruiter", "HR Business Partner", "Training Manager",
+    # 运营 / 供应链
+    "Operations Manager", "Supply Chain", "Logistics", "Procurement",
+    "Warehouse Manager",
+    # 客户服务
+    "Customer Success", "Customer Service", "Support Engineer",
+    # 创意 / 内容
+    "Content Writer", "Copywriter", "Video Editor", "Creative Director",
+    # 咨询 / 战略
+    "Consultant", "Strategy Analyst",
 ]
 
 
@@ -151,21 +188,41 @@ async def crawl_one_keyword(
     return stats
 
 
-async def run(keywords: List[str], per_keyword: int, headless: bool) -> Dict[str, int]:
+async def run(keywords: List[str], per_keyword: int, headless: bool, batch_size: int = 2) -> Dict[str, int]:
+    """分批跑：每 batch_size 个关键词 close + 重启一次浏览器。
+
+    v2.1 N9：Playwright + Edge 长时间运行会偶发 driver 连接断开
+    （中规模跑 10 关键词时第 2 个就断了），分批重启规避。
+    """
     db = get_db()
     total = {"fetched": 0, "inserted": 0, "skipped": 0, "failed": 0}
 
-    scraper = JobsDBScraper(headless=headless)
+    scraper: Optional[JobsDBScraper] = None
     try:
-        for kw in keywords:
+        for i, kw in enumerate(keywords):
+            if scraper is None:
+                scraper = JobsDBScraper(headless=headless)
+                logger.info(f"[batch] new scraper started at keyword #{i+1}")
+
             stats = await crawl_one_keyword(scraper, kw, per_keyword, db)
             for k in total:
                 total[k] += stats[k]
+
+            # 每 batch_size 个关键词重启一次浏览器
+            if (i + 1) % batch_size == 0 and i < len(keywords) - 1:
+                logger.info(f"[batch] restarting browser after {i+1} keywords")
+                try:
+                    await scraper.close()
+                except Exception:
+                    pass
+                scraper = None
+                await asyncio.sleep(2)
     finally:
-        try:
-            await scraper.close()
-        except Exception:
-            pass
+        if scraper is not None:
+            try:
+                await scraper.close()
+            except Exception:
+                pass
 
     return total
 
@@ -178,6 +235,8 @@ def _load_keywords(args) -> List[str]:
             sys.exit(2)
         kws = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
         return kws or DEFAULT_KEYWORDS
+    if args.all_industry:
+        return ALL_INDUSTRY_KEYWORDS
     if args.keyword:
         return [args.keyword]
     return DEFAULT_KEYWORDS
@@ -187,14 +246,16 @@ def main():
     parser = argparse.ArgumentParser(description="Batch crawl JobsDB HK and insert into jds table")
     parser.add_argument("--keyword", help="单关键词（冒烟用）")
     parser.add_argument("--keywords-file", help="多关键词文件，每行一个")
+    parser.add_argument("--all-industry", action="store_true", help="用内置全行业关键词列表（60+ 关键词）")
     parser.add_argument("--per-keyword", type=int, default=10, help="每个关键词抓多少条（默认 10）")
+    parser.add_argument("--batch-size", type=int, default=2, help="每多少个关键词重启一次浏览器（默认 2，防 Playwright 连接断）")
     parser.add_argument("--no-headless", action="store_true", help="显示浏览器窗口（调试用，默认 headless）")
     args = parser.parse_args()
 
     keywords = _load_keywords(args)
-    logger.info(f"keywords={keywords}  per_keyword={args.per_keyword}  headless={not args.no_headless}")
+    logger.info(f"keywords={len(keywords)}个  per_keyword={args.per_keyword}  batch_size={args.batch_size}  headless={not args.no_headless}")
 
-    total = asyncio.run(run(keywords, args.per_keyword, headless=not args.no_headless))
+    total = asyncio.run(run(keywords, args.per_keyword, headless=not args.no_headless, batch_size=args.batch_size))
 
     print("\n=== Batch Crawl Result ===")
     print(f"  Keywords run:    {len(keywords)}")
