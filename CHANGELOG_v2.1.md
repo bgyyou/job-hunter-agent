@@ -601,3 +601,45 @@ pytest tests/ -v
 ### 不做向后兼容别名
 按 CLAUDE.md 一次性硬切——保留 `VolcanoClient = OpenAICompatibleClient` 这种过渡 alias 反而会让下次读者再花精力删一次。
 
+
+---
+
+## [P0-P1 治理批次] 2026-06-23
+
+### 范围
+诊断（见 `docs/diagnostics_2026-06-23_db_and_resume.md`）后用户拍板"P0/P1 先打掉"。本批次只动**数据库层**与**简历 Flow B**两块，触发条件是用户原话："感觉还没有 100% 满意，离企业级有一定距离，一键生成简历需要测试，数据库保存的逻辑要改。"
+
+### 改动清单
+
+| 优先级 | 改动 | 影响文件 |
+|---|---|---|
+| **P0-1** | 删 `database/repository.py`（683 行的 `JobHunterDB`），所有调用方切到 `SqliteBackend`；`database/__init__.py` 改为 `get_db()` 工厂入口 | `database/repository.py`（删）、`database/__init__.py`、`web_app.py`、`scripts/migrate_v1.py`、`docs/data_model.md`、`tools/knowledge_base.py` |
+| **P0-1** | 测试迁移：`tests/unit/test_repository_facade.py` 重写为 `test_sqlite_backend_extended.py`，18 用例直接打 SqliteBackend，避免 facade 与 backend 双套实现 | `tests/unit/test_sqlite_backend_extended.py` |
+| **P0-2** | 修 `SqliteBackend.insert_jd` 静默回假 UUID 的 bug：`INSERT OR IGNORE` 在 `UNIQUE(url, user_id)` 冲突时跳过，但旧实现仍返回本地新生成的 jd_id，导致后续 `get_jd / insert_chunk / insert_match` 全部用一个数据库根本不存在的 id；修法：commit 后 SELECT 真实 id 返回 | `database/backends/sqlite_backend.py` |
+| **P0-2** | 回归测试：`test_jd_insert_duplicate_url_returns_real_id` 保证后续不再写出"两次 insert 同 URL，返回两个不同 id"的代码 | `tests/unit/test_sqlite_backend_extended.py` |
+| **P1-1** | 新增 4 个复合索引消除"过滤 + 排序"双重扫描：`match_history(user_id, created_at DESC)`、`optimizations(user_id, created_at DESC)`、`jds(user_id, crawled_at DESC)`、`knowledge_chunks(jd_id, chunk_index)`，全部带 `WHERE deleted_at IS NULL` 谓词索引 | `database/migrations/002_composite_indexes.sql` |
+| **P1-1** | 数据库迁移基础设施：`SqliteBackend._apply_idempotent_migrations` 启动时自动扫描 `database/migrations/*.sql` 按文件名顺序执行；`schema_version` 升至 2 | `database/backends/sqlite_backend.py`、`database/migrations/` |
+| **P1-2** | 简历 Flow B 端到端测试套：6 用例覆盖 `ResumeOptimizer → ResumeGenerator(md/html/markdown 文件)` 全链路，包括 LLM 返回非 JSON 时的兜底分支 | `tests/integration/test_resume_flow_b.py` |
+| **P1-2** | **测试中发现真实 bug 并修复**：`ResumeGenerator.to_markdown` 写死 `skills.get(...)`，但解析后的简历常用 list 结构（无技能分类），直接抛 `AttributeError`；改成 list/dict 双兼容 | `tools/generator/resume_generator.py` |
+| **P1-2** | Web UI 补"一键生成 → 没法下成可用 PDF"的缺口：优化简历支持 HTML 下载（浏览器可直接打印 PDF）； session_state 新增 `optimized_resume_html` | `web_app.py` |
+
+### 影响范围
+- **生产路径**：`web_app.py` 启动行为不变；`db.insert_jd` 重复 URL 现在会返回真实 id（之前返回的伪 id 调用方根本用不上，所以等于无声修复一个潜伏死链路）。
+- **DB 迁移**：旧的 `data/jobhunter_v2.db` 启动时会自动跑 `002_composite_indexes.sql`（idempotent，重启多次无副作用）。`schema_version` 从 1 升到 2。
+- **测试基线**：81 → **87 passed**（+6 Flow B 用例，删 1 facade 用例，加 1 P0-2 回归用例）。
+- **删代码**：`database/repository.py` 683 行 + `tests/unit/test_repository_facade.py`；净增减后代码量减少。
+
+### 显式不做
+- **P2/P3 留待后续**：Postgres 真用 pgvector（#14）、JD schema 收敛到 `raw + parsed_sections + tags`（#15）、service 层抽离（#10）都是更大改造，跟用户对齐后再单独排期。
+- **Flow A（0→1 对话式生成）留任务 #9**：用户原话"先把 B 测好"，Flow A 设计 UI/多轮对话 schema/行业模板挑选都是新功能而非治理，本批次不混入。
+- **不做 backwards-compat alias**：按 CLAUDE.md 一次性硬切——`JobHunterDB` 直接删，不留 `JobHunterDB = SqliteBackend` 这种过渡符号。
+
+### 验证
+- `pytest tests/ -q` → **87 passed in 8.22s**
+- `python -c "from database.backends.sqlite_backend import SqliteBackend; ..."` 启动后 `sqlite_master` 查到 4 个新复合索引、`schema_version = 2`
+- `git diff --stat` 净减少约 500 行（删 683 行 repository、加约 230 行新测试与迁移）
+
+### 用户原话备忘
+- "其实能看到有几个功能还不是特别完善，离真正的企业级项目还有一定的距离" → 治理诊断的触发原因
+- "我希望可以 A 和 B 都做" → Flow A 留任务 #9，Flow B 本批次端到端测好
+- "这次大更新全部完成后帮我 update 到 github，包括更新公告" → 本节即更新公告
