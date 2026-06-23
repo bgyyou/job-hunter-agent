@@ -127,19 +127,24 @@ class ResumeGenerator:
                         lines.append(f"- {achievement}")
                     lines.append("")
 
-        # 技能
-        skills = resume_data.get("skills", {})
+        # 技能（兼容 list / dict 两种结构）
+        skills = resume_data.get("skills")
         if skills:
             lines.append("## 技能")
             lines.append("")
 
-            technical = skills.get("technical", [])
-            soft = skills.get("soft", [])
-
-            if technical:
-                lines.append(f"**技术技能：** {', '.join(technical)}")
-            if soft:
-                lines.append(f"**软技能：** {', '.join(soft)}")
+            if isinstance(skills, dict):
+                technical = skills.get("technical", [])
+                soft = skills.get("soft", [])
+                if technical:
+                    lines.append(f"**技术技能：** {', '.join(technical)}")
+                if soft:
+                    lines.append(f"**软技能：** {', '.join(soft)}")
+            elif isinstance(skills, list):
+                # 解析后的简历常用 list 结构（无技能分类）
+                items = [str(s) for s in skills if s]
+                if items:
+                    lines.append(", ".join(items))
             lines.append("")
 
         # 教育背景

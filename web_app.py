@@ -133,6 +133,8 @@ if 'last_opt_ids' not in st.session_state:
     st.session_state.last_opt_ids = []  # v2.1 M2: 最近一次生成建议的 opt_id 列表
 if 'optimized_resume' not in st.session_state:
     st.session_state.optimized_resume = None
+if 'optimized_resume_html' not in st.session_state:
+    st.session_state.optimized_resume_html = None
 if 'cover_letter' not in st.session_state:
     st.session_state.cover_letter = None
 if 'kb' not in st.session_state:
@@ -1004,8 +1006,10 @@ with tab4:
                         # 再用ResumeGenerator生成markdown
                         generator = ResumeGenerator()
                         md = generator.to_markdown(optimized_resume_data)
+                        html = generator.to_html(optimized_resume_data)
 
                         st.session_state.optimized_resume = md
+                        st.session_state.optimized_resume_html = html
                         st.success("✅ 简历优化并生成成功！")
 
                         # 显示参考知识（如果有）
@@ -1089,12 +1093,23 @@ with tab4:
         st.markdown("### 📄 优化后的简历")
         st.markdown(st.session_state.optimized_resume)
 
-        st.download_button(
-            "下载简历 (Markdown)",
-            st.session_state.optimized_resume,
-            file_name=f"{company_name}_简历.md",
-            mime="text/markdown"
-        )
+        dl_col1, dl_col2 = st.columns(2)
+        with dl_col1:
+            st.download_button(
+                "下载简历 (Markdown)",
+                st.session_state.optimized_resume,
+                file_name=f"{company_name}_简历.md",
+                mime="text/markdown"
+            )
+        with dl_col2:
+            html_payload = st.session_state.get("optimized_resume_html")
+            if html_payload:
+                st.download_button(
+                    "下载简历 (HTML，可浏览器打印 PDF)",
+                    html_payload,
+                    file_name=f"{company_name}_简历.html",
+                    mime="text/html"
+                )
 
     if st.session_state.cover_letter:
         st.divider()
