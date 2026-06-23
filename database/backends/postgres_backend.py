@@ -452,22 +452,28 @@ class PostgresBackend(BaseBackend):
         top_k: int = 5,
         filter_chunk_type: Optional[str] = None,
         user_id: Optional[str] = None,
+        filter_position: Optional[str] = None,
     ) -> List[Dict]:
         """pgvector cosine query over knowledge_chunks. No weighting / filtering.
 
         Chunk_type weighting + min_similarity cutoff live in
-        ``services.retrieval_service.RetrievalService``.
+        ``services.retrieval_service.RetrievalService``. ``filter_position`` is a
+        hard JOIN on ``jds.position_tag`` so cross-industry chunks for the same
+        position are co-retrieved.
         """
         vec_str = self._embedding_to_pgvector(query_embedding)
 
-        filter_parts: List[str] = ["deleted_at IS NULL", "embedding IS NOT NULL"]
+        filter_parts: List[str] = ["kc.deleted_at IS NULL", "kc.embedding IS NOT NULL"]
         filter_vals: list = []
         if filter_chunk_type:
-            filter_parts.append("chunk_type = %s")
+            filter_parts.append("kc.chunk_type = %s")
             filter_vals.append(filter_chunk_type)
         if user_id:
-            filter_parts.append("user_id = %s")
+            filter_parts.append("kc.user_id = %s")
             filter_vals.append(user_id)
+        if filter_position:
+            filter_parts.append("j.position_tag = %s")
+            filter_vals.append(filter_position)
 
         where_sql = " AND ".join(filter_parts)
 
@@ -478,12 +484,16 @@ class PostgresBackend(BaseBackend):
             pass  # 旧版 pgvector 没有该参数
 
         query = f"""
-            SELECT id, jd_id, chunk_index, chunk_text, chunk_type, keywords,
-                   context, heading_path,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM knowledge_chunks
+            SELECT kc.id, kc.jd_id, kc.chunk_index, kc.chunk_text, kc.chunk_type,
+                   kc.keywords, kc.context, kc.heading_path,
+                   j.industry_tag AS jd_industry_tag,
+                   j.function_tag AS jd_function_tag,
+                   j.position_tag AS jd_position_tag,
+                   1 - (kc.embedding <=> %s::vector) AS similarity
+            FROM knowledge_chunks kc
+            LEFT JOIN jds j ON j.id = kc.jd_id
             WHERE {where_sql}
-            ORDER BY embedding <=> %s::vector
+            ORDER BY kc.embedding <=> %s::vector
             LIMIT %s
         """
         search_params = [vec_str] + filter_vals + [vec_str, top_k]
@@ -505,17 +515,28 @@ class PostgresBackend(BaseBackend):
         top_k: int = 5,
         filter_chunk_type: Optional[str] = None,
         user_id: Optional[str] = None,
+        filter_position: Optional[str] = None,
     ) -> List[Dict]:
         """LIKE fallback on knowledge_chunks (no embedding required)."""
-        conditions = ["deleted_at IS NULL"]
-        params = [f"%{query_text}%"]
+        conditions = ["kc.deleted_at IS NULL"]
+        params: list = []
         if filter_chunk_type:
-            conditions.append("chunk_type = %s"); params.append(filter_chunk_type)
+            conditions.append("kc.chunk_type = %s"); params.append(filter_chunk_type)
         if user_id:
-            conditions.append("user_id = %s"); params.append(user_id)
-        query = "SELECT * FROM knowledge_chunks WHERE " + " AND ".join(conditions)
-        query += " AND chunk_text LIKE %s ORDER BY chunk_index LIMIT %s"
-        params.extend([f"%{query_text}%", top_k])
+            conditions.append("kc.user_id = %s"); params.append(user_id)
+        if filter_position:
+            conditions.append("j.position_tag = %s"); params.append(filter_position)
+        conditions.append("kc.chunk_text LIKE %s")
+        params.append(f"%{query_text}%")
+        query = (
+            "SELECT kc.*, j.industry_tag AS jd_industry_tag, "
+            "j.function_tag AS jd_function_tag, j.position_tag AS jd_position_tag "
+            "FROM knowledge_chunks kc "
+            "LEFT JOIN jds j ON j.id = kc.jd_id "
+            "WHERE " + " AND ".join(conditions)
+            + " ORDER BY kc.chunk_index LIMIT %s"
+        )
+        params.append(top_k)
         rows = self._fetchall(query, params)
         for row in rows:
             row["keywords"] = self._json_deserialize(row.get("keywords"))

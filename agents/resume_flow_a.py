@@ -21,21 +21,29 @@ from tools.llm import LLMMessage, LLMResponse
 
 _CONVERSATION_SYSTEM = """你是专业的简历助手。你的任务是通过对话了解用户的职业背景，最终生成一份完整、专业的简历。
 
-对话原则：
-1. 每轮只问 1-2 个问题，不要一次性列出所有问题
-2. 根据用户的回答自然追问，挖掘具体数据、成果和量化指标
-3. 用户回答模糊时追一句具体细节（如"这个项目你具体负责什么？"）
-4. 当你认为信息足够完整时，在回复末尾加上 [DONE]
+【硬性约束】
+1. 每轮只问 1-2 个问题，绝不一次性列出所有问题
+2. 你最多可以问 {max_rounds} 轮问题；接近上限时果断收尾，不要纠结细枝末节
+3. 当信息足够完整、或已达到轮次上限时，在回复末尾加上 [DONE]
 
-你需要收集的信息（逐步覆盖，不要跳步）：
-- 基本信息：姓名、目标岗位、联系方式
-- 工作经历：公司名、职位、起止时间、职责、量化成果
-- 技能：技术技能、工具、软技能
-- 教育背景：学校、学历、专业、毕业年份
-- 项目经验：项目名称、你的角色、技术栈、成果
+【分层深挖策略 — 按这个顺序，逐层推进】
+L1（必问，约 1 轮）：姓名、目标岗位的相关年限、最近一段工作经历的公司/职位/时间
+L2（深挖最近一段经历，约 2-3 轮）：用 STAR 法则拆解
+   - Situation：业务背景、团队规模、当时的难题
+   - Task：你被分派的具体目标/KPI
+   - Action：你具体做了什么（动词+对象）
+   - Result：量化结果（用户数/收入/效率提升/上线时间）—— 没数字就追问"大概是多少"
+L3（深挖第二段经历，约 2-3 轮）：同 STAR，可适当压缩
+L4（兜底补齐，约 1-2 轮）：技能栈、教育背景、关键项目（如果前面没覆盖）
 
-当信息足够完整时，回复格式：
-好的，我已经了解了你的背景，现在为你生成简历。
+【追问原则】
+- 用户回答模糊（如"做过几个项目"）→ 追"哪几个？最有代表性的是哪个？"
+- 用户给笼统形容词（如"提升了很多"）→ 追"具体数字呢？比如 30% 还是 3 倍？"
+- 用户跳过某个层 → 把它拉回来，但不要重复问已答内容
+
+【完成标志】
+当 L1-L4 至少各覆盖 1 次、或达到 {max_rounds} 轮时：
+好的，信息够了，我来生成简历。
 
 [DONE]"""
 
@@ -103,20 +111,39 @@ class ResumeFlowA:
         messages: List[Dict[str, str]],
         industry: str,
         position: str,
+        max_rounds: int = 8,
     ) -> Dict[str, Any]:
         """
         发送对话消息，返回 LLM 的回复。
 
+        Args:
+            messages: [{"role": "user|assistant", "content": "..."}, ...]
+            industry / position: 三级下拉选出的目标
+            max_rounds: AI 最多问几轮（N=8 深度模式，N=4 商业速度模式）。
+                超过此轮次时强制注入收尾指令，确保 LLM 输出 [DONE]。
+
         Returns:
             {"type": "question", "message": "..."}  — 继续对话
-            {"type": "done", "message": "..."}       — 信息收集完毕
+            {"type": "done", "message": "..."}      — 信息收集完毕
         """
-        llm_messages = [
-            LLMMessage(
-                role="system",
-                content=f"{_CONVERSATION_SYSTEM}\n\n用户目标行业：{industry}\n用户目标岗位：{position}",
+        rounds_used = sum(1 for m in messages if m["role"] == "assistant")
+        force_close = rounds_used >= max_rounds
+
+        system_text = _CONVERSATION_SYSTEM.format(max_rounds=max_rounds)
+        system_text += f"\n\n用户目标行业：{industry}\n用户目标岗位：{position}"
+        system_text += f"\n当前进度：你已问过 {rounds_used}/{max_rounds} 轮。"
+        if force_close:
+            system_text += (
+                "\n\n【强制收尾】已达到轮次上限。本轮不要再问新问题，"
+                "直接用 1-2 句话感谢用户，并以 [DONE] 结束。"
             )
-        ]
+        elif rounds_used >= max_rounds - 1:
+            system_text += (
+                "\n\n【提示】只剩最后 1 轮预算。如果还有关键空白（如缺联系方式、"
+                "缺最近一段经历的量化结果），优先问；否则直接收尾输出 [DONE]。"
+            )
+
+        llm_messages = [LLMMessage(role="system", content=system_text)]
         for m in messages:
             llm_messages.append(LLMMessage(role=m["role"], content=m["content"]))
 
@@ -125,9 +152,13 @@ class ResumeFlowA:
         )
         content = response.content.strip()
 
-        if "[DONE]" in content:
-            return {"type": "done", "message": content.replace("[DONE]", "").strip()}
-        return {"type": "question", "message": content}
+        if "[DONE]" in content or force_close:
+            return {
+                "type": "done",
+                "message": content.replace("[DONE]", "").strip(),
+                "rounds_used": rounds_used,
+            }
+        return {"type": "question", "message": content, "rounds_used": rounds_used}
 
     # ----------------------------------------------------------------
     # Step 2: 从对话中提取结构化简历
@@ -152,29 +183,42 @@ class ResumeFlowA:
     # Step 3: RAG 骨架 — 从存量 JD 中提取该岗位的高频要求
     # ----------------------------------------------------------------
 
-    async def build_skeleton(self, position: str, industry: str) -> str:
-        """RAG 检索该岗位的存量 JD，提取高频要求作为简历骨架"""
+    async def build_skeleton(self, position: str, industry: str) -> Dict[str, Any]:
+        """RAG 检索该岗位的存量 JD，提取高频要求作为简历骨架。
+
+        Returns:
+            {"text": str, "source": "rag"|"fallback", "n_chunks": int,
+             "industries_covered": List[str]}
+            空召回时 source="fallback"，下游 UI 可提示用户该岗位 JD 较少。
+        """
         chunks = self._retrieve_rag_chunks(position, industry, top_k=15)
         if not chunks:
-            logger.info(f"Flow A: no RAG chunks found for {position} in {industry}")
-            return ""
+            logger.info(f"Flow A: no RAG chunks for {position}; using fallback skeleton")
+            return {
+                "text": self._fallback_skeleton(position),
+                "source": "fallback",
+                "n_chunks": 0,
+                "industries_covered": [],
+            }
 
-        # 聚合 requirement 类 chunk 的文本
-        requirement_texts = []
-        for c in chunks:
-            if c.get("chunk_type") in ("requirement", "responsibility"):
-                requirement_texts.append(c.get("chunk_text", ""))
+        # 只保留 requirement / responsibility 类，过滤其他噪声
+        useful = [c for c in chunks if c.get("chunk_type") in ("requirement", "responsibility")]
+        if not useful:
+            useful = chunks  # 兜底：拿到啥用啥
 
-        if not requirement_texts:
-            return ""
+        industries = sorted({
+            (c.get("metadata", {}) or {}).get("jd_industry_tag")
+            for c in useful
+            if (c.get("metadata", {}) or {}).get("jd_industry_tag")
+        })
 
-        # 用 LLM 提炼高频要求关键词
-        combined = "\n---\n".join(t[:300] for t in requirement_texts[:10])
-        prompt = f"""从以下 {len(requirement_texts)} 条 {position} 岗位的 JD 要求片段中，提炼出 5-8 条最核心、最通用的要求（每条 10-20 字）。
-
-{combined}
-
-请用列表格式返回，每行一条要求。"""
+        combined = "\n---\n".join((c.get("chunk_text") or "")[:300] for c in useful[:10])
+        prompt = (
+            f"从以下 {len(useful)} 条 {position} 岗位的 JD 要求片段中（覆盖"
+            f"{('、'.join(industries) + '等' + str(len(industries)) + ' 个') if industries else '多个'}行业），"
+            f"提炼出 5-8 条最核心、最通用的能力要求（每条 10-20 字）。\n\n"
+            f"{combined}\n\n请用列表格式返回，每行一条要求。"
+        )
         try:
             response: LLMResponse = await self.llm_client.analyze(
                 messages=[
@@ -184,26 +228,71 @@ class ResumeFlowA:
                 max_tokens=300,
                 temperature=0.3,
             )
-            return response.content.strip()
+            return {
+                "text": response.content.strip(),
+                "source": "rag",
+                "n_chunks": len(useful),
+                "industries_covered": industries,
+            }
         except Exception as exc:
             logger.warning(f"Flow A skeleton extraction failed: {exc}")
-            return ""
+            return {
+                "text": self._fallback_skeleton(position),
+                "source": "fallback",
+                "n_chunks": len(useful),
+                "industries_covered": industries,
+            }
+
+    @staticmethod
+    def _fallback_skeleton(position: str) -> str:
+        """空召回兜底：给一份通用、稳健的能力清单，避免下游 prompt 缺骨架。"""
+        return (
+            f"【{position} 通用能力骨架（JD 库样本较少，使用通用模板）】\n"
+            f"- 良好的沟通与跨部门协同能力\n"
+            f"- 数据驱动的问题分析与决策能力\n"
+            f"- 业务理解力，能将业务需求转化为可执行方案\n"
+            f"- 项目推进与目标达成能力\n"
+            f"- 学习能力强，能快速适应新业务/新工具\n"
+            f"- 良好的逻辑表达与文档撰写能力"
+        )
 
     def _retrieve_rag_chunks(
         self, position: str, industry: str, top_k: int
     ) -> List[Dict[str, Any]]:
-        """检索与目标岗位相关的存量 JD chunks"""
+        """检索与目标岗位相关的存量 JD chunks。
+
+        策略：position 主过滤（跨行业共享），industry 软加权（同行业排序更高）。
+        逐级降级：
+          1. position 硬过滤 + chunk_type=requirement + industry boost
+          2. position 硬过滤 + 不限 chunk_type（仍跨行业）
+          3. 完全语义召回（无 filter，最宽松）
+        """
         try:
             from tools.retriever import Retriever
             retriever = Retriever()
-            # 先用 position 作为查询词搜索
+            # L1: 严格 — position 命中 + 只要 requirement
             results = retriever.retrieve(
-                position, top_k=top_k, filter_chunk_type="requirement", min_similarity=0.4,
+                position,
+                top_k=top_k,
+                filter_chunk_type="requirement",
+                filter_position=position,
+                boost_industry=industry,
+                min_similarity=0.4,
             )
-            if not results:
-                # 降级：不按 chunk_type 过滤
-                results = retriever.retrieve(position, top_k=top_k, min_similarity=0.3)
-            return results
+            if results:
+                return results
+            # L2: 放宽 chunk_type
+            results = retriever.retrieve(
+                position,
+                top_k=top_k,
+                filter_position=position,
+                boost_industry=industry,
+                min_similarity=0.3,
+            )
+            if results:
+                return results
+            # L3: 完全语义召回（防御：position 字符串可能在 taxonomy 但 JD 库未标注）
+            return retriever.retrieve(position, top_k=top_k, min_similarity=0.3)
         except Exception as exc:
             logger.warning(f"Flow A RAG retrieval failed: {exc}")
             return []
@@ -215,13 +304,14 @@ class ResumeFlowA:
     async def generate_final(
         self,
         extracted: Dict[str, Any],
-        skeleton: str,
+        skeleton: Dict[str, Any],
         position: str,
     ) -> Dict[str, Any]:
-        """结合用户数据 + RAG 骨架，生成最终简历"""
+        """结合用户数据 + RAG 骨架，生成最终简历。skeleton 由 build_skeleton 返回。"""
+        skeleton_text = (skeleton or {}).get("text", "")
         skeleton_block = (
-            f"\n\n【目标岗位核心要求（来自行业 JD 分析）】\n{skeleton}"
-            if skeleton
+            f"\n\n【目标岗位核心要求（来自行业 JD 分析）】\n{skeleton_text}"
+            if skeleton_text
             else ""
         )
 

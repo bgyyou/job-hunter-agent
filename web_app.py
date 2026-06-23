@@ -166,6 +166,8 @@ if 'fa_resume_md' not in st.session_state:
     st.session_state.fa_resume_md = None
 if 'fa_resume_html' not in st.session_state:
     st.session_state.fa_resume_html = None
+if 'fa_skeleton' not in st.session_state:
+    st.session_state.fa_skeleton = None
 
 # 侧边栏
 with st.sidebar:
@@ -1641,7 +1643,7 @@ with tab7:
     elif not st.session_state.fa_chat_done:
         st.markdown(f"### 第 2 步：与 AI 对话（目标：{st.session_state.fa_industry} / {st.session_state.fa_position}）")
         if st.button("重新选择岗位", key="fa_reset_choose"):
-            for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html"]:
+            for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_skeleton"]:
                 st.session_state[k] = None if k != "fa_messages" else []
             st.session_state.fa_chat_done = False
             st.experimental_rerun()
@@ -1658,7 +1660,7 @@ with tab7:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     reply = loop.run_until_complete(
-                        flow_a.chat(st.session_state.fa_messages, st.session_state.fa_industry, st.session_state.fa_position)
+                        flow_a.chat(st.session_state.fa_messages, st.session_state.fa_industry, st.session_state.fa_position, max_rounds=8)
                     )
                     loop.close()
                     st.session_state.fa_messages.append({"role": "assistant", "content": reply["message"]})
@@ -1693,6 +1695,7 @@ with tab7:
                     final_data = loop.run_until_complete(flow_a.generate_final(extracted, skeleton, st.session_state.fa_position))
                     loop.close()
                     st.session_state.fa_resume_data = final_data
+                    st.session_state.fa_skeleton = skeleton
                     st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
                     st.session_state.fa_resume_html = flow_a.to_html(final_data)
                     st.success("简历生成成功！")
@@ -1704,6 +1707,23 @@ with tab7:
         if st.session_state.fa_resume_md:
             st.markdown("#### 生成的简历")
             st.markdown(st.session_state.fa_resume_md)
+
+            # 数据来源信息条：体现 AI 不是凭空生成，给商业化场景一个信任锚点
+            sk = st.session_state.fa_skeleton or {}
+            try:
+                jd_count = st.session_state.db.get_stats().get("jds", 0)
+            except Exception:
+                jd_count = 0
+            source_label = "基于行业 JD 库蒸馏" if sk.get("source") == "rag" else "通用模板兜底（该岗位 JD 样本较少）"
+            industries_line = ""
+            if sk.get("source") == "rag" and sk.get("industries_covered"):
+                industries_line = f"覆盖行业：{', '.join(sk['industries_covered'])}。"
+            st.caption(
+                f"📊 本简历{source_label}。数据来自 **{jd_count:,} 份**公开 JD 数据库 "
+                f"（采集自 LinkedIn、Indeed、JobsDB、猎聘、前程无忧等全球主流招聘平台）。"
+                f"{industries_line}"
+                f"本轮 RAG 命中 {sk.get('n_chunks', 0)} 条相关 chunk。"
+            )
 
             dl1, dl2, dl3 = st.columns(3)
             with dl1:
@@ -1722,7 +1742,7 @@ with tab7:
                         st.error(f"保存失败：{exc}")
 
             if st.button("重新开始", key="fa_restart"):
-                for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html"]:
+                for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_skeleton"]:
                     st.session_state[k] = None if k != "fa_messages" else []
                 st.session_state.fa_chat_done = False
                 st.experimental_rerun()

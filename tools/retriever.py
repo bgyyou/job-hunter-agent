@@ -34,6 +34,8 @@ class Retriever:
         filter_chunk_type: Optional[str] = None,
         user_id: Optional[str] = None,
         min_similarity: float = 0.55,
+        filter_position: Optional[str] = None,
+        boost_industry: Optional[str] = None,
     ) -> List[Dict]:
         """Forward to ``RetrievalService.retrieve``. See that for shape."""
         return self._get_service().retrieve(
@@ -42,4 +44,6 @@ class Retriever:
             filter_chunk_type=filter_chunk_type,
             user_id=user_id,
             min_similarity=min_similarity,
+            filter_position=filter_position,
+            boost_industry=boost_industry,
         )

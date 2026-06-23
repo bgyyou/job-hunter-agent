@@ -195,7 +195,8 @@ class BaseBackend(ABC):
     @abstractmethod
     def vector_search(self, query_embedding: List[float], top_k: int = 5,
                       filter_chunk_type: Optional[str] = None,
-                      user_id: Optional[str] = None) -> List[Dict]:
+                      user_id: Optional[str] = None,
+                      filter_position: Optional[str] = None) -> List[Dict]:
         """Pure vector cosine search over knowledge_chunks (dialect-specific).
 
         No chunk_type weighting, no min_similarity filtering — those live in
@@ -208,16 +209,20 @@ class BaseBackend(ABC):
             top_k: Number of raw candidates to return (caller usually over-fetches).
             filter_chunk_type: Restrict to one of overview/responsibility/...
             user_id: Restrict to chunks linked to JDs owned by this user.
+            filter_position: Hard filter on the parent JD's ``position_tag``
+                (e.g. only chunks from "产品经理" JDs across all industries).
 
         Returns:
             List of dicts with ``chunk_id``, ``jd_id``, ``chunk_text``,
-            ``chunk_type``, ``context``, ``heading_path``, ``similarity`` (0-1).
+            ``chunk_type``, ``context``, ``heading_path``, ``similarity`` (0-1),
+            and ``jd_industry_tag`` so the service layer can apply industry boost.
         """
 
     @abstractmethod
     def like_search_chunks(self, query_text: str, top_k: int = 5,
                            filter_chunk_type: Optional[str] = None,
-                           user_id: Optional[str] = None) -> List[Dict]:
+                           user_id: Optional[str] = None,
+                           filter_position: Optional[str] = None) -> List[Dict]:
         """LIKE-based fallback when no embedder is available.
 
         Returns the same shape as ``vector_search`` but with ``similarity=0.0``.

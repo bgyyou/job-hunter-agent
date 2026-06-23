@@ -93,6 +93,28 @@ def test_chat_detects_done_marker():
     assert "[DONE]" not in reply["message"]
 
 
+def test_chat_force_done_when_max_rounds_reached():
+    """达到 max_rounds 上限时，即使 LLM 不输出 [DONE]，也强制收尾。"""
+    flow = ResumeFlowA(_llm_with_responses("感谢你的回答，那我们再聊聊..."))
+    # 构造 8 轮 assistant 消息 → 达到 max_rounds=8 上限
+    history = []
+    for i in range(8):
+        history.append({"role": "user", "content": f"user msg {i}"})
+        history.append({"role": "assistant", "content": f"asst msg {i}"})
+    history.append({"role": "user", "content": "继续"})
+
+    loop = asyncio.new_event_loop()
+    try:
+        reply = loop.run_until_complete(flow.chat(
+            messages=history, industry="互联网/软件",
+            position="AI产品经理", max_rounds=8,
+        ))
+    finally:
+        loop.close()
+    assert reply["type"] == "done"
+    assert reply["rounds_used"] == 8
+
+
 # ---------- extract_resume ----------
 
 def test_extract_resume_parses_json():
@@ -119,7 +141,7 @@ def test_extract_resume_parses_json():
 # ---------- build_skeleton: RAG 失败兜底 ----------
 
 def test_build_skeleton_empty_when_no_rag_results(monkeypatch):
-    """RAG 没有数据时，build_skeleton 应返回空字符串而不抛错"""
+    """RAG 没有数据时，build_skeleton 应返回 source='fallback' 的兜底骨架。"""
     flow = ResumeFlowA(_llm_with_responses(""))
 
     # mock Retriever 返回空
@@ -131,17 +153,22 @@ def test_build_skeleton_empty_when_no_rag_results(monkeypatch):
         skeleton = loop.run_until_complete(flow.build_skeleton("AI产品经理", "互联网/软件"))
     finally:
         loop.close()
-    assert skeleton == ""
+    assert isinstance(skeleton, dict)
+    assert skeleton["source"] == "fallback"
+    assert skeleton["n_chunks"] == 0
+    assert "AI产品经理" in skeleton["text"]  # 兜底文案含目标 position
 
 
 def test_build_skeleton_with_rag_data(monkeypatch):
-    """RAG 命中时，会调用 LLM 提炼并返回内容"""
+    """RAG 命中时，会调用 LLM 提炼并返回 source='rag' 的骨架。"""
     flow = ResumeFlowA(_llm_with_responses("1. 熟悉 LLM 应用\n2. 有产品 0-1 经验\n3. 数据驱动决策"))
 
     # mock Retriever 返回 requirement chunk
     mock_chunks = [
-        {"chunk_text": "熟悉大语言模型应用开发", "chunk_type": "requirement"},
-        {"chunk_text": "具有 0-1 产品经验", "chunk_type": "requirement"},
+        {"chunk_text": "熟悉大语言模型应用开发", "chunk_type": "requirement",
+         "metadata": {"jd_industry_tag": "互联网/软件"}},
+        {"chunk_text": "具有 0-1 产品经验", "chunk_type": "requirement",
+         "metadata": {"jd_industry_tag": "快消"}},
     ]
     from tools import retriever as retriever_mod
     monkeypatch.setattr(retriever_mod, "Retriever", lambda: MagicMock(retrieve=MagicMock(return_value=mock_chunks)))
@@ -151,7 +178,10 @@ def test_build_skeleton_with_rag_data(monkeypatch):
         skeleton = loop.run_until_complete(flow.build_skeleton("AI产品经理", "互联网/软件"))
     finally:
         loop.close()
-    assert "LLM" in skeleton or "产品" in skeleton
+    assert skeleton["source"] == "rag"
+    assert skeleton["n_chunks"] == 2
+    assert set(skeleton["industries_covered"]) == {"互联网/软件", "快消"}
+    assert "LLM" in skeleton["text"] or "产品" in skeleton["text"]
 
 
 # ---------- generate_final：组合 extracted + skeleton ----------
@@ -177,7 +207,10 @@ def test_generate_final_produces_resume_dict():
     loop = asyncio.new_event_loop()
     try:
         result = loop.run_until_complete(flow.generate_final(
-            extracted, skeleton="1. 熟悉 LLM 应用", position="AI产品经理",
+            extracted,
+            skeleton={"text": "1. 熟悉 LLM 应用", "source": "rag",
+                      "n_chunks": 1, "industries_covered": ["互联网/软件"]},
+            position="AI产品经理",
         ))
     finally:
         loop.close()
@@ -190,7 +223,11 @@ def test_generate_final_falls_back_on_bad_json():
     flow = ResumeFlowA(_llm_with_responses("抱歉无法生成"))
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(flow.generate_final(extracted, "", "AI产品经理"))
+        result = loop.run_until_complete(flow.generate_final(
+            extracted,
+            skeleton={"text": "", "source": "fallback", "n_chunks": 0, "industries_covered": []},
+            position="AI产品经理",
+        ))
     finally:
         loop.close()
     assert result == extracted

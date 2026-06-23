@@ -518,23 +518,34 @@ class SqliteBackend(BaseBackend):
 
     def vector_search(self, query_embedding: List[float], top_k: int = 5,
                       filter_chunk_type: Optional[str] = None,
-                      user_id: Optional[str] = None) -> List[Dict]:
+                      user_id: Optional[str] = None,
+                      filter_position: Optional[str] = None) -> List[Dict]:
         """Pure numpy cosine over knowledge_chunks. No re-weighting / filtering.
 
         Chunk_type weighting + min_similarity cutoff live in
-        ``services.retrieval_service.RetrievalService``.
+        ``services.retrieval_service.RetrievalService``. ``filter_position`` is a
+        hard JOIN on ``jds.position_tag`` so cross-industry chunks for the same
+        position (e.g. "产品经理" in both 互联网 and 快消) are co-retrieved.
         """
         import numpy as np
 
         conn = self._get_conn()
         try:
-            conditions = ["deleted_at IS NULL", "embedding IS NOT NULL", "legacy = 0"]
+            conditions = ["kc.deleted_at IS NULL", "kc.embedding IS NOT NULL", "kc.legacy = 0"]
             params: list = []
             if filter_chunk_type:
-                conditions.append("chunk_type = ?"); params.append(filter_chunk_type)
+                conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
             if user_id:
-                conditions.append("user_id = ?"); params.append(user_id)
-            query = "SELECT * FROM knowledge_chunks WHERE " + " AND ".join(conditions)
+                conditions.append("kc.user_id = ?"); params.append(user_id)
+            if filter_position:
+                conditions.append("j.position_tag = ?"); params.append(filter_position)
+            query = (
+                "SELECT kc.*, j.industry_tag AS jd_industry_tag, "
+                "j.function_tag AS jd_function_tag, j.position_tag AS jd_position_tag "
+                "FROM knowledge_chunks kc "
+                "LEFT JOIN jds j ON j.id = kc.jd_id "
+                "WHERE " + " AND ".join(conditions)
+            )
             rows = conn.execute(query, params).fetchall()
         finally:
             conn.close()
@@ -568,18 +579,27 @@ class SqliteBackend(BaseBackend):
 
     def like_search_chunks(self, query_text: str, top_k: int = 5,
                            filter_chunk_type: Optional[str] = None,
-                           user_id: Optional[str] = None) -> List[Dict]:
+                           user_id: Optional[str] = None,
+                           filter_position: Optional[str] = None) -> List[Dict]:
         """LIKE fallback. Same output shape as ``vector_search`` (similarity=0.0)."""
         conn = self._get_conn()
         try:
-            conditions = ["deleted_at IS NULL AND chunk_text LIKE ?", "legacy = 0"]
+            conditions = ["kc.deleted_at IS NULL AND kc.chunk_text LIKE ?", "kc.legacy = 0"]
             params: list = [f"%{query_text}%"]
             if filter_chunk_type:
-                conditions.append("chunk_type = ?"); params.append(filter_chunk_type)
+                conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
             if user_id:
-                conditions.append("user_id = ?"); params.append(user_id)
-            query = "SELECT * FROM knowledge_chunks WHERE " + " AND ".join(conditions)
-            query += " ORDER BY chunk_index LIMIT ?"
+                conditions.append("kc.user_id = ?"); params.append(user_id)
+            if filter_position:
+                conditions.append("j.position_tag = ?"); params.append(filter_position)
+            query = (
+                "SELECT kc.*, j.industry_tag AS jd_industry_tag, "
+                "j.function_tag AS jd_function_tag, j.position_tag AS jd_position_tag "
+                "FROM knowledge_chunks kc "
+                "LEFT JOIN jds j ON j.id = kc.jd_id "
+                "WHERE " + " AND ".join(conditions)
+            )
+            query += " ORDER BY kc.chunk_index LIMIT ?"
             params.append(top_k)
             rows = conn.execute(query, params).fetchall()
             results = []

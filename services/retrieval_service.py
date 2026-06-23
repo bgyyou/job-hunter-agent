@@ -29,6 +29,12 @@ CHUNK_TYPE_WEIGHT: Dict[str, float] = {
     "full": 1.0,
 }
 
+# Industry match → small ranking multiplier (rerank, not hard filter).
+# Same-industry chunks get a bump but cross-industry chunks for the same position
+# are still retrieved. PM in 互联网 + PM in 快消 → both surface, 互联网 ranked higher.
+INDUSTRY_BOOST_SAME = 1.2
+INDUSTRY_BOOST_CROSS = 1.0
+
 
 class RetrievalService:
     """RAG retrieval orchestrator. Sits in front of any `BaseBackend`."""
@@ -57,16 +63,22 @@ class RetrievalService:
         filter_chunk_type: Optional[str] = None,
         user_id: Optional[str] = None,
         min_similarity: float = 0.55,
+        filter_position: Optional[str] = None,
+        boost_industry: Optional[str] = None,
     ) -> List[Dict]:
-        """Return up to `top_k` chunks ranked by cosine × chunk_type weight.
+        """Return up to `top_k` chunks ranked by cosine × chunk_type weight × industry boost.
 
-        Falls back to LIKE search when the embedder cannot produce a vector.
-        Results with `similarity < min_similarity` are dropped after ranking.
+        - ``filter_position``: hard JOIN on ``jds.position_tag``. Same position
+          across all industries is co-retrieved (e.g. "产品经理" in both 互联网 and 快消).
+        - ``boost_industry``: soft rerank — chunks from JDs in this industry get
+          ``INDUSTRY_BOOST_SAME`` multiplier, others ``INDUSTRY_BOOST_CROSS``.
+        - Falls back to LIKE search when the embedder cannot produce a vector.
+        - Results with ``similarity < min_similarity`` are dropped after ranking.
         """
         db = self._get_db()
         q_vec = self._embed_query(query)
         if q_vec is None:
-            return self._fallback(db, query, top_k, filter_chunk_type, user_id)
+            return self._fallback(db, query, top_k, filter_chunk_type, user_id, filter_position)
 
         candidate_k = max(top_k * 3, top_k)
         try:
@@ -75,22 +87,25 @@ class RetrievalService:
                 top_k=candidate_k,
                 filter_chunk_type=filter_chunk_type,
                 user_id=user_id,
+                filter_position=filter_position,
             )
         except Exception as exc:
             logger.warning(f"vector_search failed, falling back to LIKE: {exc}")
-            return self._fallback(db, query, top_k, filter_chunk_type, user_id)
+            return self._fallback(db, query, top_k, filter_chunk_type, user_id, filter_position)
 
         scored: List[tuple] = []
         for row in candidates:
             sim = float(row.get("similarity", 0.0) or 0.0)
             ct = row.get("chunk_type") or "full"
-            weight = CHUNK_TYPE_WEIGHT.get(ct, 1.0)
-            scored.append((sim * weight, sim, ct, weight, row))
+            type_w = CHUNK_TYPE_WEIGHT.get(ct, 1.0)
+            ind_w = self._industry_weight(row.get("jd_industry_tag"), boost_industry)
+            ranked = sim * type_w * ind_w
+            scored.append((ranked, sim, ct, type_w, ind_w, row))
 
         scored.sort(key=lambda t: t[0], reverse=True)
 
         normalized: List[Dict] = []
-        for ranked, sim, ct, weight, row in scored[:top_k]:
+        for ranked, sim, ct, type_w, ind_w, row in scored[:top_k]:
             if sim < min_similarity:
                 continue
             normalized.append({
@@ -98,10 +113,13 @@ class RetrievalService:
                 "context": row.get("context", row.get("chunk_context", "")),
                 "heading_path": row.get("heading_path") or [],
                 "chunk_type": ct,
-                "chunk_weight": weight,
+                "chunk_weight": type_w,
+                "industry_boost": ind_w,
                 "metadata": row.get("metadata", {}) or {
                     "jd_id": row.get("jd_id"),
                     "chunk_index": row.get("chunk_index"),
+                    "jd_industry_tag": row.get("jd_industry_tag"),
+                    "jd_position_tag": row.get("jd_position_tag"),
                 },
                 "similarity": round(sim, 4),
                 "ranked_score": round(ranked, 4),
@@ -109,17 +127,25 @@ class RetrievalService:
 
         logger.info(
             f"RetrievalService: returned {len(normalized)}/{len(candidates)} results "
-            f"for '{query[:50]}...' (top_k={top_k}, min_sim={min_similarity})"
+            f"for '{query[:50]}...' (top_k={top_k}, min_sim={min_similarity}, "
+            f"position={filter_position}, boost={boost_industry})"
         )
         return normalized
 
-    def _fallback(self, db, query, top_k, filter_chunk_type, user_id) -> List[Dict]:
+    @staticmethod
+    def _industry_weight(row_industry: Optional[str], boost_industry: Optional[str]) -> float:
+        if not boost_industry or not row_industry:
+            return INDUSTRY_BOOST_CROSS
+        return INDUSTRY_BOOST_SAME if row_industry == boost_industry else INDUSTRY_BOOST_CROSS
+
+    def _fallback(self, db, query, top_k, filter_chunk_type, user_id, filter_position) -> List[Dict]:
         try:
             rows = db.like_search_chunks(
                 query_text=query,
                 top_k=top_k,
                 filter_chunk_type=filter_chunk_type,
                 user_id=user_id,
+                filter_position=filter_position,
             )
         except Exception as exc:
             logger.warning(f"LIKE fallback failed: {exc}")
@@ -133,6 +159,7 @@ class RetrievalService:
                 "heading_path": row.get("heading_path") or [],
                 "chunk_type": row.get("chunk_type", "full") or "full",
                 "chunk_weight": CHUNK_TYPE_WEIGHT.get(row.get("chunk_type") or "full", 1.0),
+                "industry_boost": INDUSTRY_BOOST_CROSS,
                 "metadata": row.get("metadata", {}) or {},
                 "similarity": 0.0,
                 "ranked_score": 0.0,

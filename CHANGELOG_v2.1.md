@@ -825,3 +825,43 @@ wc -l database/backends/*.py services/*.py
 - **不动 `insert_chunks_batch` 的 chunk_index 自动赋值** —— 调用方都依赖，性价比低
 - **PG `chunks_vector` 表的写入路径不在本批修** —— service 层只写 `knowledge_chunks`；`chunks_vector` 表是否保留留给 P3-2
 - **不动 schema/migration** —— 本批只重排代码组织
+
+---
+
+## [Flow A P0/P1/P2 RAG + 对话深度强化] 2026-06-23
+
+### 范围
+Resume Flow A（0→1 对话式简历生成）三层强化：把 industry/function/position 三级下拉的语义真正接进 RAG 检索，把对话深度策略变成可调参数，给生成结果加可信信号。
+
+背景：跟用户对齐设计时确认两条硬约束 ——
+1. 三级下拉是必选项（驱动 RAG）；行业重叠（如"产品经理"在互联网/快消/化妆品都存在）是 feature 不是 bug，要共享共性能力（PRD、需求洞察、跨部门协同），行业只是语境调味
+2. RAG 不可砍 —— 它是 AI agent 防幻觉、生成可追溯答案的核心能力
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| P0 RAG filter 语义对齐 | `vector_search` / `like_search_chunks` 抽象方法新增 `filter_position` 参数，backend 内部 JOIN `jds` 表按 `position_tag` 硬过滤并返回 `jd_industry_tag` / `jd_function_tag` / `jd_position_tag` 元数据 | `database/backends/__init__.py`, `sqlite_backend.py`, `postgres_backend.py` |
+| P0 service 层加权 | `RetrievalService.retrieve()` 新增 `filter_position`（透传 backend 硬过滤）+ `boost_industry`（同行业 ×1.2、跨行业 ×1.0 软加权 rerank）；`ranked_score = sim × chunk_type_weight × industry_boost` | `services/retrieval_service.py` |
+| P0 Retriever facade | 透传 `filter_position` / `boost_industry` 参数 | `tools/retriever.py` |
+| P0 Flow A 检索逻辑 | `_retrieve_rag_chunks` 改三级降级：L1 (position 硬过滤 + requirement only + industry boost) → L2 (放宽 chunk_type) → L3 (纯语义 fallback)；`build_skeleton` 返回 dict `{text, source, n_chunks, industries_covered}`；空召回返回 `_fallback_skeleton(position)` 通用模板，标记 `source="fallback"` | `agents/resume_flow_a.py` |
+| P1 对话深度分层 | `chat()` 新增 `max_rounds=8` 参数；`_CONVERSATION_SYSTEM` 重写为 L1(基础)→L2(最近经历 STAR 深挖)→L3(第二段)→L4(兜底) 四层指令；接近上限提示 LLM 收尾，达到上限强制注入收尾指令并返回 `type="done"`；返回值新增 `rounds_used` | `agents/resume_flow_a.py` |
+| P2 数据来源信息条 | Tab7 生成完成后展示"基于 N 份公开 JD（LinkedIn、Indeed、JobsDB、猎聘、前程无忧）"；区分 RAG 命中 vs 兜底，显示覆盖行业列表 + 命中 chunk 数 | `web_app.py` |
+| 测试 | Flow A 测试 12→13：新增 `test_chat_force_done_when_max_rounds_reached`；`build_skeleton` 测试改为 dict 断言；`generate_final` 测试改 dict 参数 | `tests/integration/test_resume_flow_a.py` |
+
+### 收益
+- **行业重叠真正共享**：用户选"互联网/产品经理"或"快消/产品经理"都能召回同 position 跨行业的 chunk，行业只在 rerank 上调权 1.2 倍
+- **空召回不再返回空串**：兜底骨架保证下游 `generate_final` 始终有内容可用
+- **对话深度可参数化**：免费模式 N=8 深挖 STAR，商业化场景将来切 N=4 只需改一个参数（system prompt 自动适配）
+- **可信信号上线**：用户能看到"这份简历背靠多少 JD 数据"，覆盖了哪些行业，命中多少 chunk
+- **测试数**：121 → 122（新增 force-done 用例）
+
+### 验证
+```bash
+pytest tests/ -q  # 122 passed
+```
+
+### 显式不做
+- **不实现 N=4 商业模式 prompt 模板** —— 先跑 N=8 看实测效果，下次迭代再切
+- **不做每 bullet 引用 chunk_id** —— 用户明确说"不用太详细"，只在底部展示数据来源总览
+- **不动 schema** —— `position_tag` / `industry_tag` 字段 P2-2 已就位
