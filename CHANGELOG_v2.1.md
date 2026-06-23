@@ -643,3 +643,50 @@ pytest tests/ -v
 - "其实能看到有几个功能还不是特别完善，离真正的企业级项目还有一定的距离" → 治理诊断的触发原因
 - "我希望可以 A 和 B 都做" → Flow A 留任务 #9，Flow B 本批次端到端测好
 - "这次大更新全部完成后帮我 update 到 github，包括更新公告" → 本节即更新公告
+
+---
+
+## [P2-3 简历 Flow A：0→1 对话式生成] 2026-06-23
+
+### 范围
+用户原话核心需求 —— "用户可以选择行业，跟 Agent 聊聊过往经历，Agent 按对应行业 JD 针对性生成简历"。这是 Flow B（修改简历）之外完全独立的新路径。
+
+### 用户对齐结果
+- 选择粒度：**行业 → 职能 → 岗位** 三级下钻（不是搜索框，不是只 4 个预设）
+- 对话控制：**LLM 自主多轮对话**（不是固定 5 轮，不是脚本化追问），通过 `[DONE]` 标记自主决定何时结束
+- 骨架来源：**RAG 检索存量 JD 的 requirement chunk**（数据驱动，非手写 YAML 模板）
+- UI 入口：**独立新 Tab "✨ 从零生成简历"**（与 Flow B 完全分离）
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 新增 Agent | `agents/resume_flow_a.py` —— 4 个核心方法：`chat`（多轮对话，自主判定 [DONE]）、`extract_resume`（从对话历史抽 JSON）、`build_skeleton`（RAG 检索 + LLM 提炼高频要求）、`generate_final`（结合用户数据 + 行业骨架生成最终简历） | `agents/resume_flow_a.py` |
+| 新增工具 | `tools/taxonomy.py` —— 读 `data/job_taxonomy.json`，提供 `list_industries / list_functions / list_positions` 三个查询接口 | `tools/taxonomy.py` |
+| Web UI | `web_app.py` 新增 Tab7 "✨ 从零生成简历"，三步流程：①行业/职能/岗位下拉选择 ②聊天界面（用 `st.chat_input` + `st.chat_message`，LLM 自主结束）③生成 + 三种下载方式（Markdown / HTML / 入库） | `web_app.py` |
+| 状态管理 | 新增 8 个 `fa_*` session_state 字段隔离 Flow A 上下文，避免与 Flow B 冲突 | `web_app.py` |
+| 测试 | `tests/integration/test_resume_flow_a.py` 12 用例覆盖：taxonomy 四级查询、chat 双路径（继续/结束）、extract JSON 解析、RAG 兜底（空/有数据两种）、generate fallback（坏 JSON）、端到端 4 步链路 | `tests/integration/test_resume_flow_a.py` |
+
+### 关键设计决策
+
+**不用 BaseAgent 框架** —— BaseAgent 的 plan/recover/reflect 适合"代码层规划"，Flow A 的规划是 LLM 自主完成的（聊天节奏由 LLM 决定），上一层套 plan 反而是过度工程。Flow A 是 4 步纯函数管线 + 1 个对话循环。
+
+**对话不放在状态机里** —— 一开始考虑过用枚举 state 控制"问名字 → 问工作 → 问技能"。但用户原话是"agent 有一定自主性"，所以让 LLM 自己读对话历史决定下一句问什么、什么时候输出 `[DONE]`。代价是 token 高一点，收益是体验自然。
+
+**RAG 兜底降级** —— `build_skeleton` 先按 `chunk_type=requirement` 严过滤，没命中再放宽不过滤；都没命中返回空串，最终生成阶段会跳过骨架直接用 extracted 数据。保证哪怕一条存量 JD 都没有，Flow A 也能完整跑完。
+
+**测试不打真 LLM** —— 用 `AsyncMock` 喂 `LLMResponse(content=...)` 序列，验证状态流转和数据传递。RAG 也 `monkeypatch.setattr` mock 掉 Retriever。整套 12 用例 0.31s 跑完。
+
+### 验证
+- `pytest tests/ -q` → **99 passed in 11.40s**（+12 Flow A 用例）
+- `python -c "from agents.resume_flow_a import ResumeFlowA; from tools.taxonomy import list_industries; print(len(list_industries()))"` → 14 个行业
+- `python -m py_compile web_app.py` → 语法 OK
+
+### 显式不做
+- **不在 Flow A 入口要求登录或保存草稿** —— 用户首次接触产品，加注册成本会劝退；草稿保存留待用户反馈后再补
+- **不暴露行业以外的元信息**（如薪资分布、热门技能 TOP10）—— 那是搜索产品的责任，不是简历助手
+- **不允许同时编辑 Flow A 和 Flow B** —— 状态隔离在 session，但 UI 上用户切 Tab 等于"换工具"，不做跨 Tab 同步
+
+### 后续 task
+- task #9 P2-3 已完成；P2-1（pgvector）、P2-2（JD schema 收敛）独立排期，跟简历 Flow 无依赖。
+

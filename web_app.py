@@ -149,6 +149,24 @@ if 'scraper_manager' not in st.session_state:
 if 'db' not in st.session_state:
     st.session_state.db = SqliteBackend(db_path=settings.db_path)
 
+# P2-3 Flow A 状态
+if 'fa_industry' not in st.session_state:
+    st.session_state.fa_industry = None
+if 'fa_function' not in st.session_state:
+    st.session_state.fa_function = None
+if 'fa_position' not in st.session_state:
+    st.session_state.fa_position = None
+if 'fa_messages' not in st.session_state:
+    st.session_state.fa_messages = []  # [{role, content}]
+if 'fa_chat_done' not in st.session_state:
+    st.session_state.fa_chat_done = False
+if 'fa_resume_data' not in st.session_state:
+    st.session_state.fa_resume_data = None
+if 'fa_resume_md' not in st.session_state:
+    st.session_state.fa_resume_md = None
+if 'fa_resume_html' not in st.session_state:
+    st.session_state.fa_resume_html = None
+
 # 侧边栏
 with st.sidebar:
     st.markdown("## 💼 Job Hunter")
@@ -277,14 +295,15 @@ with st.sidebar:
 st.markdown('<div class="main-header">💼 Job Hunter</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">智能求职助手 - 让找工作更简单</div>', unsafe_allow_html=True)
 
-# 标签页（v2.1 M2: 新增 📈 投递历史）
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+# 标签页（v2.1 M2: 新增 📈 投递历史；P2-3: 新增 ✨ 从零生成）
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📄 上传简历",
     "🎯 分析职位",
     "📊 匹配度分析",
     "🚀 生成优化内容",
     "📚 知识库",
     "📈 投递历史",
+    "✨ 从零生成简历",
 ])
 
 # =====================================================
@@ -1576,4 +1595,127 @@ with st.sidebar:
                 # 限制历史长度，避免无限增长
                 if len(st.session_state.ai_chat_history) > 20:
                     st.session_state.ai_chat_history = st.session_state.ai_chat_history[-12:]
+                st.experimental_rerun()
+
+# =====================================================
+# 标签页 7: 从零生成简历 (P2-3 Flow A)
+# =====================================================
+with tab7:
+    st.header("从零生成简历")
+    st.caption("没有现成简历？告诉我你的目标和经历，AI 帮你写一份。")
+
+    from tools import taxonomy
+    from agents.resume_flow_a import ResumeFlowA
+
+    # --- Step 1: 行业 / 岗位选择 ---
+    if not st.session_state.fa_position:
+        st.markdown("### 第 1 步：选择目标岗位")
+        col_i, col_f, col_p = st.columns(3)
+        with col_i:
+            industries = taxonomy.list_industries()
+            industry = st.selectbox("行业", ["(请选择)"] + industries, key="fa_industry_select")
+        with col_f:
+            functions = taxonomy.list_functions(industry) if industry and industry != "(请选择)" else []
+            function = st.selectbox("职能", ["(请选择)"] + functions if functions else ["(请先选行业)"], key="fa_function_select", disabled=not functions)
+        with col_p:
+            positions = taxonomy.list_positions(industry, function) if industry and industry != "(请选择)" and function and function != "(请选择)" else []
+            position = st.selectbox("岗位", ["(请选择)"] + positions if positions else ["(请先选职能)"], key="fa_position_select", disabled=not positions)
+
+        if st.button("确定，开始对话", type="primary", disabled=position == "(请选择)" or not positions):
+            st.session_state.fa_industry = industry
+            st.session_state.fa_function = function
+            st.session_state.fa_position = position
+            st.session_state.fa_messages = [
+                {"role": "user", "content": f"我想申请{industry}行业的{position}岗位，请通过提问帮我整理简历。"}
+            ]
+            st.experimental_rerun()
+
+    # --- Step 2: 多轮对话 ---
+    elif not st.session_state.fa_chat_done:
+        st.markdown(f"### 第 2 步：与 AI 对话（目标：{st.session_state.fa_industry} / {st.session_state.fa_position}）")
+        if st.button("重新选择岗位", key="fa_reset_choose"):
+            for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html"]:
+                st.session_state[k] = None if k != "fa_messages" else []
+            st.session_state.fa_chat_done = False
+            st.experimental_rerun()
+
+        for m in st.session_state.fa_messages[1:]:
+            with st.chat_message("user" if m["role"] == "user" else "assistant"):
+                st.markdown(m["content"])
+
+        if st.session_state.fa_messages and st.session_state.fa_messages[-1]["role"] == "user":
+            with st.spinner("AI 思考中..."):
+                try:
+                    llm_client = st.session_state.agent.llm_client
+                    flow_a = ResumeFlowA(llm_client)
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    reply = loop.run_until_complete(
+                        flow_a.chat(st.session_state.fa_messages, st.session_state.fa_industry, st.session_state.fa_position)
+                    )
+                    loop.close()
+                    st.session_state.fa_messages.append({"role": "assistant", "content": reply["message"]})
+                    if reply["type"] == "done":
+                        st.session_state.fa_chat_done = True
+                    st.experimental_rerun()
+                except Exception as exc:
+                    st.error(f"AI 响应失败：{exc}")
+
+        user_input = st.chat_input("回复 AI...")
+        if user_input:
+            st.session_state.fa_messages.append({"role": "user", "content": user_input})
+            st.experimental_rerun()
+
+        if st.button("我说完了，直接生成简历", key="fa_force_done"):
+            st.session_state.fa_chat_done = True
+            st.experimental_rerun()
+
+    # --- Step 3: 生成简历 ---
+    else:
+        st.markdown("### 第 3 步：生成简历")
+
+        if st.session_state.fa_resume_md is None:
+            with st.spinner("正在分析对话、检索行业要求、生成简历..."):
+                try:
+                    llm_client = st.session_state.agent.llm_client
+                    flow_a = ResumeFlowA(llm_client)
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    extracted = loop.run_until_complete(flow_a.extract_resume(st.session_state.fa_messages))
+                    skeleton = loop.run_until_complete(flow_a.build_skeleton(st.session_state.fa_position, st.session_state.fa_industry))
+                    final_data = loop.run_until_complete(flow_a.generate_final(extracted, skeleton, st.session_state.fa_position))
+                    loop.close()
+                    st.session_state.fa_resume_data = final_data
+                    st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
+                    st.session_state.fa_resume_html = flow_a.to_html(final_data)
+                    st.success("简历生成成功！")
+                except Exception as exc:
+                    st.error(f"生成失败：{exc}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+        if st.session_state.fa_resume_md:
+            st.markdown("#### 生成的简历")
+            st.markdown(st.session_state.fa_resume_md)
+
+            dl1, dl2, dl3 = st.columns(3)
+            with dl1:
+                st.download_button("下载 Markdown", st.session_state.fa_resume_md, file_name=f"{st.session_state.fa_position}_简历.md", mime="text/markdown", key="fa_dl_md")
+            with dl2:
+                if st.session_state.fa_resume_html:
+                    st.download_button("下载 HTML (可打印 PDF)", st.session_state.fa_resume_html, file_name=f"{st.session_state.fa_position}_简历.html", mime="text/html", key="fa_dl_html")
+            with dl3:
+                if st.button("保存到数据库", key="fa_save_db"):
+                    try:
+                        rd = st.session_state.fa_resume_data
+                        resume_payload = {"name": rd.get("header", {}).get("name", ""), "phone": rd.get("header", {}).get("contact", {}).get("phone", ""), "email": rd.get("header", {}).get("contact", {}).get("email", ""), "summary": rd.get("header", {}).get("summary", ""), "skills": rd.get("skills", []), "education": rd.get("education", []), "projects": rd.get("projects", []), "target_roles": [st.session_state.fa_position]}
+                        resume_id = st.session_state.db.insert_resume(resume_payload)
+                        st.success(f"已保存，resume_id = {resume_id[:12]}...")
+                    except Exception as exc:
+                        st.error(f"保存失败：{exc}")
+
+            if st.button("重新开始", key="fa_restart"):
+                for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html"]:
+                    st.session_state[k] = None if k != "fa_messages" else []
+                st.session_state.fa_chat_done = False
                 st.experimental_rerun()
