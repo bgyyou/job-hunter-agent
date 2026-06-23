@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""P2-3 Flow A 端到端测试：行业选择 → 对话 → 提取 → RAG 骨架 → 生成简历
+"""Flow A 测试：section 状态机分段采集 → 派生 → RAG 骨架 → 渲染。
 
 mock LLM 返回，验证状态流转和数据传递。RAG 检索失败做兜底。
 """
@@ -59,104 +59,6 @@ def test_taxonomy_positions_all_under_industry():
     assert "前端开发工程师" in positions  # 研发
 
 
-# ---------- chat：继续提问 ----------
-
-def test_chat_returns_question():
-    flow = ResumeFlowA(_llm_with_responses("你好！请问你叫什么名字？你之前在哪些公司工作过？"))
-    loop = asyncio.new_event_loop()
-    try:
-        reply = loop.run_until_complete(flow.chat(
-            messages=[{"role": "user", "content": "我想申请 AI 产品经理"}],
-            industry="互联网/软件",
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
-    assert reply["type"] == "question"
-    assert "名字" in reply["message"]
-
-
-# ---------- chat：DONE 标记 ----------
-
-def test_chat_detects_done_marker():
-    flow = ResumeFlowA(_llm_with_responses("好的，信息已收集完毕，我为你生成简历。[DONE]"))
-    loop = asyncio.new_event_loop()
-    try:
-        reply = loop.run_until_complete(flow.chat(
-            messages=[{"role": "user", "content": "没了"}],
-            industry="互联网/软件",
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
-    assert reply["type"] == "done"
-    assert "[DONE]" not in reply["message"]
-
-
-def test_chat_force_done_when_max_rounds_reached():
-    """达到 max_rounds 上限时，即使 LLM 不输出 [DONE]，也强制收尾。"""
-    flow = ResumeFlowA(_llm_with_responses("感谢你的回答，那我们再聊聊..."))
-    # 构造 8 轮 assistant 消息 → 达到 max_rounds=8 上限
-    history = []
-    for i in range(8):
-        history.append({"role": "user", "content": f"user msg {i}"})
-        history.append({"role": "assistant", "content": f"asst msg {i}"})
-    history.append({"role": "user", "content": "继续"})
-
-    loop = asyncio.new_event_loop()
-    try:
-        reply = loop.run_until_complete(flow.chat(
-            messages=history, industry="互联网/软件",
-            position="AI产品经理", max_rounds=8,
-        ))
-    finally:
-        loop.close()
-    assert reply["type"] == "done"
-    assert reply["rounds_used"] == 8
-
-
-# ---------- extract_resume ----------
-
-def test_extract_resume_parses_json():
-    extracted_json = json.dumps({
-        "header": {"name": "Leon", "contact": {"phone": "123", "email": "l@e.com"}, "summary": "5 年产品经验"},
-        "experience": [{"title": "PM", "company": "ACME", "duration": "2020-2023", "achievements": ["launched X"]}],
-        "skills": ["Python", "SQL"],
-        "education": [{"school": "CUHK", "degree": "硕士", "major": "IS"}],
-        "projects": [],
-    }, ensure_ascii=False)
-    flow = ResumeFlowA(_llm_with_responses(extracted_json))
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(flow.extract_resume([
-            {"role": "user", "content": "我叫 Leon"},
-            {"role": "assistant", "content": "你好 Leon"},
-        ]))
-    finally:
-        loop.close()
-    assert result["header"]["name"] == "Leon"
-    assert result["skills"] == ["Python", "SQL"]
-
-
-def test_extract_resume_falls_back_when_llm_returns_garbage():
-    """LLM 返回非 JSON 时，extract_resume 不能炸，要把用户原话塞进 summary 兜底。"""
-    flow = ResumeFlowA(_llm_with_responses("抱歉，我现在没法解析..."))
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(flow.extract_resume([
-            {"role": "user", "content": "我叫小明，在腾讯做了 3 年 AI 产品"},
-            {"role": "assistant", "content": "了解，量化结果有吗？"},
-            {"role": "user", "content": "DAU 提升了 30%"},
-        ]))
-    finally:
-        loop.close()
-    # 兜底字段齐全
-    assert "header" in result and "experience" in result and "skills" in result
-    # 用户原话进了 summary
-    assert "小明" in result["header"]["summary"]
-    assert "30%" in result["header"]["summary"]
-
-
 # ---------- build_skeleton: RAG 失败兜底 ----------
 
 def test_build_skeleton_empty_when_no_rag_results(monkeypatch):
@@ -203,42 +105,11 @@ def test_build_skeleton_with_rag_data(monkeypatch):
     assert "LLM" in skeleton["text"] or "产品" in skeleton["text"]
 
 
-# ---------- generate_final：组合 extracted + skeleton ----------
+# ---------- _normalize_resume_shape：占位符剥除 ----------
 
-def test_generate_final_produces_resume_dict():
-    extracted = {
-        "header": {"name": "Leon", "contact": {"phone": "123", "email": "l@e.com"}},
-        "experience": [],
-        "skills": ["Python"],
-        "education": [],
-        "projects": [],
-    }
-
-    final_json = json.dumps({
-        "header": {"name": "Leon", "contact": {"phone": "123", "email": "l@e.com"}, "summary": "AI 产品经理候选人"},
-        "experience": [],
-        "skills": ["Python", "LLM", "RAG"],
-        "education": [],
-        "projects": [],
-    }, ensure_ascii=False)
-
-    flow = ResumeFlowA(_llm_with_responses(final_json))
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(flow.generate_final(
-            extracted,
-            skeleton={"text": "1. 熟悉 LLM 应用", "source": "rag",
-                      "n_chunks": 1, "industries_covered": ["互联网/软件"]},
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
-    assert "LLM" in result["skills"]
-
-
-def test_generate_final_strips_llm_placeholders():
+def test_normalize_strips_llm_placeholders():
     """LLM 偷塞 [您的姓名] [X]年 202X.XX 这种占位符时，normalize 必须把它们剥成空。"""
-    placeholder_resume = json.dumps({
+    raw = {
         "header": {
             "name": "[您的姓名]",
             "contact": {"phone": "[您的手机号]", "email": "[您的邮箱]"},
@@ -253,18 +124,8 @@ def test_generate_final_strips_llm_placeholders():
         "education": [{"school": "[大学名称]", "degree": "[学士/硕士]",
                        "major": "计算机", "start_year": "", "end_year": ""}],
         "projects": [],
-    }, ensure_ascii=False)
-
-    flow = ResumeFlowA(_llm_with_responses(placeholder_resume))
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(flow.generate_final(
-            {"header": {"name": ""}, "experience": [], "skills": [], "education": [], "projects": []},
-            skeleton={"text": "", "source": "fallback", "n_chunks": 0, "industries_covered": []},
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
+    }
+    result = ResumeFlowA._normalize_resume_shape(raw)
     # 占位符全被剥成空
     assert result["header"]["name"] == ""
     assert result["header"]["contact"]["phone"] == ""
@@ -282,80 +143,6 @@ def test_generate_final_strips_llm_placeholders():
     assert result["education"][0]["major"] == "计算机"
 
 
-def test_generate_final_falls_back_on_bad_json():
-    """LLM 返回非 JSON 时，应回退到 extracted 数据并 normalize 出齐全字段"""
-    extracted = {"header": {"name": "Leon"}, "skills": ["X"]}
-    flow = ResumeFlowA(_llm_with_responses("抱歉无法生成"))
-    loop = asyncio.new_event_loop()
-    try:
-        result = loop.run_until_complete(flow.generate_final(
-            extracted,
-            skeleton={"text": "", "source": "fallback", "n_chunks": 0, "industries_covered": []},
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
-    # 兜底数据被 _normalize_resume_shape 补齐
-    assert result["header"]["name"] == "Leon"
-    assert result["skills"] == ["X"]
-    assert result["experience"] == []
-    assert result["education"] == []
-    assert result["projects"] == []
-    assert result["header"]["contact"]["phone"] == ""
-    assert result["header"]["contact"]["email"] == ""
-
-
-# ---------- 端到端：完整 Flow A 链路 ----------
-
-def test_flow_a_end_to_end(monkeypatch):
-    """对话 → 提取 → RAG → 生成 → markdown 全链路"""
-    # 第 1 次 LLM 调用: chat 回应 "完毕[DONE]"
-    # 第 2 次: extract 返回结构化 JSON
-    # 第 3 次: build_skeleton 内部提炼要求
-    # 第 4 次: generate_final 返回最终 JSON
-    extracted_json = json.dumps({
-        "header": {"name": "Leon", "contact": {"phone": "123", "email": "l@e.com"}, "summary": "产品经理"},
-        "experience": [{"title": "PM", "company": "ACME", "duration": "2020-2023", "achievements": ["launched X"]}],
-        "skills": ["Python"],
-        "education": [{"school": "CUHK", "degree": "硕士", "major": "IS"}],
-        "projects": [],
-    }, ensure_ascii=False)
-    skeleton_text = "1. LLM 应用\n2. 数据驱动"
-    final_json = json.dumps({
-        "header": {"name": "Leon", "contact": {"phone": "123", "email": "l@e.com"}, "summary": "AI PM 候选人"},
-        "experience": [{"title": "AI PM", "company": "ACME", "duration": "2020-2023", "achievements": ["主导 X 0-1"]}],
-        "skills": ["Python", "LLM", "RAG"],
-        "education": [{"school": "CUHK", "degree": "硕士", "major": "IS"}],
-        "projects": [],
-    }, ensure_ascii=False)
-
-    flow = ResumeFlowA(_llm_with_responses(extracted_json, skeleton_text, final_json))
-
-    mock_chunks = [{"chunk_text": "熟悉 LLM", "chunk_type": "requirement"}]
-    from tools import retriever as retriever_mod
-    monkeypatch.setattr(retriever_mod, "Retriever", lambda **kw: MagicMock(retrieve=MagicMock(return_value=mock_chunks)))
-
-    messages = [
-        {"role": "user", "content": "我想申请 AI 产品经理"},
-        {"role": "assistant", "content": "你叫什么名字？"},
-        {"role": "user", "content": "Leon"},
-        {"role": "assistant", "content": "[DONE]"},
-    ]
-
-    loop = asyncio.new_event_loop()
-    try:
-        extracted = loop.run_until_complete(flow.extract_resume(messages))
-        skeleton = loop.run_until_complete(flow.build_skeleton("AI产品经理", "互联网/软件"))
-        final_data = loop.run_until_complete(flow.generate_final(extracted, skeleton, "AI产品经理"))
-    finally:
-        loop.close()
-
-    md = flow.to_markdown(final_data)
-    assert "# Leon" in md
-    assert "LLM" in md
-    assert "AI PM" in md
-
-
 # ---------- Section 状态机：新接线测试 ----------
 
 def test_chat_section_collects_personal_info():
@@ -367,7 +154,7 @@ def test_chat_section_collects_personal_info():
             section_key="header",
             messages=[
                 {"role": "assistant", "content": "请问你的姓名和联系方式？"},
-                {"role": "user", "content": "我叫 Leon，电话 13800138000"},
+                {"role": "user", "content": "我叫 Leon,电话 13800138000"},
             ],
             collected_so_far={},
             industry="互联网/软件",
