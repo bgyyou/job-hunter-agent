@@ -306,7 +306,7 @@ Title + raw_text
 
 ### 5.3 入库时自动调用
 
-`JobHunterDB.insert_jd()` 会在入库流程中调用 `Classifier.classify()`，自动填充三个 tag 字段。
+`SqliteBackend.insert_jd()` 会在入库流程中调用 `Classifier.classify()`，自动填充三个 tag 字段。
 
 ## 6. 质量评测体系
 
@@ -349,8 +349,8 @@ python scripts/migrate_v1.py
 ```bash
 # 检查各表记录数
 python -c "
-from database.repository import JobHunterDB
-db = JobHunterDB()
+from database import get_db
+db = get_db()
 print(db.get_stats())
 "
 ```

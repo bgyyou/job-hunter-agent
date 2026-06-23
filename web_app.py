@@ -35,7 +35,7 @@ from tools.generator.resume_generator import ResumeGenerator
 from tools.generator.resume_optimizer import ResumeOptimizer
 from tools.generator.cover_letter_generator import CoverLetterGenerator
 from tools.knowledge_base import KnowledgeBase
-from database.repository import JobHunterDB
+from database.backends.sqlite_backend import SqliteBackend
 from database.classifier import Classifier
 from database.factory import get_db
 from config.settings import settings
@@ -145,7 +145,7 @@ if 'auto_save' not in st.session_state:
 if 'scraper_manager' not in st.session_state:
     st.session_state.scraper_manager = None
 if 'db' not in st.session_state:
-    st.session_state.db = JobHunterDB(settings.db_path)
+    st.session_state.db = SqliteBackend(db_path=settings.db_path)
 
 # 侧边栏
 with st.sidebar:

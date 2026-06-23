@@ -57,7 +57,7 @@ def backup_old_db(dry_run: bool):
 # Phase 2: Merge crawled_jobs and crawled_jds
 # ================================================================
 
-def migrate_crawled_data(db: "JobHunterDB", dry_run: bool) -> Dict[str, int]:
+def migrate_crawled_data(db, dry_run: bool) -> Dict[str, int]:
     """Merge crawled_jobs + crawled_jds from crawler.db into new jds table."""
     if not OLD_DB.exists():
         logger.info("No old crawler.db found, skipping crawl migration.")
@@ -117,7 +117,7 @@ def migrate_crawled_data(db: "JobHunterDB", dry_run: bool) -> Dict[str, int]:
 
 
 def _insert_jd_with_classification(
-    db: "JobHunterDB", jd_data: Dict, counts: Dict, dry_run: bool, default_source: str
+    db, jd_data: Dict, counts: Dict, dry_run: bool, default_source: str
 ):
     """Insert a JD into new DB, classifying it first."""
     url = jd_data.get("url", "")
@@ -150,7 +150,7 @@ def _insert_jd_with_classification(
 # Phase 3: Import KnowledgeBase JSON files
 # ================================================================
 
-def migrate_knowledge_base(db: "JobHunterDB", dry_run: bool) -> Dict[str, int]:
+def migrate_knowledge_base(db, dry_run: bool) -> Dict[str, int]:
     """Import all JSON files from data/knowledge_bases/ into jds table."""
     if not KB_DIR.exists():
         logger.info("No knowledge_bases directory found, skipping KB migration.")
@@ -225,7 +225,7 @@ def migrate_knowledge_base(db: "JobHunterDB", dry_run: bool) -> Dict[str, int]:
 # Phase 4: Schema version
 # ================================================================
 
-def init_schema_version(db: "JobHunterDB", dry_run: bool):
+def init_schema_version(db, dry_run: bool):
     if dry_run:
         logger.info("[DRY-RUN] Would set schema_version = 1")
         return
@@ -249,7 +249,7 @@ def init_schema_version(db: "JobHunterDB", dry_run: bool):
 # ================================================================
 
 def print_report(
-    crawl_counts: Dict, kb_counts: Dict, db: "JobHunterDB", dry_run: bool
+    crawl_counts: Dict, kb_counts: Dict, db, dry_run: bool
 ):
     print("\n" + "=" * 60)
     print("  Migration Report")
@@ -292,8 +292,8 @@ def main():
 
     # Ensure new DB is initialized
     if not args.dry_run:
-        from database.repository import JobHunterDB
-        db = JobHunterDB(str(NEW_DB))
+        from database.backends.sqlite_backend import SqliteBackend
+        db = SqliteBackend(db_path=str(NEW_DB))
     else:
         # Create a temporary connection for dry-run reads
         import sqlite3

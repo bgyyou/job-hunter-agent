@@ -15,7 +15,7 @@ from loguru import logger
 
 
 class KnowledgeBase:
-    """知识库管理类 — 可选接收 JobHunterDB 实例，优先写入 SQLite"""
+    """知识库管理类 — 可选接收 SqliteBackend 实例，优先写入 SQLite"""
 
     def __init__(
         self,

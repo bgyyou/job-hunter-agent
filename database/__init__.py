@@ -1,5 +1,6 @@
 """Job Hunter v2 database package."""
 
-from database.repository import JobHunterDB
+from database.factory import get_db
+from database.backends.sqlite_backend import SqliteBackend
 
-__all__ = ["JobHunterDB"]
+__all__ = ["get_db", "SqliteBackend"]
