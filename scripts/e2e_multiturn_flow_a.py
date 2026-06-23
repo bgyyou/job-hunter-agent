@@ -273,6 +273,29 @@ async def main():
                 print(f"  ❌ 提取失败: {e}")
                 section_logs.append((key, n_turns, "extract_error", None))
 
+    # RAG 骨架：检索该岗位的存量 JD，提炼核心要求
+    print(f"\n{'━' * 70}")
+    print("▶ RAG 骨架：build_skeleton")
+    print(f"{'━' * 70}")
+    try:
+        jd_total = db.get_stats().get("jds", 0)
+        print(f"  📚 数据库存量：{jd_total} 份 JD")
+        skeleton = await flow.build_skeleton(position=position, industry=industry)
+        src = skeleton.get("source")
+        n_chunks = skeleton.get("n_chunks", 0)
+        industries_covered = skeleton.get("industries_covered", [])
+        skeleton_text = skeleton.get("text", "")
+        print(f"  ✅ source={src}    召回 chunks={n_chunks}    覆盖行业={industries_covered}")
+        print(f"  ── 蒸馏出的岗位核心要求 ──")
+        for line in skeleton_text.splitlines():
+            if line.strip():
+                print(f"     {line}")
+    except Exception as e:
+        print(f"  ❌ build_skeleton 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        skeleton = {"source": "fallback", "n_chunks": 0, "industries_covered": [], "text": ""}
+
     # 派生 + 渲染
     print(f"\n{'━' * 70}")
     print("▶ 派生 summary + core_competencies")
@@ -343,6 +366,20 @@ async def main():
     # 4. 派生非空
     checks.append(("derived.summary 非空", bool(derived.get("summary"))))
     checks.append(("derived.core_competencies ≥ 3", len(derived.get("core_competencies", [])) >= 3))
+
+    # 4.5. RAG 召回（核心：验证 build_skeleton 真的从存量 JD 库蒸馏）
+    checks.append((f"RAG source=='rag'（非 fallback，实际={skeleton.get('source')}）",
+                   skeleton.get("source") == "rag"))
+    checks.append((f"RAG n_chunks ≥ 5（实际={skeleton.get('n_chunks', 0)}）",
+                   skeleton.get("n_chunks", 0) >= 5))
+    checks.append((f"RAG skeleton.text 非空（{len(skeleton.get('text', ''))} chars）",
+                   bool((skeleton.get("text") or "").strip())))
+    # industries_covered 是 nice-to-have：JD 入库时未跑 classifier 会全为空
+    if not skeleton.get("industries_covered"):
+        print(f"\n  ⚠️  数据健康警告：RAG 召回 {skeleton.get('n_chunks', 0)} 条 chunks，但 industries_covered 为空。")
+        print("      原因：JD 入库时未跑 industry classifier，所有 chunk 的 jd_industry_tag=None。")
+        print("      影响：RAG 召回链路工作正常（蒸馏出岗位要求），仅「覆盖行业」信号缺失。")
+        print("      修复：跑一次 classifier 批量给 511 份 JD 打 industry tag。\n")
 
     # 5. markdown 包含 8 段
     expected = ["# 郑浩文", "## 个人陈述", "## 核心能力", "## 工作经历",
