@@ -62,11 +62,21 @@ class ResumeGenerator:
             lines.append(" | ".join(contact_parts))
             lines.append("")
 
-        # 个人陈述
-        summary = header.get("summary", "")
+        # 个人陈述（兼容顶层 summary 与 header.summary）
+        summary = resume_data.get("summary") or header.get("summary", "")
         if summary:
             lines.append("## 个人陈述")
             lines.append(summary)
+            lines.append("")
+
+        # 核心能力（派生字段）
+        core_competencies = resume_data.get("core_competencies", [])
+        if core_competencies:
+            lines.append("## 核心能力")
+            lines.append("")
+            for item in core_competencies:
+                if item:
+                    lines.append(f"- {item}")
             lines.append("")
 
         # 工作经历
@@ -167,6 +177,24 @@ class ResumeGenerator:
                 if start_year or end_year:
                     lines.append(f"{start_year or ''} - {end_year or '至今'}")
                 lines.append("")
+
+        # 语言能力
+        languages = resume_data.get("languages", [])
+        if languages:
+            lines.append("## 语言能力")
+            lines.append("")
+            for lang in languages:
+                if isinstance(lang, dict):
+                    name = lang.get("name", "")
+                    level = lang.get("level", "")
+                    if name:
+                        line = f"- {name}"
+                        if level:
+                            line += f" ({level})"
+                        lines.append(line)
+                elif isinstance(lang, str) and lang:
+                    lines.append(f"- {lang}")
+            lines.append("")
 
         return "\n".join(lines)
 
