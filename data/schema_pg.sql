@@ -136,6 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_chunk_type ON knowledge_chunks(chunk_type);
 CREATE INDEX IF NOT EXISTS idx_chunk_deleted ON knowledge_chunks(deleted_at);
 -- GIN index for full-text search on chunk_text
 CREATE INDEX IF NOT EXISTS idx_chunk_text_gin ON knowledge_chunks USING gin (to_tsvector('simple', chunk_text));
+-- HNSW index for vector similarity search (RAG lookup target)
+-- pgvector 0.8+: vector_cosine_ops; older: vector_cos_ops
+CREATE INDEX IF NOT EXISTS idx_chunk_embedding_hnsw ON knowledge_chunks
+    USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 
 -- ============================================================
 -- Table: chunks_vector

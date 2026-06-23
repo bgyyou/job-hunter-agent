@@ -81,6 +81,18 @@ class PostgresBackend(BaseBackend):
         else:
             logger.warning(f"schema_pg.sql not found at {schema_path}, skipping PG init")
 
+        # 编号迁移：database/migrations_pg/NNN_*.sql（PG 方言）
+        # 与 SQLite 走独立目录，避免 datetime('now') 等 SQLite-only 语法污染 PG
+        mig_dir = Path(__file__).parent.parent.parent / "database" / "migrations_pg"
+        if mig_dir.exists():
+            for mig_file in sorted(mig_dir.glob("*.sql")):
+                try:
+                    with open(mig_file, encoding="utf-8") as f:
+                        self._execute(f.read())
+                    logger.info(f"migration: applied {mig_file.name}")
+                except Exception as exc:
+                    logger.warning(f"migration {mig_file.name} failed: {exc}")
+
     def _json_serialize(self, value: Any) -> Optional[str]:
         if value is None:
             return None
@@ -673,6 +685,13 @@ class PostgresBackend(BaseBackend):
 
         where_sql = " AND ".join(filter_parts)
         candidate_k = max(top_k * 3, top_k)
+
+        # 提升 HNSW 召回：ef_search 应 >= 实际取的候选数（candidate_k）
+        # 默认 40 在 top_k=15、candidate_k=45 时会丢召回；取 max(64, candidate_k)
+        try:
+            self._execute(f"SET LOCAL hnsw.ef_search = {max(64, candidate_k)}")
+        except Exception:
+            pass  # 旧版 pgvector 没有该参数，忽略
 
         query = f"""
             SELECT id, jd_id, chunk_index, chunk_text, chunk_type, keywords,

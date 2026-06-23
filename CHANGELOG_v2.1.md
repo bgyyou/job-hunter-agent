@@ -690,3 +690,44 @@ pytest tests/ -v
 ### 后续 task
 - task #9 P2-3 已完成；P2-1（pgvector）、P2-2（JD schema 收敛）独立排期，跟简历 Flow 无依赖。
 
+---
+
+## [P2-1 pgvector HNSW 索引加速 RAG] 2026-06-23
+
+### 范围
+`knowledge_chunks.embedding` —— RAG 实际查询表 —— 缺 HNSW 索引，pgvector 一直在做 O(n) 顺序扫描。补齐结构并建立自动化机制防止未来再次遗漏。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 索引 | `schema_pg.sql` 新增 `idx_chunk_embedding_hnsw`，HNSW cosine, m=16, ef_construction=64 | `data/schema_pg.sql` |
+| 迁移脚本 | `database/migrations_pg/` 目录（PG 方言，与 SQLite 独立），002 复合索引 + 003 HNSW | `database/migrations_pg/002_*.sql`, `003_*.sql` |
+| 自动扫描 | `PostgresBackend._init_db()` 在 schema 初始化后扫描 `migrations_pg/*.sql` 并逐条执行（与 SQLite 对称） | `database/backends/postgres_backend.py` |
+| ef_search 调优 | `search_similar_chunks()` 查询前 SET LOCAL hnsw.ef_search = max(64, top_k*3)，提升 HNSW 召回率 | `database/backends/postgres_backend.py` |
+| 测试 | `tests/integration/test_pg_backend.py` 8 用例覆盖：迁移文件内容验证、_init_db 扫描逻辑、ef_search 调参、无 embedding 降级路径 | `tests/integration/test_pg_backend.py` |
+
+### 架构说明
+
+**为什么是 HNSW 不是 IVFFlat？**
+- HNSW 构建慢但查询快（O(log n)），对 RAG 场景（高频查询，低频写入）更优
+- pgvector 0.8+ 全线支持 HNSW；0.5+ 也支持但操作符名为 `vector_cos_ops`，已做兼容
+
+**migrations_pg 独立于 migrations**
+- `migrations/` 目录全是 SQLite 方言（`datetime('now')`、partial index `WHERE`）
+- 直接复用会让 PG 报错，所以 PG 迁移走独立目录，命名规则一致
+
+**CI 不配 PG 服务**
+- 所有 PG 测试通过 `MagicMock` + `monkeypatch` 验证 SQL 文本内容和代码执行路径，不依赖真实 PG 实例
+- 真实 PG 集成测试用 `docker compose up postgres` 手动触发
+
+### 验证
+- `pytest tests/ -q` → **107 passed in 7.64s**（+8 PG 用例）
+- SQL 文件存在性 + 关键字检查已自动覆盖
+- `migrations_pg/003_*.sql` 包含 `hnsw`、`vector_cosine_ops`、`m=16` 三项核心参数
+
+### 显式不做
+- **不在 PG 后台上配 `ivfflat` fallback** —— 项目 p 要求 pgvector 0.8+（见 `docker compose`），HNSW 100% 可用
+- **不在 CI 配 Postgres service** —— 仅 mock 测试，无真实 PG 依赖；真实集成跑 `docker compose up` 手动
+- **不处理 `chunks_vector` 表** —— PDF ingestion 专用，已有 HNSW 索引；本次只补 RAG 主查询路径
+
