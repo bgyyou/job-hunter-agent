@@ -83,6 +83,18 @@ def test_jd_get_missing(tmp_db):
     assert tmp_db.get_jd_by_url("https://nowhere.example") is None
 
 
+def test_jd_insert_duplicate_url_returns_real_id(tmp_db):
+    """P0-2 回归：URL 重复时 insert_jd 必须返回数据库里的真实 id，
+    而不是新生成的伪 UUID。这是 INSERT OR IGNORE 的静默跳过坑。"""
+    url = "https://e.com/dup"
+    first_id = tmp_db.insert_jd(_jd(url))
+    second_id = tmp_db.insert_jd(_jd(url))
+    assert first_id == second_id
+    assert tmp_db.get_jd(first_id) is not None
+    # 数据库里应该只有一条
+    assert len(tmp_db.list_jds()) == 1
+
+
 # ----- match -----
 
 def test_match_insert_list(tmp_db):

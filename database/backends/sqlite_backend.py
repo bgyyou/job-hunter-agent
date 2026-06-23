@@ -191,6 +191,17 @@ class SqliteBackend(BaseBackend):
                  data.get("crawled_at", now), now, now),
             )
             conn.commit()
+            # INSERT OR IGNORE 在 UNIQUE(url, user_id) 冲突时静默跳过，
+            # 此处查出真实 id 返回，而非本地伪造的新 UUID
+            url = data.get("url", "")
+            user_id = data.get("user_id", "default")
+            if url:
+                row = conn.execute(
+                    "SELECT id FROM jds WHERE url = ? AND user_id = ? AND deleted_at IS NULL",
+                    (url, user_id),
+                ).fetchone()
+                if row:
+                    return row[0]
         finally:
             conn.close()
         return jd_id
