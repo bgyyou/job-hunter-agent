@@ -90,6 +90,9 @@ class SqliteBackend(BaseBackend):
                 logger.info(f"migration: skip {mig_file.name} (jds already on v3 schema)")
                 continue
             logger.info(f"migration: applying {mig_file.name}")
+            # 注：executescript 会先 COMMIT 当前事务，外层 BEGIN 无效。如果中途崩，
+            # 半成品落地；幂等防御只能写在每个 .sql 内部（如 004 顶部的
+            # DROP TABLE IF EXISTS jds_v3）。
             conn.executescript(mig_file.read_text(encoding="utf-8"))
 
     def _row_to_dict(self, row: sqlite3.Row) -> Optional[Dict]:

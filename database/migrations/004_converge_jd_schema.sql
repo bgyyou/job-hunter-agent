@@ -9,7 +9,12 @@
 -- 注：本脚本由 sqlite_backend._apply_idempotent_migrations() 在检测到
 --     `jds` 表还有 `requirements` 列时整体执行（事务内）。
 --     已经迁移过的库直接 SKIP。
+--
+--     幂等防御：第一行 DROP IF EXISTS jds_v3 处理上次跑到一半挂掉的场景
+--     （CREATE TABLE jds_v3 成功但 RENAME 没跑完，导致重启时 CREATE 撞表名）。
 -- ============================================================
+
+DROP TABLE IF EXISTS jds_v3;
 
 CREATE TABLE jds_v3 (
     id TEXT PRIMARY KEY,
