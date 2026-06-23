@@ -92,6 +92,43 @@ ALL_INDUSTRY_KEYWORDS = [
 ]
 
 
+# 垂直行业关键词（v2.1 N11：补结构性缺口）。覆盖医疗/教育/制造/法律专业/
+# 硬件芯片/金融垂直/互联网垂直/初级岗。JobsDB HK 上英文关键词命中率最高。
+# 目标：60 个关键词 × ~10 条/词 ≈ 600 条新 JD，与已有 383 凑到 ~1000。
+VERTICAL_INDUSTRY_KEYWORDS = [
+    # 医疗健康
+    "Registered Nurse", "Doctor", "Pharmacist", "Medical Officer",
+    "Clinical Research Associate", "Medical Researcher",
+    "Health Safety Officer", "Physiotherapist", "Radiographer",
+    "Medical Laboratory Technician",
+    # 教育培训
+    "Teacher", "Tutor", "Curriculum Designer", "Education Consultant",
+    "Training Coordinator", "Academic Coordinator",
+    "Early Childhood Educator", "Language Teacher",
+    # 制造业
+    "Manufacturing Engineer", "Process Engineer", "Quality Engineer",
+    "Production Manager", "Industrial Engineer",
+    "Quality Assurance Specialist", "Plant Manager",
+    # 法律专业（区别于已有的 Legal Counsel 高级岗）
+    "Legal Assistant", "Paralegal", "Legal Secretary",
+    "Compliance Analyst",
+    # 硬件 / 芯片
+    "Hardware Engineer", "Embedded Engineer", "IC Design Engineer",
+    "Firmware Engineer", "Electronics Engineer",
+    # 金融垂直（区别于已有的 Financial Analyst）
+    "Quantitative Researcher", "Risk Manager", "Investment Banking Analyst",
+    "Fund Manager", "Underwriter", "Credit Analyst",
+    "Treasury Analyst", "Actuary",
+    # 互联网垂直（区别于已有的传统 Marketing）
+    "Growth Hacker", "Content Operations", "E-commerce Operations",
+    "User Operations", "Product Operations", "Social Media Manager",
+    "SEO Specialist", "SEM Specialist", "Community Manager",
+    # 初级 / 应届（补层级缺口）
+    "Junior Software Engineer", "Graduate Trainee",
+    "Management Trainee", "Entry Level Analyst",
+]
+
+
 def _normalize_jobsdb_url(raw: str) -> str:
     """规范化 JobsDB URL：只保留 /job/XXXXX，去掉 query / fragment。
 
@@ -237,6 +274,8 @@ def _load_keywords(args) -> List[str]:
         return kws or DEFAULT_KEYWORDS
     if args.all_industry:
         return ALL_INDUSTRY_KEYWORDS
+    if args.vertical_industry:
+        return VERTICAL_INDUSTRY_KEYWORDS
     if args.keyword:
         return [args.keyword]
     return DEFAULT_KEYWORDS
@@ -247,6 +286,7 @@ def main():
     parser.add_argument("--keyword", help="单关键词（冒烟用）")
     parser.add_argument("--keywords-file", help="多关键词文件，每行一个")
     parser.add_argument("--all-industry", action="store_true", help="用内置全行业关键词列表（60+ 关键词）")
+    parser.add_argument("--vertical-industry", action="store_true", help="用内置垂直行业关键词列表（医疗/教育/制造/法律/硬件/金融/互联网/初级，~60 关键词）")
     parser.add_argument("--per-keyword", type=int, default=10, help="每个关键词抓多少条（默认 10）")
     parser.add_argument("--batch-size", type=int, default=2, help="每多少个关键词重启一次浏览器（默认 2，防 Playwright 连接断）")
     parser.add_argument("--no-headless", action="store_true", help="显示浏览器窗口（调试用，默认 headless）")

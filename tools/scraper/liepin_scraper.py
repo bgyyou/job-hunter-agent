@@ -65,24 +65,31 @@ class LiepinScraper(BaseScraper):
     # 登录态健康检查（v2.1 M6.B.3.2 关键能力）
     # ------------------------------------------------------------------
 
+    async def login(self, username: str = "", password: str = "") -> bool:
+        """猎聘需要扫码登录，脚本无法自动完成，仅在已登录时返回 True。"""
+        return await self.check_login()
+
+    async def is_logged_in(self) -> bool:
+        """BaseScraper 接口：检测当前 profile 是否仍处于登录态。"""
+        return await self.check_login()
+
     async def check_login(self) -> bool:
         """检测当前 profile 是否仍处于登录态。
 
-        猎聘未登录时搜索页/详情页会重定向到登录页或弹强制登录 modal。
-        我们用首页的「用户头像 / 退出按钮」做判定。
+        猎聘 2026 改版后：登录后右上角会有「个人中心 / 消息」入口。
+        未登录时这两个文字不会出现，会显示「登录 / 注册」按钮。
         """
         await self._init_playwright()
         try:
             await self.playwright_scraper.human_navigate(f"{self.base_url}/")
             await self.playwright_scraper.human_read_page(min_seconds=1.0, max_seconds=2.0)
-            # 登录后右上角会有 .user-info 或类似节点
-            sel = await self.playwright_scraper.page.query_selector_all(
-                ".user-info, .header-user, a[href*='logout'], .user-name"
-            )
-            ok = bool(sel)
+            page = self.playwright_scraper.page
+            # 用文字判定，最稳。登录后页面上出现「个人中心」或「我的简历」字样。
+            body_text = await page.evaluate("() => document.body.innerText")
+            ok = ("个人中心" in body_text) or ("我的简历" in body_text) or ("退出" in body_text)
             if not ok:
                 logger.warning(
-                    "[liepin] 登录态失效：未在首页找到用户节点。"
+                    "[liepin] 登录态失效：首页文本里没有「个人中心/我的简历/退出」。"
                     "请跑 `python scripts/collectors/login_liepin.py` 重新登录。"
                 )
             return ok
@@ -186,20 +193,40 @@ class LiepinScraper(BaseScraper):
             await self.playwright_scraper.take_screenshot("liepin_detail.png")
 
             page = self.playwright_scraper.page
-            title_el = await page.query_selector(".job-title, .name, h1")
-            title = (await title_el.inner_text()).strip() if title_el else ""
 
-            company_el = await page.query_selector(".company-name, .ellipsis-1, .ent-name")
-            company = (await company_el.inner_text()).strip() if company_el else ""
+            # 猎聘 2026 详情页 DOM 经常调整 class 名，靠固定 selector 太脆。
+            # 策略：用一组宽松的候选 selector 取结构化字段，**正文直接用 body 全文兜底**
+            # —— 猎聘详情页除了正文没什么噪声，全文当 raw_text 不影响后续 RAG 切片。
+            title = await self._first_text(page, ["h1", ".job-title-left .name", ".name", "[class*='job-title']"])
+            company = await self._first_text(page, [
+                "[class*='company-info'] [class*='name']",
+                "[class*='ent-name']",
+                ".company-name",
+                "a[href*='/company/']",
+            ])
+            location = await self._first_text(page, [
+                "[class*='job-properties']",
+                "[class*='job-info']",
+                "[class*='basic-info']",
+                ".job-area",
+            ])
 
-            location_el = await page.query_selector(".job-info-text, .job-area, .basic-info-item")
-            location = (await location_el.inner_text()).strip() if location_el else ""
+            body_text = await page.evaluate("() => document.body.innerText")
+            body_text = (body_text or "").strip()
 
-            # 详情正文：猎聘用 .job-description / .content.content-word
-            desc_el = await page.query_selector(
-                ".job-description, .content.content-word, .job-item .content"
-            )
-            description = (await desc_el.inner_text()).strip() if desc_el else ""
+            # 优先用专门的正文 selector，没命中就用 body 全文
+            description = await self._first_text(page, [
+                "[class*='job-intro']",
+                "[class*='job-description']",
+                ".content.content-word",
+                ".job-item .content",
+                "[class*='describe']",
+            ])
+            if not description:
+                description = body_text
+
+            if not description:
+                logger.warning(f"[liepin] parse_job: body_text 也为空 {job_url}")
 
             return {
                 "platform": "liepin",
@@ -209,9 +236,31 @@ class LiepinScraper(BaseScraper):
                 "company": company,
                 "location": location,
                 "description": description,
-                "raw_text": description or "",
+                "raw_text": description or body_text,
                 "scraped_at": datetime.now().isoformat(),
             }
         except Exception as e:
             logger.exception(f"[liepin] parse_job 失败: {e}")
             raise RuntimeError(f"猎聘详情解析失败: {e}") from e
+
+    @staticmethod
+    async def _first_text(page, selectors: List[str]) -> str:
+        """按顺序试 selector，返回第一个命中的 inner_text；都没命中返回空串。"""
+        for sel in selectors:
+            try:
+                el = await page.query_selector(sel)
+                if el:
+                    txt = (await el.inner_text()).strip()
+                    if txt:
+                        return txt
+            except Exception:
+                continue
+        return ""
+
+    async def get_job_detail(self, job_url: str) -> Dict[str, Any]:
+        """parse_job 别名，与 JobsDBScraper 接口对齐供 batch_*.py 共用。"""
+        return await self.parse_job(job_url)
+
+    async def close(self):
+        """关闭 Playwright，与 JobsDBScraper 接口对齐。"""
+        await self._close_playwright()

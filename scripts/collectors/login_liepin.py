@@ -33,13 +33,13 @@ async def main():
     async with LiepinScraper(headless=False) as scraper:
         await scraper.playwright_scraper.human_navigate("https://www.liepin.com/")
         logger.info("等待用户登录…")
-        input("✅ 已登录后按 Enter 关闭浏览器…")
+        input("已登录后按 Enter 关闭浏览器…")
 
         ok = await scraper.check_login()
         if ok:
-            logger.info("✅ 登录态校验通过")
+            logger.info("登录态校验通过")
         else:
-            logger.warning("⚠️ 未检测到登录态，请重新登录")
+            logger.warning("未检测到登录态，请重新登录")
 
 
 if __name__ == "__main__":
