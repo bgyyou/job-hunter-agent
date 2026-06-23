@@ -1019,3 +1019,35 @@ pytest tests/ -q  # 124 passed
 ### 第一性反思
 - **prompt 的"L1/L2/L3"措辞会被 LLM 理解成"做完前一层进入下一层"，而不是"先广度后深度"**。设计深挖策略时必须把"盘点总数→逐个挖"作为显式步骤，否则 LLM 会做完第一个就以为完成。
 - **轮次预算和深挖深度耦合**：用户经历越多，N=8 就越不够。改成 N=12 是临时解，更好的是 LLM 自己根据 L1 盘点的总数动态计算预算（已经写进 prompt 的"轮次紧张策略"）。
+
+
+---
+
+## [Flow A 架构重构: section 状态机分段采集] - 2026-06-24
+
+### 背景
+Flow A 之前的"一次性自由对话 → 一次 extract → 一次 generate"模式已修了 4 轮补丁（bugfix #1~#4），仍然不可靠：LLM 主观判断"信息够了"就 [DONE]、用户讲 1 个项目就生成通篇简历、生成阶段拿稀疏 extracted 填 [您的姓名] 之类占位符。**根本问题是架构没设计对** —— Agent 该状态化、聚焦、可追踪进度，而不是把一切丢给 LLM 自由发挥。
+
+### 改动清单
+
+| # | 改动 | 影响文件 |
+|---|---|---|
+| 1 | 引入 SECTIONS 常量（8 段：header / education / experience / projects / skills / languages / summary / core_competencies），summary + core_competencies 标记为 derived | `agents/resume_flow_a.py` |
+| 2 | 新增 `chat_section / extract_section / derive_summary_and_competencies` 三个方法，替代单一 chat+extract_resume；旧方法保留作 fallback | 同上 |
+| 3 | `_normalize_resume_shape` 扩字段：顶层 summary、core_competencies、languages、contact.wechat / linkedin | 同上 |
+| 4 | `to_markdown` 渲染新增 "## 核心能力"（summary 后）+ "## 语言能力"（education 后） | `tools/generator/resume_generator.py` |
+| 5 | tab7 UI 重构为 section 状态机驱动 + 顶部进度条 + 跳过/进入下一节按钮 | `web_app.py` L1612-1900 |
+| 6 | session_state 新增 fa_section_index / fa_section_data / fa_section_messages / fa_section_done / fa_section_skipped | `web_app.py` L171-181 |
+| 7 | 测试新增 5 个 section 用例（chat_section / extract_section / derive / roundtrip + skip marker） | `tests/integration/test_resume_flow_a.py` |
+
+### 验证
+```bash
+pytest tests/ -q  # 129 passed (124 + 5 新)
+```
+
+### 显式不做
+- **不动 DB schema**：`resumes` 表加 languages / core_competencies 列要做 migration，本批不碰，入库时丢这两个字段，markdown 和 session 里保留。
+- **不删旧 chat / extract_resume / generate_final**：保留作 fallback，下一个 commit 验证稳定后再删。
+
+### 第一性反思
+用户原话："**作为 Agent 应该具备这样的能力** —— 一轮一轮生成，最后汇总。" 这恰恰戳中了 Flow A 之前的核心问题：**LLM 的对话能力很强，但状态机责任不该外包**。section 状态机把"问什么/什么时候算问完/什么时候推进"这三件事拿回到代码层，LLM 只负责具体的提问措辞，整体可控性提升一个量级。

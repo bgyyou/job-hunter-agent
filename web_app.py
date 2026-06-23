@@ -169,6 +169,18 @@ if 'fa_resume_html' not in st.session_state:
 if 'fa_skeleton' not in st.session_state:
     st.session_state.fa_skeleton = None
 
+# Flow A section 状态机
+if 'fa_section_index' not in st.session_state:
+    st.session_state.fa_section_index = 0
+if 'fa_section_data' not in st.session_state:
+    st.session_state.fa_section_data = {}  # {section_key: extracted_value}
+if 'fa_section_messages' not in st.session_state:
+    st.session_state.fa_section_messages = {}  # {section_key: [msg]}
+if 'fa_section_done' not in st.session_state:
+    st.session_state.fa_section_done = []  # [section_key]
+if 'fa_section_skipped' not in st.session_state:
+    st.session_state.fa_section_skipped = []  # [section_key]
+
 # 侧边栏
 with st.sidebar:
     st.markdown("## 💼 Job Hunter")
@@ -1614,7 +1626,23 @@ with tab7:
     st.caption("没有现成简历？告诉我你的目标和经历，AI 帮你写一份。")
 
     from tools import taxonomy
-    from agents.resume_flow_a import ResumeFlowA
+    from agents.resume_flow_a import ResumeFlowA, SECTIONS
+
+    # Section 状态机辅助
+    _COLLECT_SECTIONS = [s for s in SECTIONS if not s.get("derived")]
+    _TOTAL_SECTIONS = len(SECTIONS)  # 8（6 采集 + 2 派生）
+
+    def _fa_reset():
+        for k in ["fa_industry", "fa_function", "fa_position",
+                  "fa_messages", "fa_resume_data", "fa_resume_md",
+                  "fa_resume_html", "fa_skeleton"]:
+            st.session_state[k] = None if k != "fa_messages" else []
+        st.session_state.fa_chat_done = False
+        st.session_state.fa_section_index = 0
+        st.session_state.fa_section_data = {}
+        st.session_state.fa_section_messages = {}
+        st.session_state.fa_section_done = []
+        st.session_state.fa_section_skipped = []
 
     # --- Step 1: 行业 / 岗位选择 ---
     if not st.session_state.fa_position:
@@ -1634,66 +1662,195 @@ with tab7:
             st.session_state.fa_industry = industry
             st.session_state.fa_function = function
             st.session_state.fa_position = position
-            st.session_state.fa_messages = [
-                {"role": "user", "content": f"我想申请{industry}行业的{position}岗位，请通过提问帮我整理简历。"}
-            ]
+            st.session_state.fa_section_index = 0
+            st.session_state.fa_section_data = {}
+            st.session_state.fa_section_messages = {}
+            st.session_state.fa_section_done = []
+            st.session_state.fa_section_skipped = []
             st.rerun()
 
-    # --- Step 2: 多轮对话 ---
-    elif not st.session_state.fa_chat_done:
-        st.markdown(f"### 第 2 步：与 AI 对话（目标：{st.session_state.fa_industry} / {st.session_state.fa_position}）")
+    # --- Step 2: section 状态机对话 ---
+    elif st.session_state.fa_section_index < len(_COLLECT_SECTIONS):
+        section = _COLLECT_SECTIONS[st.session_state.fa_section_index]
+        section_key = section["key"]
+
+        # 顶部进度条
+        finished = len(st.session_state.fa_section_done) + len(st.session_state.fa_section_skipped)
+        st.progress(finished / _TOTAL_SECTIONS, text=f"进度 {finished}/{_TOTAL_SECTIONS}")
+
+        # 进度文字
+        done_names = []
+        for k in st.session_state.fa_section_done:
+            s = next((x for x in SECTIONS if x["key"] == k), None)
+            if s: done_names.append(f"{s['name']} ✓")
+        for k in st.session_state.fa_section_skipped:
+            s = next((x for x in SECTIONS if x["key"] == k), None)
+            if s: done_names.append(f"{s['name']} ⏭")
+        pending_names = []
+        for i, s in enumerate(_COLLECT_SECTIONS):
+            if i > st.session_state.fa_section_index:
+                pending_names.append(s["name"])
+        derived_names = [s["name"] for s in SECTIONS if s.get("derived")]
+        st.caption(
+            f"📋 已完成：{' / '.join(done_names) if done_names else '（无）'}    "
+            f"进行中：**{section['name']}**    "
+            f"待办：{' / '.join(pending_names + derived_names) if (pending_names or derived_names) else '（无）'}"
+        )
+
+        st.markdown(f"### 第 2 步：采集 {section['name']}（{st.session_state.fa_industry} / {st.session_state.fa_position}）")
+
         if st.button("重新选择岗位", key="fa_reset_choose"):
-            for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_skeleton"]:
-                st.session_state[k] = None if k != "fa_messages" else []
-            st.session_state.fa_chat_done = False
+            _fa_reset()
             st.rerun()
 
-        for m in st.session_state.fa_messages[1:]:
+        # 本 section 的对话历史
+        sec_msgs = st.session_state.fa_section_messages.setdefault(section_key, [])
+
+        for m in sec_msgs:
             with st.chat_message("user" if m["role"] == "user" else "assistant"):
                 st.markdown(m["content"])
 
-        if st.session_state.fa_messages and st.session_state.fa_messages[-1]["role"] == "user":
-            with st.spinner("AI 思考中..."):
+        # 如果本段还没开始（无 assistant 消息），先让 AI 主动开口
+        needs_assistant_turn = (
+            not sec_msgs
+            or sec_msgs[-1]["role"] == "user"
+        )
+
+        if needs_assistant_turn:
+            with st.spinner(f"AI 正在准备 {section['name']} 的问题..."):
+                try:
+                    llm_client = st.session_state.agent.llm_client
+                    flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
+                    # 第一轮：注入开场用户消息（如果空）
+                    msgs_for_llm = sec_msgs if sec_msgs else [
+                        {"role": "user", "content": f"开始采集{section['name']}吧。"}
+                    ]
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    reply = loop.run_until_complete(flow_a.chat_section(
+                        section_key=section_key,
+                        messages=msgs_for_llm,
+                        collected_so_far=st.session_state.fa_section_data,
+                        industry=st.session_state.fa_industry,
+                        position=st.session_state.fa_position,
+                    ))
+                    loop.close()
+
+                    if not sec_msgs:
+                        # 首轮：把开场 user 也存进去
+                        sec_msgs.append({"role": "user", "content": f"开始采集{section['name']}吧。"})
+                    sec_msgs.append({"role": "assistant", "content": reply["message"]})
+
+                    if reply["type"] == "section_skipped":
+                        st.session_state.fa_section_skipped.append(section_key)
+                        st.session_state.fa_section_index += 1
+                        st.rerun()
+                    elif reply["type"] == "section_done":
+                        # 立即提取本段数据并存
+                        flow_a2 = ResumeFlowA(llm_client, db=st.session_state.db)
+                        loop2 = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop2)
+                        extracted = loop2.run_until_complete(
+                            flow_a2.extract_section(section_key, sec_msgs)
+                        )
+                        loop2.close()
+                        st.session_state.fa_section_data[section_key] = extracted
+                        st.session_state.fa_section_done.append(section_key)
+                        st.session_state.fa_section_index += 1
+                        st.rerun()
+                    else:
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"AI 响应失败：{exc}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+        user_input = st.chat_input(f"回复关于「{section['name']}」的问题...")
+        if user_input:
+            sec_msgs.append({"role": "user", "content": user_input})
+            st.rerun()
+
+        # 操作按钮
+        bcol1, bcol2, bcol3 = st.columns(3)
+        with bcol1:
+            if section.get("skippable") and st.button(f"跳过 {section['name']}", key=f"fa_skip_{section_key}"):
+                st.session_state.fa_section_skipped.append(section_key)
+                st.session_state.fa_section_index += 1
+                st.rerun()
+        with bcol2:
+            if st.button(f"完成本节，进入下一节", key=f"fa_next_{section_key}"):
+                # 强制提取并推进
                 try:
                     llm_client = st.session_state.agent.llm_client
                     flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    reply = loop.run_until_complete(
-                        flow_a.chat(st.session_state.fa_messages, st.session_state.fa_industry, st.session_state.fa_position, max_rounds=12)
-                    )
+                    if sec_msgs:
+                        extracted = loop.run_until_complete(
+                            flow_a.extract_section(section_key, sec_msgs)
+                        )
+                        st.session_state.fa_section_data[section_key] = extracted
                     loop.close()
-                    st.session_state.fa_messages.append({"role": "assistant", "content": reply["message"]})
-                    if reply["type"] == "done":
-                        st.session_state.fa_chat_done = True
-                    st.rerun()
                 except Exception as exc:
-                    st.error(f"AI 响应失败：{exc}")
+                    st.warning(f"提取本节数据时出错（继续推进）：{exc}")
+                st.session_state.fa_section_done.append(section_key)
+                st.session_state.fa_section_index += 1
+                st.rerun()
 
-        user_input = st.chat_input("回复 AI...")
-        if user_input:
-            st.session_state.fa_messages.append({"role": "user", "content": user_input})
-            st.rerun()
-
-        if st.button("我说完了，直接生成简历", key="fa_force_done"):
-            st.session_state.fa_chat_done = True
-            st.rerun()
-
-    # --- Step 3: 生成简历 ---
+    # --- Step 3: 派生 + 生成简历 ---
     else:
+        st.progress(1.0, text=f"进度 {_TOTAL_SECTIONS}/{_TOTAL_SECTIONS} ✓")
         st.markdown("### 第 3 步：生成简历")
 
         if st.session_state.fa_resume_md is None:
-            with st.spinner("正在分析对话、检索行业要求、生成简历..."):
+            with st.spinner("正在派生总结与核心能力、检索 JD 行业要求、生成简历..."):
                 try:
                     llm_client = st.session_state.agent.llm_client
                     flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    extracted = loop.run_until_complete(flow_a.extract_resume(st.session_state.fa_messages))
-                    skeleton = loop.run_until_complete(flow_a.build_skeleton(st.session_state.fa_position, st.session_state.fa_industry))
-                    final_data = loop.run_until_complete(flow_a.generate_final(extracted, skeleton, st.session_state.fa_position))
+
+                    collected = st.session_state.fa_section_data or {}
+
+                    # 派生 summary + core_competencies
+                    derived = loop.run_until_complete(flow_a.derive_summary_and_competencies(
+                        collected,
+                        industry=st.session_state.fa_industry,
+                        position=st.session_state.fa_position,
+                    ))
+
+                    # 组装 raw_resume 给 normalize
+                    # collected 里:
+                    #   header → dict {name, contact}
+                    #   education / experience / projects → list
+                    #   skills → {"skills": [...]} 或 list
+                    #   languages → {"languages": [...]} 或 list
+                    skills_val = collected.get("skills")
+                    if isinstance(skills_val, dict):
+                        skills_val = skills_val.get("skills", [])
+                    languages_val = collected.get("languages")
+                    if isinstance(languages_val, dict):
+                        languages_val = languages_val.get("languages", [])
+
+                    raw_resume = {
+                        "header": collected.get("header", {}),
+                        "summary": derived.get("summary", ""),
+                        "core_competencies": derived.get("core_competencies", []),
+                        "education": collected.get("education", []) or [],
+                        "experience": collected.get("experience", []) or [],
+                        "projects": collected.get("projects", []) or [],
+                        "skills": skills_val or [],
+                        "languages": languages_val or [],
+                    }
+
+                    # RAG 骨架（可选，给商业化场景信任锚点）
+                    skeleton = loop.run_until_complete(flow_a.build_skeleton(
+                        st.session_state.fa_position, st.session_state.fa_industry,
+                    ))
+
+                    final_data = flow_a._normalize_resume_shape(raw_resume)
                     loop.close()
+
                     st.session_state.fa_resume_data = final_data
                     st.session_state.fa_skeleton = skeleton
                     st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
@@ -1708,7 +1865,7 @@ with tab7:
             st.markdown("#### 生成的简历")
             st.markdown(st.session_state.fa_resume_md)
 
-            # 数据来源信息条：体现 AI 不是凭空生成，给商业化场景一个信任锚点
+            # 数据来源信息条
             sk = st.session_state.fa_skeleton or {}
             try:
                 jd_count = st.session_state.db.get_stats().get("jds", 0)
@@ -1735,14 +1892,22 @@ with tab7:
                 if st.button("保存到数据库", key="fa_save_db"):
                     try:
                         rd = st.session_state.fa_resume_data
-                        resume_payload = {"name": rd.get("header", {}).get("name", ""), "phone": rd.get("header", {}).get("contact", {}).get("phone", ""), "email": rd.get("header", {}).get("contact", {}).get("email", ""), "summary": rd.get("header", {}).get("summary", ""), "skills": rd.get("skills", []), "education": rd.get("education", []), "projects": rd.get("projects", []), "target_roles": [st.session_state.fa_position]}
+                        # DB schema 暂不支持 languages / core_competencies，入库时丢这两个字段
+                        resume_payload = {
+                            "name": rd.get("header", {}).get("name", ""),
+                            "phone": rd.get("header", {}).get("contact", {}).get("phone", ""),
+                            "email": rd.get("header", {}).get("contact", {}).get("email", ""),
+                            "summary": rd.get("summary", "") or rd.get("header", {}).get("summary", ""),
+                            "skills": rd.get("skills", []),
+                            "education": rd.get("education", []),
+                            "projects": rd.get("projects", []),
+                            "target_roles": [st.session_state.fa_position],
+                        }
                         resume_id = st.session_state.db.insert_resume(resume_payload)
                         st.success(f"已保存，resume_id = {resume_id[:12]}...")
                     except Exception as exc:
                         st.error(f"保存失败：{exc}")
 
             if st.button("重新开始", key="fa_restart"):
-                for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_skeleton"]:
-                    st.session_state[k] = None if k != "fa_messages" else []
-                st.session_state.fa_chat_done = False
+                _fa_reset()
                 st.rerun()
