@@ -165,7 +165,11 @@ class ResumeFlowA:
     # ----------------------------------------------------------------
 
     async def extract_resume(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        """从完整对话历史中提取结构化简历数据"""
+        """从完整对话历史中提取结构化简历数据。
+
+        LLM 解析失败时返回一份"骨架可见"的兜底字典：用户至少能看到自己说过的内容，
+        而不是空白页。下游 ``generate_final`` 会拿这份骨架再走一次润色 LLM。
+        """
         convo_text = "\n".join(
             f"{'👤' if m['role'] == 'user' else '🤖'}: {m['content']}" for m in messages
         )
@@ -174,10 +178,30 @@ class ResumeFlowA:
             LLMMessage(role="user", content=f"从以下对话中提取简历数据：\n\n{convo_text}"),
         ]
 
-        response: LLMResponse = await self.llm_client.analyze(
-            messages=llm_messages, max_tokens=2000, temperature=0.2,
-        )
-        return self._parse_json(response.content)
+        try:
+            response: LLMResponse = await self.llm_client.analyze(
+                messages=llm_messages, max_tokens=2000, temperature=0.2,
+            )
+            parsed = self._parse_json(response.content)
+        except Exception as exc:
+            logger.warning(f"Flow A extract_resume LLM call failed: {exc}")
+            parsed = None
+
+        if parsed:
+            return self._normalize_resume_shape(parsed)
+
+        # 兜底：把用户的回答原文塞进 summary，让生成阶段有素材可用
+        user_raw = "\n".join(
+            m["content"] for m in messages if m.get("role") == "user"
+        )[:1500]
+        logger.warning("Flow A extract_resume parse failed — using raw user text fallback")
+        return {
+            "header": {"name": "", "contact": {"phone": "", "email": ""}, "summary": user_raw},
+            "experience": [],
+            "skills": [],
+            "education": [],
+            "projects": [],
+        }
 
     # ----------------------------------------------------------------
     # Step 3: RAG 骨架 — 从存量 JD 中提取该岗位的高频要求
@@ -261,38 +285,30 @@ class ResumeFlowA:
     ) -> List[Dict[str, Any]]:
         """检索与目标岗位相关的存量 JD chunks。
 
-        策略：position 主过滤（跨行业共享），industry 软加权（同行业排序更高）。
-        逐级降级：
-          1. position 硬过滤 + chunk_type=requirement + industry boost
-          2. position 硬过滤 + 不限 chunk_type（仍跨行业）
-          3. 完全语义召回（无 filter，最宽松）
+        策略：纯语义召回 + chunk_type=requirement 优先 + industry 软加权。
+        不做 position 硬 JOIN —— 现实里 JD 库的 position_tag 覆盖率极低
+        （多数 JD 是采集进来未跑 classifier 的），硬 JOIN 等于把召回打死。
+        召回 query 同时拼 industry，让向量相似度自然承担 position+industry 加权。
+        requirement 类不够时回退到不限 chunk_type 再试一次。
         """
         try:
             from tools.retriever import Retriever
             retriever = Retriever()
-            # L1: 严格 — position 命中 + 只要 requirement
+            query = f"{position} {industry}".strip()
+            # 优先 requirement 类，相似度阈值放低（0.3）让语义空间自己排序
             results = retriever.retrieve(
-                position,
+                query,
                 top_k=top_k,
                 filter_chunk_type="requirement",
-                filter_position=position,
-                boost_industry=industry,
-                min_similarity=0.4,
-            )
-            if results:
-                return results
-            # L2: 放宽 chunk_type
-            results = retriever.retrieve(
-                position,
-                top_k=top_k,
-                filter_position=position,
                 boost_industry=industry,
                 min_similarity=0.3,
             )
             if results:
                 return results
-            # L3: 完全语义召回（防御：position 字符串可能在 taxonomy 但 JD 库未标注）
-            return retriever.retrieve(position, top_k=top_k, min_similarity=0.3)
+            # requirement 类太少时不限 chunk_type
+            return retriever.retrieve(
+                query, top_k=top_k, boost_industry=industry, min_similarity=0.3,
+            )
         except Exception as exc:
             logger.warning(f"Flow A RAG retrieval failed: {exc}")
             return []
@@ -326,10 +342,16 @@ class ResumeFlowA:
             LLMMessage(role="user", content=prompt),
         ]
 
-        response: LLMResponse = await self.llm_client.analyze(
-            messages=llm_messages, max_tokens=3000, temperature=0.4,
-        )
-        return self._parse_json(response.content) or extracted
+        try:
+            response: LLMResponse = await self.llm_client.analyze(
+                messages=llm_messages, max_tokens=3000, temperature=0.4,
+            )
+            parsed = self._parse_json(response.content)
+        except Exception as exc:
+            logger.warning(f"Flow A generate_final LLM call failed: {exc}")
+            parsed = None
+
+        return self._normalize_resume_shape(parsed or extracted)
 
     # ----------------------------------------------------------------
     # 工具方法
@@ -345,6 +367,31 @@ class ResumeFlowA:
             except json.JSONDecodeError as exc:
                 logger.warning(f"Flow A JSON parse failed: {exc}")
         return None
+
+    @staticmethod
+    def _normalize_resume_shape(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """保证 to_markdown / 入库代码看到的字段都齐全，不会因为 LLM 缺字段炸掉。"""
+        d = data or {}
+        header = d.get("header") or {}
+        if not isinstance(header, dict):
+            header = {}
+        contact = header.get("contact") or {}
+        if not isinstance(contact, dict):
+            contact = {}
+        return {
+            "header": {
+                "name": header.get("name", "") or "",
+                "contact": {
+                    "phone": contact.get("phone", "") or "",
+                    "email": contact.get("email", "") or "",
+                },
+                "summary": header.get("summary", "") or "",
+            },
+            "experience": d.get("experience") or [],
+            "skills": d.get("skills") or [],
+            "education": d.get("education") or [],
+            "projects": d.get("projects") or [],
+        }
 
     def to_markdown(self, resume_data: Dict[str, Any]) -> str:
         return self.generator.to_markdown(resume_data)

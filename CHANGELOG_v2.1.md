@@ -865,3 +865,44 @@ pytest tests/ -q  # 122 passed
 - **不实现 N=4 商业模式 prompt 模板** —— 先跑 N=8 看实测效果，下次迭代再切
 - **不做每 bullet 引用 chunk_id** —— 用户明确说"不用太详细"，只在底部展示数据来源总览
 - **不动 schema** —— `position_tag` / `industry_tag` 字段 P2-2 已就位
+
+---
+
+## [Flow A bugfix: RAG 0 命中 + 简历空白] 2026-06-24
+
+### 背景：用户实测翻车
+
+P0/P1/P2 上线后用户实测路径"人工智能/AI agent/AI agent 产品经理"：
+- **现象 1**：底部信息条显示 "本轮 RAG 命中 0 条相关 chunk"
+- **现象 2**：简历正文一片空白
+
+### 根因（第一性诊断）
+
+1. **数据现实 ≠ 设计假设**：JD 库 511 条里 **510 条 `position_tag IS NULL`**（`auto_classified=0`，未跑 classifier）。P0 设计的 "position 主过滤 + industry 软加权" 在 99.8% 未分类数据面前 **L1/L2 永远 0 命中**，全靠 L3 纯语义兜底；而 LIKE fallback 同样卡 `filter_position` —— 三级降级是个空降级。
+2. **空数据无兜底**：`extract_resume` LLM 解析失败返回 `None`，`generate_final` `or extracted` 又传 `None` 给 `to_markdown` —— 整个简历直接空白。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| RAG 检索改纯语义 | `_retrieve_rag_chunks` 删 3 级 filter_position 硬过滤；改 `query = f"{position} {industry}"` 拼接送向量空间，`boost_industry` 软加权 rerank；requirement 类不足时退到不限 chunk_type 再试一次 | `agents/resume_flow_a.py` |
+| extract 兜底 | `extract_resume` LLM 解析失败时不再返回 `None`，改返回 `{header.summary=用户原话, experience=[], skills=[], ...}` —— 用户至少能在简历里看到自己说过的话 | `agents/resume_flow_a.py` |
+| generate_final 兜底 | LLM 异常 / 解析失败时 `_normalize_resume_shape(parsed or extracted)`，保证下游 `to_markdown` / 入库 / 信息条永远看到齐全 5 个 section | `agents/resume_flow_a.py` |
+| shape normalizer | 新增 `_normalize_resume_shape(data)`：补齐 `header.contact.phone/email`、`experience/skills/education/projects` 默认空列表 | `agents/resume_flow_a.py` |
+| 测试 | 新增 `test_extract_resume_falls_back_when_llm_returns_garbage`；`test_generate_final_falls_back_on_bad_json` 改为断言 normalize 后字段齐全 | `tests/integration/test_resume_flow_a.py` |
+
+### 收益
+- **RAG 实测从 0 → 15 chunks**（query="AI agent产品经理 人工智能/大模型"，sim 0.59-0.65）；底部信息条不再是"0 chunks"
+- **简历正文不再空白**：即便 LLM 完全摆烂，用户原话也会出现在 summary
+- **测试数 122 → 123**
+- **删了 P0 引入的 filter_position 硬 JOIN 路径**：留着 service 层 `filter_position` 参数（PG/SQLite backend 已支持），等 classifier 真覆盖到 80%+ JD 时再启用，那时它才有意义
+
+### 验证
+```bash
+pytest tests/ -q  # 123 passed
+python -c "from agents.resume_flow_a import ResumeFlowA; print(len(ResumeFlowA(None)._retrieve_rag_chunks('AI agent产品经理','人工智能/大模型',15)))"  # 期望 15
+```
+
+### 第一性反思
+- **数据现实优先于设计美感**：P0 设计"position 主过滤 + industry rerank"理论上 elegant，但在 JD 分类覆盖率 0.2% 时是 anti-pattern。后续添加 filter 类参数前先 `SELECT COUNT(*) WHERE filter_field IS NOT NULL` —— 覆盖率不到 50% 就别硬过滤。
+- **兜底链不能有断点**：用户路径上任一 LLM/外部依赖失败都不能让产出"为空"。`None or fallback` 模式默认 OK 但要保证 fallback 自己也是完整 shape。

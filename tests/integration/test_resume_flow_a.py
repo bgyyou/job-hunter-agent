@@ -138,6 +138,25 @@ def test_extract_resume_parses_json():
     assert result["skills"] == ["Python", "SQL"]
 
 
+def test_extract_resume_falls_back_when_llm_returns_garbage():
+    """LLM 返回非 JSON 时，extract_resume 不能炸，要把用户原话塞进 summary 兜底。"""
+    flow = ResumeFlowA(_llm_with_responses("抱歉，我现在没法解析..."))
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(flow.extract_resume([
+            {"role": "user", "content": "我叫小明，在腾讯做了 3 年 AI 产品"},
+            {"role": "assistant", "content": "了解，量化结果有吗？"},
+            {"role": "user", "content": "DAU 提升了 30%"},
+        ]))
+    finally:
+        loop.close()
+    # 兜底字段齐全
+    assert "header" in result and "experience" in result and "skills" in result
+    # 用户原话进了 summary
+    assert "小明" in result["header"]["summary"]
+    assert "30%" in result["header"]["summary"]
+
+
 # ---------- build_skeleton: RAG 失败兜底 ----------
 
 def test_build_skeleton_empty_when_no_rag_results(monkeypatch):
@@ -218,7 +237,7 @@ def test_generate_final_produces_resume_dict():
 
 
 def test_generate_final_falls_back_on_bad_json():
-    """LLM 返回非 JSON 时，应回退到 extracted 数据"""
+    """LLM 返回非 JSON 时，应回退到 extracted 数据并 normalize 出齐全字段"""
     extracted = {"header": {"name": "Leon"}, "skills": ["X"]}
     flow = ResumeFlowA(_llm_with_responses("抱歉无法生成"))
     loop = asyncio.new_event_loop()
@@ -230,7 +249,13 @@ def test_generate_final_falls_back_on_bad_json():
         ))
     finally:
         loop.close()
-    assert result == extracted
+    # 兜底数据被 _normalize_resume_shape 补齐
+    assert result["header"]["name"] == "Leon"
+    assert result["skills"] == ["X"]
+    assert result["experience"] == []
+    assert result["education"] == []
+    assert result["projects"] == []
+    assert result["header"]["contact"] == {"phone": "", "email": ""}
 
 
 # ---------- 端到端：完整 Flow A 链路 ----------
