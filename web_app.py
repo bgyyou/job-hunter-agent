@@ -1660,7 +1660,7 @@ with tab7:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     reply = loop.run_until_complete(
-                        flow_a.chat(st.session_state.fa_messages, st.session_state.fa_industry, st.session_state.fa_position, max_rounds=8)
+                        flow_a.chat(st.session_state.fa_messages, st.session_state.fa_industry, st.session_state.fa_position, max_rounds=12)
                     )
                     loop.close()
                     st.session_state.fa_messages.append({"role": "assistant", "content": reply["message"]})
