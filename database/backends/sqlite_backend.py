@@ -77,11 +77,19 @@ class SqliteBackend(BaseBackend):
         logger.info(f"SQLite backend initialized: {self.db_path}")
 
     def _apply_idempotent_migrations(self, conn: sqlite3.Connection) -> None:
-        """Bring older DBs up to current schema (CREATE IF NOT EXISTS does NOT add columns)."""
+        """Bring older DBs up to current schema (idempotent — safe to run every startup)."""
+        # v2.1 M3: knowledge_chunks.legacy column
         cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
         if "legacy" not in cols:
             conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0")
             logger.info("migration: added knowledge_chunks.legacy column")
+
+        # 编号迁移文件：database/migrations/NNN_description.sql
+        mig_dir = Path(__file__).parent.parent.parent / "database" / "migrations"
+        if mig_dir.exists():
+            for mig_file in sorted(mig_dir.glob("*.sql")):
+                logger.info(f"migration: applying {mig_file.name}")
+                conn.executescript(mig_file.read_text(encoding="utf-8"))
 
     def _row_to_dict(self, row: sqlite3.Row) -> Optional[Dict]:
         return dict(row) if row else None
