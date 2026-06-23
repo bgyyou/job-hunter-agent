@@ -291,7 +291,7 @@ with st.sidebar:
         st.session_state.match_result = None
         st.session_state.optimized_resume = None
         st.session_state.cover_letter = None
-        st.experimental_rerun()
+        st.rerun()
 
 # 主页面
 st.markdown('<div class="main-header">💼 Job Hunter</div>', unsafe_allow_html=True)
@@ -1456,7 +1456,7 @@ Job 2: AI Engineer @ Company 2
                     if st.button(f"删除此 JD", key=f"del_{idx}"):
                         kb.delete_jd(jd_id)
                         st.success(f"已删除 {jd_id}")
-                        st.experimental_rerun()
+                        st.rerun()
 
     st.divider()
 
@@ -1515,11 +1515,11 @@ with tab6:
                     if not applied_flag:
                         if st.button("📮 标记已投递", key=f"apply_{m['id']}"):
                             db_t6.update_match_applied(m["id"], 1)
-                            st.experimental_rerun()
+                            st.rerun()
                     else:
                         if st.button("↩️ 撤销投递", key=f"unapply_{m['id']}"):
                             db_t6.update_match_applied(m["id"], 0, applied_at=None)
-                            st.experimental_rerun()
+                            st.rerun()
                 with col3:
                     st.markdown("**反馈状态**:")
                     fb_options = ["未反馈", "已读未回", "已回复", "进入面试", "拿到 Offer", "拒绝"]
@@ -1546,7 +1546,7 @@ with tab6:
                             db_t6.update_match_feedback(m["id"], "")
                         else:
                             db_t6.update_match_feedback(m["id"], target)
-                        st.experimental_rerun()
+                        st.rerun()
 
                 if m.get("reasoning"):
                     st.markdown("**匹配理由**:")
@@ -1604,7 +1604,7 @@ with st.sidebar:
                 # 限制历史长度，避免无限增长
                 if len(st.session_state.ai_chat_history) > 20:
                     st.session_state.ai_chat_history = st.session_state.ai_chat_history[-12:]
-                st.experimental_rerun()
+                st.rerun()
 
 # =====================================================
 # 标签页 7: 从零生成简历 (P2-3 Flow A)
@@ -1637,7 +1637,7 @@ with tab7:
             st.session_state.fa_messages = [
                 {"role": "user", "content": f"我想申请{industry}行业的{position}岗位，请通过提问帮我整理简历。"}
             ]
-            st.experimental_rerun()
+            st.rerun()
 
     # --- Step 2: 多轮对话 ---
     elif not st.session_state.fa_chat_done:
@@ -1646,7 +1646,7 @@ with tab7:
             for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_skeleton"]:
                 st.session_state[k] = None if k != "fa_messages" else []
             st.session_state.fa_chat_done = False
-            st.experimental_rerun()
+            st.rerun()
 
         for m in st.session_state.fa_messages[1:]:
             with st.chat_message("user" if m["role"] == "user" else "assistant"):
@@ -1666,18 +1666,18 @@ with tab7:
                     st.session_state.fa_messages.append({"role": "assistant", "content": reply["message"]})
                     if reply["type"] == "done":
                         st.session_state.fa_chat_done = True
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as exc:
                     st.error(f"AI 响应失败：{exc}")
 
         user_input = st.chat_input("回复 AI...")
         if user_input:
             st.session_state.fa_messages.append({"role": "user", "content": user_input})
-            st.experimental_rerun()
+            st.rerun()
 
         if st.button("我说完了，直接生成简历", key="fa_force_done"):
             st.session_state.fa_chat_done = True
-            st.experimental_rerun()
+            st.rerun()
 
     # --- Step 3: 生成简历 ---
     else:
@@ -1745,4 +1745,4 @@ with tab7:
                 for k in ["fa_industry", "fa_function", "fa_position", "fa_messages", "fa_chat_done", "fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_skeleton"]:
                     st.session_state[k] = None if k != "fa_messages" else []
                 st.session_state.fa_chat_done = False
-                st.experimental_rerun()
+                st.rerun()
