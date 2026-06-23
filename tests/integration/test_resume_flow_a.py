@@ -267,7 +267,8 @@ def test_generate_final_strips_llm_placeholders():
         loop.close()
     # 占位符全被剥成空
     assert result["header"]["name"] == ""
-    assert result["header"]["contact"] == {"phone": "", "email": ""}
+    assert result["header"]["contact"]["phone"] == ""
+    assert result["header"]["contact"]["email"] == ""
     assert "[X]" not in result["header"]["summary"]
     assert result["experience"][0]["company"] == ""
     # 202X.XX 被剥掉，可能残留"至今"，但不再有 X/占位符特征
@@ -300,7 +301,8 @@ def test_generate_final_falls_back_on_bad_json():
     assert result["experience"] == []
     assert result["education"] == []
     assert result["projects"] == []
-    assert result["header"]["contact"] == {"phone": "", "email": ""}
+    assert result["header"]["contact"]["phone"] == ""
+    assert result["header"]["contact"]["email"] == ""
 
 
 # ---------- 端到端：完整 Flow A 链路 ----------
@@ -352,3 +354,128 @@ def test_flow_a_end_to_end(monkeypatch):
     assert "# Leon" in md
     assert "LLM" in md
     assert "AI PM" in md
+
+
+# ---------- Section 状态机：新接线测试 ----------
+
+def test_chat_section_collects_personal_info():
+    """chat_section: 个人信息段，LLM 回答带 [SECTION_DONE] 时应识别为段完成。"""
+    flow = ResumeFlowA(_llm_with_responses("好的，信息已记录。[SECTION_DONE]"))
+    loop = asyncio.new_event_loop()
+    try:
+        reply = loop.run_until_complete(flow.chat_section(
+            section_key="header",
+            messages=[
+                {"role": "assistant", "content": "请问你的姓名和联系方式？"},
+                {"role": "user", "content": "我叫 Leon，电话 13800138000"},
+            ],
+            collected_so_far={},
+            industry="互联网/软件",
+            position="AI产品经理",
+        ))
+    finally:
+        loop.close()
+    assert reply["type"] == "section_done"
+    assert "[SECTION_DONE]" not in reply["message"]
+
+
+def test_chat_section_skip_marker():
+    """chat_section: 用户跳过整段时识别 [SECTION_DONE,SKIP]。"""
+    flow = ResumeFlowA(_llm_with_responses("好的，跳过本段。[SECTION_DONE,SKIP]"))
+    loop = asyncio.new_event_loop()
+    try:
+        reply = loop.run_until_complete(flow.chat_section(
+            section_key="experience",
+            messages=[{"role": "user", "content": "我是应届毕业生没有工作经历"}],
+            collected_so_far={},
+            industry="互联网/软件",
+            position="AI产品经理",
+        ))
+    finally:
+        loop.close()
+    assert reply["type"] == "section_skipped"
+
+
+def test_extract_section_education():
+    """extract_section: 教育经历段只提取该段 JSON。"""
+    education_json = json.dumps([
+        {"school": "CUHK", "degree": "硕士", "major": "信息系统", "start_year": "2018", "end_year": "2020"}
+    ], ensure_ascii=False)
+    flow = ResumeFlowA(_llm_with_responses(education_json))
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(flow.extract_section(
+            section_key="education",
+            messages=[
+                {"role": "assistant", "content": "你的教育背景？"},
+                {"role": "user", "content": "我硕士毕业于 CUHK，专业是信息系统，2018-2020"},
+            ],
+        ))
+    finally:
+        loop.close()
+    assert isinstance(result, list)
+    assert result[0]["school"] == "CUHK"
+
+
+def test_derive_summary_and_competencies():
+    """derive: 拿到 collected 数据后，LLM 派生 summary 和 core_competencies。"""
+    derived_json = json.dumps({
+        "summary": "AI 产品经理候选人，熟悉 LLM 应用落地。",
+        "core_competencies": ["LLM 应用设计", "数据驱动决策", "产品 0-1 落地"],
+    }, ensure_ascii=False)
+    flow = ResumeFlowA(_llm_with_responses(derived_json))
+    collected = {
+        "header": {"name": "Leon"},
+        "experience": [{"title": "PM", "company": "ACME"}],
+        "skills": ["Python", "LLM"],
+    }
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(flow.derive_summary_and_competencies(
+            collected, industry="互联网/软件", position="AI产品经理",
+        ))
+    finally:
+        loop.close()
+    assert "AI 产品" in result["summary"]
+    assert len(result["core_competencies"]) == 3
+
+
+def test_section_data_roundtrip_to_markdown():
+    """8 个 section 的 collected dict → normalize → to_markdown，验证新字段都被渲染。"""
+    flow = ResumeFlowA(_llm_with_responses(""))
+    full_data = {
+        "header": {
+            "name": "Leon",
+            "contact": {"phone": "13800138000", "email": "leon@example.com",
+                        "wechat": "leon_wx", "linkedin": "linkedin.com/in/leon"},
+        },
+        "summary": "AI PM 候选人",
+        "core_competencies": ["LLM 应用", "产品 0-1", "数据驱动"],
+        "experience": [{"title": "PM", "company": "ACME", "duration": "2020-2023",
+                        "achievements": ["DAU 提升 30%"]}],
+        "projects": [{"name": "Chatbot", "role": "PM", "description": "聊天机器人",
+                      "tech_stack": ["Python", "LLM"]}],
+        "skills": ["Python", "LLM", "SQL"],
+        "education": [{"school": "CUHK", "degree": "硕士", "major": "IS",
+                       "start_year": "2018", "end_year": "2020"}],
+        "languages": [{"name": "中文", "level": "母语"}, {"name": "英文", "level": "流利"}],
+    }
+    normalized = flow._normalize_resume_shape(full_data)
+    # 新字段都进了 normalized
+    assert normalized["summary"] == "AI PM 候选人"
+    assert normalized["core_competencies"] == ["LLM 应用", "产品 0-1", "数据驱动"]
+    assert normalized["languages"][0]["name"] == "中文"
+    assert normalized["header"]["contact"]["wechat"] == "leon_wx"
+
+    # markdown 渲染包含 8 个段
+    md = flow.to_markdown(normalized)
+    assert "# Leon" in md
+    assert "## 个人陈述" in md
+    assert "## 核心能力" in md
+    assert "LLM 应用" in md
+    assert "## 工作经历" in md
+    assert "## 项目经历" in md
+    assert "## 技能" in md
+    assert "## 教育背景" in md
+    assert "## 语言能力" in md
+    assert "中文" in md and "母语" in md
