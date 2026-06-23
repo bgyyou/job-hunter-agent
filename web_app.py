@@ -596,7 +596,8 @@ with tab2:
                         db = get_db()
                         # 可选传入 classifier
                         clf = Classifier()
-                        jd_id = db.insert_jd_from_parsed_pdf(str(pdf_path), classifier=clf)
+                        from services.pdf_ingestion_service import PdfIngestionService
+                        jd_id = PdfIngestionService(db=db, classifier=clf).ingest(str(pdf_path))
 
                         # 获取 chunk 数量
                         chunks = db.get_chunks_by_jd(jd_id)

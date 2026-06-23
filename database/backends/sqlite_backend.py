@@ -14,15 +14,6 @@ from database.backends import BaseBackend
 class SqliteBackend(BaseBackend):
     """SQLite implementation of the database backend."""
 
-    # v2.1 M3.3: chunk_type 检索加权
-    _CHUNK_TYPE_WEIGHT = {
-        "responsibility": 1.2,
-        "requirement": 1.3,
-        "overview": 0.8,
-        "nice_to_have": 0.5,
-        "full": 1.0,
-    }
-
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
             db_path = str(Path(__file__).parent.parent.parent / "data" / "jobhunter_v2.db")
@@ -525,21 +516,15 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Vector Search ====================
 
-    def search_similar_chunks(self, query_text: str, top_k: int = 5,
-                              filter_chunk_type: Optional[str] = None,
-                              user_id: Optional[str] = None) -> List[Dict]:
-        """v2.1 M3.3: 本地 Embedder + numpy cosine + chunk_type 加权。
+    def vector_search(self, query_embedding: List[float], top_k: int = 5,
+                      filter_chunk_type: Optional[str] = None,
+                      user_id: Optional[str] = None) -> List[Dict]:
+        """Pure numpy cosine over knowledge_chunks. No re-weighting / filtering.
 
-        优先走向量检索；缺包/缺向量时降级 LIKE。
+        Chunk_type weighting + min_similarity cutoff live in
+        ``services.retrieval_service.RetrievalService``.
         """
-        try:
-            import numpy as np  # noqa: F401
-            from tools.embedder import Embedder
-            embedder = Embedder()
-            q_vec = embedder.embed(query_text)
-        except Exception as exc:
-            logger.warning(f"Embedder unavailable, fallback to LIKE search: {exc}")
-            return self._like_search_chunks(query_text, top_k, filter_chunk_type, user_id)
+        import numpy as np
 
         conn = self._get_conn()
         try:
@@ -554,8 +539,7 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-        import numpy as np
-        q = np.asarray(q_vec, dtype=np.float32)
+        q = np.asarray(query_embedding, dtype=np.float32)
         q_norm = float(np.linalg.norm(q)) or 1.0
 
         scored: List[tuple] = []
@@ -569,29 +553,23 @@ class SqliteBackend(BaseBackend):
                 continue
             v_norm = float(np.linalg.norm(v)) or 1.0
             cos = float(np.dot(q, v) / (q_norm * v_norm))
-            ct = d.get("chunk_type", "full")
-            weight = self._CHUNK_TYPE_WEIGHT.get(ct, 1.0)
-            ranked = cos * weight
-            scored.append((ranked, cos, ct, weight, d))
+            scored.append((cos, d))
 
         scored.sort(key=lambda t: t[0], reverse=True)
         results: List[Dict] = []
-        for ranked, cos, ct, weight, d in scored[:top_k]:
+        for cos, d in scored[:top_k]:
             d["keywords"] = self._json_deserialize(d.get("keywords"))
             d["heading_path"] = self._json_deserialize(d.get("heading_path", "[]"))
-            d["embedding"] = None  # 不回传以避免 payload 膨胀
+            d["embedding"] = None
             d["similarity"] = round(cos, 4)
-            d["chunk_type"] = ct
-            d["chunk_weight"] = weight
-            d["ranked_score"] = round(ranked, 4)
             d.setdefault("metadata", {})
             results.append(d)
         return results
 
-    def _like_search_chunks(self, query_text: str, top_k: int,
-                            filter_chunk_type: Optional[str],
-                            user_id: Optional[str]) -> List[Dict]:
-        """SQLite fallback: return nearest text chunks via LIKE."""
+    def like_search_chunks(self, query_text: str, top_k: int = 5,
+                           filter_chunk_type: Optional[str] = None,
+                           user_id: Optional[str] = None) -> List[Dict]:
+        """LIKE fallback. Same output shape as ``vector_search`` (similarity=0.0)."""
         conn = self._get_conn()
         try:
             conditions = ["deleted_at IS NULL AND chunk_text LIKE ?", "legacy = 0"]
@@ -614,215 +592,6 @@ class SqliteBackend(BaseBackend):
                 d.setdefault("metadata", {})
                 results.append(d)
             return results
-        finally:
-            conn.close()
-
-    # ==================== PDF Ingestion ====================
-
-    def insert_jd_from_parsed_pdf(
-        self,
-        pdf_path: str,
-        user_id: str = "default",
-        classifier: Any = None,
-    ) -> str:
-        """Parse a PDF, enrich chunks, persist JD + knowledge_chunks.
-
-        Flow:
-          1. PDFParser.parse() → semantic chunks
-          2. MultimodalDescriber.describe_figures() → fill figure descriptions
-          3. Contextualizer.generate_context() → fill context for every chunk
-          4. Extract JD info (title/company from meta or filename) → insert jds
-          5. Optional classifier.classify() → set industry/function/position tags
-          6. Insert all enriched chunks into knowledge_chunks
-          7. Return jd_id
-
-        Each step logs on failure but does not abort the pipeline.
-        """
-        # ---------- 1. Parse PDF ----------
-        try:
-            from document_parser import PDFParser
-
-            parser = PDFParser(document_title=Path(pdf_path).stem)
-            chunks = parser.parse(pdf_path)
-            logger.info(f"Parsed {pdf_path} → {len(chunks)} chunks")
-        except Exception as exc:
-            logger.error(f"PDF parse failed: {exc}")
-            raise
-
-        # ---------- 2. Describe figures ----------
-        has_figures = any(c.get("type") == "figure" for c in chunks)
-        if has_figures:
-            try:
-                from document_parser import MultimodalDescriber
-
-                MultimodalDescriber().describe_figures(chunks)
-            except Exception as exc:
-                logger.warning(f"Figure description skipped: {exc}")
-
-        # ---------- 3. Generate context ----------
-        try:
-            from document_parser import Contextualizer
-
-            chunks = Contextualizer().generate_context(chunks)
-        except Exception as exc:
-            logger.warning(f"Context generation skipped: {exc}")
-            # Ensure all chunks still have a context
-            for c in chunks:
-                c.setdefault("context", "[context unavailable]")
-
-        # ---------- 4. Extract JD info & insert into jds ----------
-        # Find the meta chunk (page == 0) for title / company / raw_text
-        meta_chunk = next((c for c in chunks if c.get("page") == 0), None)
-        meta = meta_chunk.get("metadata", {}) or {}
-        doc_title = (meta.get("document_title", "") or meta_chunk.get("content", "") or Path(pdf_path).stem).strip()
-
-        # Heuristic: extract company from content or first heading
-        company = ""
-        first_heading = ""
-        for c in chunks:
-            if c.get("type") == "heading":
-                first_heading = c.get("content", "")
-                break
-
-        # Build a raw_text from all paragraph chunks (first 2000 chars)
-        para_texts = [c.get("content", "") for c in chunks if c.get("type") in ("paragraph", "list")]
-        raw_text = "\n".join(para_texts)[:2000]
-
-        # Use file name as synthetic URL for dedup
-        url = f"pdf://{Path(pdf_path).name}"
-
-        jd_data = {
-            "url": url,
-            "title": doc_title,
-            "company": company,
-            "location": "",
-            "salary_str": None,
-            "salary_min": None,
-            "salary_max": None,
-            "parsed_sections": {},
-            "tags": [],
-            "raw_text": raw_text,
-            "source": "pdf",
-            "search_keyword": None,
-            "platform": None,
-            "job_id": None,
-            "language": "zh",
-            "industry_tag": None,
-            "function_tag": None,
-            "position_tag": None,
-            "auto_classified": 0,
-            "is_public": 0,
-            "crawled_at": datetime.now().isoformat(),
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-        }
-
-        jd_id = self.insert_jd(jd_data)
-
-        # Verify JD was actually persisted (ON CONFLICT DO NOTHING may silently skip)
-        existing = self.get_jd(jd_id)
-        if existing is None:
-            # JD was ignored by conflict — try to find by URL
-            existing = self.get_jd_by_url(url)
-            if existing:
-                jd_id = existing["id"]
-                logger.info(f"JD already exists by URL: {jd_id}")
-            else:
-                # Re-insert with ON CONFLICT DO UPDATE
-                self._insert_jd_upsert(jd_id, jd_data)
-                logger.info(f"JD upserted: {jd_id}")
-
-        logger.info(f"JD inserted/verified: {jd_id} (title='{doc_title}')")
-
-        # ---------- 5. Classify ----------
-        if classifier is not None:
-            try:
-                result = classifier.classify(doc_title, raw_text)
-                if isinstance(result, dict):
-                    jd_data["industry_tag"] = result.get("industry_tag")
-                    jd_data["function_tag"] = result.get("function_tag")
-                    jd_data["position_tag"] = result.get("position_tag")
-                    jd_data["auto_classified"] = 1
-                    logger.info(
-                        f"Classified JD '{doc_title}': "
-                        f"industry={jd_data['industry_tag']}, "
-                        f"function={jd_data['function_tag']}, "
-                        f"position={jd_data['position_tag']}"
-                    )
-            except Exception as exc:
-                logger.warning(f"Classification failed: {exc}")
-
-        # ---------- 6. Persist chunks ----------
-        chunk_records = []
-        # Map parser chunk types to DB schema-allowed values
-        # DB accepts: overview, responsibility, requirement, nice_to_have, full
-        TYPE_MAP = {
-            "heading": "full",
-            "paragraph": "full",
-            "list": "full",
-            "table": "full",
-            "figure": "full",
-            "footnote": "full",
-        }
-        for i, chunk in enumerate(chunks):
-            if chunk.get("page") == 0:
-                continue  # skip meta chunk
-            try:
-                chunk_record = {
-                    "user_id": user_id,
-                    "jd_id": jd_id,
-                    "chunk_index": i,
-                    "chunk_text": chunk.get("content", ""),
-                    "chunk_type": TYPE_MAP.get(chunk.get("type", "full"), "full"),
-                    "keywords": chunk.get("metadata", {}).get("keywords", []),
-                    "embedding": None,  # vector search handled separately
-                    "embedding_dim": None,
-                    "context": chunk.get("context", ""),
-                    "heading_path": chunk.get("heading_path", []),
-                }
-                chunk_records.append(chunk_record)
-            except Exception as exc:
-                logger.warning(f"Skipping chunk {i}: {exc}")
-
-        if chunk_records:
-            inserted_ids = self.insert_chunks_batch(jd_id, chunk_records)
-            logger.info(f"Inserted {len(inserted_ids)} chunks for JD {jd_id}")
-
-        return jd_id
-
-    def _insert_jd_upsert(self, jd_id: str, data: Dict) -> None:
-        """Insert or update a JD (avoids ON CONFLICT DO NOTHING silent skip)."""
-        now = datetime.now().isoformat()
-        conn = self._get_conn()
-        try:
-            conn.execute(
-                """INSERT INTO jds
-                   (id, user_id, url, title, company, location, salary_str,
-                    salary_min, salary_max, parsed_sections, tags, raw_text,
-                    source, search_keyword, platform, job_id, language,
-                    industry_tag, function_tag, position_tag, auto_classified,
-                    is_public, crawled_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT (id) DO UPDATE SET
-                     title=EXCLUDED.title, company=EXCLUDED.company,
-                     raw_text=EXCLUDED.raw_text, parsed_sections=EXCLUDED.parsed_sections,
-                     tags=EXCLUDED.tags, updated_at=EXCLUDED.updated_at""",
-                (
-                    jd_id, data.get("user_id", "default"), data.get("url", ""),
-                    data.get("title", ""), data.get("company", ""), data.get("location", ""),
-                    data.get("salary_str"), data.get("salary_min"), data.get("salary_max"),
-                    self._json_serialize(data.get("parsed_sections", {})),
-                    self._json_serialize(data.get("tags", [])),
-                    data.get("raw_text", ""),
-                    data.get("source", "manual"), data.get("search_keyword"),
-                    data.get("platform"), data.get("job_id"), data.get("language", "zh"),
-                    data.get("industry_tag"), data.get("function_tag"), data.get("position_tag"),
-                    data.get("auto_classified", 1), data.get("is_public", 0),
-                    data.get("crawled_at", now), now, now,
-                ),
-            )
-            conn.commit()
         finally:
             conn.close()
 

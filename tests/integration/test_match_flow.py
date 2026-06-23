@@ -51,14 +51,16 @@ def test_full_match_flow(tmp_db, mock_embedder):
     # embedding round-trip 成功
     assert all(c["embedding"] and len(c["embedding"]) == 8 for c in chunks)
 
-    # 3) 检索：用 mock embedder 算 cosine + 类型加权
-    results = tmp_db.search_similar_chunks("LLM RAG 经验", top_k=3)
+    # 3) 检索：用 mock embedder 算 cosine + 类型加权（走 RetrievalService）
+    from services.retrieval_service import RetrievalService
+    retriever = RetrievalService(db=tmp_db)
+    results = retriever.retrieve("LLM RAG 经验", top_k=3, min_similarity=0.0)
     assert len(results) > 0
     for r in results:
         assert "similarity" in r
         assert "chunk_type" in r
         assert "ranked_score" in r
-        assert r["jd_id"] == jid
+        assert r["metadata"]["jd_id"] == jid
 
     # 4) 写 match
     mid = tmp_db.insert_match({
@@ -72,8 +74,8 @@ def test_full_match_flow(tmp_db, mock_embedder):
 
     # 5) 软删 JD → chunks 级联软删，检索不再命中
     tmp_db.soft_delete_jd(jid)
-    after = tmp_db.search_similar_chunks("LLM RAG 经验", top_k=3)
-    assert all(r["jd_id"] != jid for r in after)
+    after = retriever.retrieve("LLM RAG 经验", top_k=3, min_similarity=0.0)
+    assert all(r["metadata"].get("jd_id") != jid for r in after)
 
 
 def test_empty_raw_text_skipped(tmp_db, mock_embedder):

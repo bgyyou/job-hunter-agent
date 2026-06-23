@@ -79,7 +79,7 @@ def main():
         real_chunks = synth_chunks
 
     # ---------- 3. 端到端：插 JD → 向量化 → 检索 ----------
-    section("3) 端到端：插 JD → embed_and_store_jd_chunks → search_similar_chunks")
+    section("3) 端到端：插 JD → embed_and_store_jd_chunks → Retriever.retrieve")
     from database.factory import get_db
     from tools.jd_indexer import embed_and_store_jd_chunks
     from tools.retriever import Retriever
@@ -91,7 +91,8 @@ def main():
         "title": "[VERIFY M3] AI 产品经理 LLM",
         "company": "Verify Co.",
         "raw_text": raw_text,
-        "parsed_data": {"verify": "m3"},
+        "parsed_sections": {"verify": "m3"},
+        "tags": ["verify_m3"],
         "source": "verify_m3",
     })
     print(f"  JD inserted: id={jd_id}")

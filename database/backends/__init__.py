@@ -193,22 +193,33 @@ class BaseBackend(ABC):
         """
 
     @abstractmethod
-    def search_similar_chunks(self, query_text: str, top_k: int = 5,
-                              filter_chunk_type: Optional[str] = None,
-                              user_id: Optional[str] = None) -> List[Dict]:
-        """Semantic retrieval over knowledge_chunks (M3 RAG core).
+    def vector_search(self, query_embedding: List[float], top_k: int = 5,
+                      filter_chunk_type: Optional[str] = None,
+                      user_id: Optional[str] = None) -> List[Dict]:
+        """Pure vector cosine search over knowledge_chunks (dialect-specific).
 
-        Encodes ``query_text`` with the configured embedder, then ranks chunks
-        by cosine similarity. PG backend uses pgvector ``<=>`` operator;
-        SQLite backend falls back to in-process numpy.
+        No chunk_type weighting, no min_similarity filtering — those live in
+        ``services.retrieval_service.RetrievalService``. This method is the
+        thin dialect adapter: PG uses pgvector ``<=>``; SQLite computes cosine
+        in-process with numpy.
 
         Args:
-            query_text: Natural-language query.
-            top_k: Number of chunks to return.
-            filter_chunk_type: Restrict to one of ``overview``/``responsibility``/...
+            query_embedding: Pre-computed query vector (caller embeds).
+            top_k: Number of raw candidates to return (caller usually over-fetches).
+            filter_chunk_type: Restrict to one of overview/responsibility/...
             user_id: Restrict to chunks linked to JDs owned by this user.
 
         Returns:
-            List of dicts with ``chunk_id``, ``jd_id``, ``content``, ``chunk_type``,
-            ``similarity`` (0-1), ``weight`` (chunk_type-specific multiplier).
+            List of dicts with ``chunk_id``, ``jd_id``, ``chunk_text``,
+            ``chunk_type``, ``context``, ``heading_path``, ``similarity`` (0-1).
+        """
+
+    @abstractmethod
+    def like_search_chunks(self, query_text: str, top_k: int = 5,
+                           filter_chunk_type: Optional[str] = None,
+                           user_id: Optional[str] = None) -> List[Dict]:
+        """LIKE-based fallback when no embedder is available.
+
+        Returns the same shape as ``vector_search`` but with ``similarity=0.0``.
+        Used by ``RetrievalService`` when ``Embedder`` fails to load.
         """

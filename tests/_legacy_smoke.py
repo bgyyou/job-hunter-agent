@@ -83,15 +83,11 @@ def test_insert_jd_from_pdf():
         return
 
     db = get_db()
-    method = getattr(db, "insert_jd_from_parsed_pdf", None)
-    if method is None:
-        print("[SKIP] Backend has no insert_jd_from_parsed_pdf")
-        return
-
     try:
         from database.classifier import Classifier
+        from services.pdf_ingestion_service import PdfIngestionService
         clf = Classifier()
-        jd_id = db.insert_jd_from_parsed_pdf(pdf_path, user_id="test", classifier=clf)
+        jd_id = PdfIngestionService(db=db, classifier=clf).ingest(pdf_path, user_id="test")
         print(f"[PASS] PDF inserted, jd_id={jd_id}")
 
         # Verify chunks exist
@@ -101,8 +97,6 @@ def test_insert_jd_from_pdf():
             c = chunks[0]
             has_context = bool(c.get("context", ""))
             print(f"[PASS] Chunk 0 has context={has_context}, type={c.get('chunk_type', '?')}")
-    except NotImplementedError:
-        print("[SKIP] Backend does not implement insert_jd_from_parsed_pdf")
     except Exception as e:
         print(f"[FAIL] PDF insertion error: {e}")
         import traceback
@@ -110,15 +104,12 @@ def test_insert_jd_from_pdf():
 
 
 def test_search():
-    """Test 3: Vector/text search returns correct fields."""
-    db = get_db()
-    method = getattr(db, "search_similar_chunks", None)
-    if method is None:
-        print("[SKIP] Backend has no search_similar_chunks")
-        return
+    """Test 3: Vector/text search via RetrievalService returns correct fields."""
+    from services.retrieval_service import RetrievalService
 
+    db = get_db()
     try:
-        results = method("AI product manager", top_k=3)
+        results = RetrievalService(db=db).retrieve("AI product manager", top_k=3, min_similarity=0.0)
         print(f"[PASS] Search returned {len(results)} chunks")
         if results:
             r = results[0]
@@ -128,8 +119,6 @@ def test_search():
             print(f"[PASS] Top result keys OK, similarity={r['similarity']:.3f}")
         else:
             print("[INFO] No search results (expected with empty DB)")
-    except NotImplementedError:
-        print("[SKIP] Backend does not implement vector search")
     except Exception as e:
         print(f"[FAIL] Search error: {e}")
         import traceback

@@ -80,64 +80,61 @@ def test_postgres_init_db_applies_migrations(monkeypatch):
 
 # ---------- ef_search tuning ----------
 
-def test_search_similar_chunks_sets_ef_search(monkeypatch):
-    """search_similar_chunks 在查询前设置 hnsw.ef_search"""
+def test_vector_search_sets_ef_search(monkeypatch):
+    """vector_search 在查询前设置 hnsw.ef_search"""
     import database.backends.postgres_backend as _mod
     monkeypatch.setattr(_mod, "psycopg2", MagicMock())
 
     backend = object.__new__(_mod.PostgresBackend)
     backend._conn = MagicMock()
     backend._fetchall = MagicMock(return_value=[])
-    backend._get_embedding = MagicMock(return_value=[0.1] * 512)
     backend._embedding_to_pgvector = MagicMock(return_value="[0.1,...]")
     backend._ensure_connection = MagicMock()
 
     exec_calls = []
     backend._execute = MagicMock(side_effect=lambda q, *a: exec_calls.append(q))
 
-    backend.search_similar_chunks("test query", top_k=5)
+    backend.vector_search([0.1] * 512, top_k=5)
 
     ef_calls = [c for c in exec_calls if "ef_search" in str(c)]
     assert len(ef_calls) >= 1
     assert "ef_search" in str(ef_calls[0])
 
 
-def test_search_similar_chunks_ef_search_uses_candidate_k(monkeypatch):
-    """top_k=15 时 candidate_k=45，ef_search >= 64"""
+def test_vector_search_ef_search_threshold(monkeypatch):
+    """top_k=15 时 ef_search >= 64"""
     import database.backends.postgres_backend as _mod
     monkeypatch.setattr(_mod, "psycopg2", MagicMock())
 
     backend = object.__new__(_mod.PostgresBackend)
     backend._conn = MagicMock()
     backend._fetchall = MagicMock(return_value=[])
-    backend._get_embedding = MagicMock(return_value=[0.1] * 512)
     backend._embedding_to_pgvector = MagicMock(return_value="[0.1,...]")
     backend._ensure_connection = MagicMock()
 
     exec_calls = []
     backend._execute = MagicMock(side_effect=lambda q, *a: exec_calls.append(q))
 
-    backend.search_similar_chunks("test", top_k=15)
+    backend.vector_search([0.1] * 512, top_k=15)
 
     ef_calls = [c for c in exec_calls if "ef_search" in str(c)]
     assert len(ef_calls) >= 1
-    # ef_search >= 64
     assert "64" in str(ef_calls[0]) or "ef_search" in str(ef_calls[0])
 
 
-# ---------- 降级路径：无 embedding 时 text fallback ----------
+# ---------- LIKE fallback (public method, no embedder needed) ----------
 
-def test_search_similar_chunks_fallback_text_search(monkeypatch):
-    """无 embedding 时不 crash，走 text LIKE fallback"""
+def test_like_search_chunks_returns_results(monkeypatch):
+    """like_search_chunks returns rows directly without embedding"""
     import database.backends.postgres_backend as _mod
     monkeypatch.setattr(_mod, "psycopg2", MagicMock())
 
     backend = object.__new__(_mod.PostgresBackend)
     backend._conn = MagicMock()
-    backend._fetchall = MagicMock(return_value=[{"chunk_text": "hello", "chunk_type": "full"}])
-    backend._get_embedding = MagicMock(return_value=None)  # no embedding
+    backend._fetchall = MagicMock(return_value=[{"chunk_text": "hello", "chunk_type": "full", "similarity": 0.0}])
     backend._ensure_connection = MagicMock()
 
-    result = backend.search_similar_chunks("hello", top_k=3)
+    result = backend.like_search_chunks("hello", top_k=3)
     assert isinstance(result, list)
-    assert len(result) >= 0
+    assert len(result) >= 1
+    assert result[0]["similarity"] == 0.0

@@ -780,3 +780,48 @@ pytest tests/ -v
 - **不保留 `parsed_data`** —— 杂项快照，能塞进 `parsed_sections` 的都塞，剩余无用
 - **不动 scraper 输出字段名** —— `skills_required` 保留在 scraper 层，pipeline 做映射，最小侵入
 - **不动 `industry_tag / function_tag / position_tag`** —— 这是分类树（互斥），与 `tags`（自由标签）互补
+
+---
+
+## [P3-1 Backend 做薄] 2026-06-23
+
+### 范围
+把混在 backend 里的"业务逻辑"拎到 `services/` 一份实现，消除 SQLite / PG 两边的漂移。
+背景：`sqlite_backend.py` 852 行 / `postgres_backend.py` 789 行，里面塞了向量检索 + chunk_type 加权 + PDF ingestion 三段重复逻辑；两边 chunk 写入路径已经漂移（SQLite 写 `knowledge_chunks` 不带 embedding，PG 写 legacy `chunks_vector` 带 embedding）。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 新增 service 层 | `RetrievalService.retrieve()` 一份实现 embed→over-fetch→chunk_type 加权→min_similarity 过滤→标准化，缺 embedder 走 `like_search_chunks` 兜底；`CHUNK_TYPE_WEIGHT` 不再两边复制 | `services/retrieval_service.py` (140 行) |
+| 新增 service 层 | `PdfIngestionService.ingest()` 一份实现 PDFParser→figure→Contextualizer→insert_jd→`Embedder.embed_batch`→`insert_chunks_batch`；两端统一只写 `knowledge_chunks`（带 embedding） | `services/pdf_ingestion_service.py` (199 行) |
+| Base class | 删 `search_similar_chunks` 抽象方法；新增 `vector_search` (纯向量) + `like_search_chunks` (LIKE 兜底) | `database/backends/__init__.py` |
+| SqliteBackend 瘦身 | 删 `_CHUNK_TYPE_WEIGHT`、`search_similar_chunks` (62 行)、`insert_jd_from_parsed_pdf` (170 行)、`_insert_jd_upsert` (35 行)；新增 `vector_search` (纯 numpy cosine，不带 weight)，`_like_search_chunks` 改公开 `like_search_chunks` | `database/backends/sqlite_backend.py` (852→620 行) |
+| PostgresBackend 瘦身 | 删 `_CHUNK_TYPE_WEIGHT`、`search_similar_chunks` (81 行)、`insert_jd_from_parsed_pdf` (168 行)、`_get_embedding` (19 行)、`_embed_text_sync` (28 行)；新增 `vector_search`（保留 `SET LOCAL hnsw.ef_search`），`_text_search_fallback` 改公开 `like_search_chunks` | `database/backends/postgres_backend.py` (789→536 行) |
+| Retriever facade | `tools/retriever.py` 退化为薄包装，转发到 `RetrievalService`；外部 API 不变，`web_app.py` / `agents/resume_flow_a.py` 两个 prod caller 不用改 | `tools/retriever.py` |
+| 调用方迁移 | `web_app.py:599` 改 `PdfIngestionService(db, classifier=clf).ingest(pdf_path)`；`scripts/verify_m3.py` schema 升级到 v3；`scripts/eval_rag_recall.py` 改用 `RetrievalService`；`tests/_legacy_smoke.py` 同步 | `web_app.py`, `scripts/verify_m3.py`, `scripts/eval_rag_recall.py`, `tests/_legacy_smoke.py` |
+| 测试新增 | `test_retrieval_service.py` 5 个用例（weight 排序 / LIKE 兜底 / min_sim 过滤 / 字段标准化 / over-fetch 3x）+ `test_pdf_ingestion_service.py` 3 个用例（classifier 调用 / chunk embedding 持久化 / get_jd 静默跳过后通过 URL 回查） | `tests/integration/test_retrieval_service.py`, `tests/integration/test_pdf_ingestion_service.py` |
+| 测试改写 | `test_pg_backend.py` 的 3 个 `search_similar_chunks` mock 测试改为 `vector_search` / `like_search_chunks`；`test_match_flow.py` 端到端改走 `RetrievalService` | `tests/integration/test_pg_backend.py`, `tests/integration/test_match_flow.py` |
+
+### 收益
+- **代码体积**：两个 backend 合计 1641 → 1156 行（-485 行 / -30%）；service 层 ~345 行净增；总体净减 ~140 行
+- **消除漂移**：PDF 入库现在两端都写 `knowledge_chunks` + embedding，不再 PG 写 `chunks_vector` / SQLite 不带 vector
+- **抽象正确**：backend 只负责"方言"（SQLite numpy cosine / PG pgvector `<=>`），业务（CHUNK_TYPE_WEIGHT 等）在 service 一份
+- **测试数**：113 → 121（+8 新用例）
+
+### 验证
+```bash
+pytest tests/ -q  # 121 passed
+wc -l database/backends/*.py services/*.py
+#   536 postgres_backend.py
+#   620 sqlite_backend.py
+#     6 services/__init__.py
+#   140 services/retrieval_service.py
+#   199 services/pdf_ingestion_service.py
+```
+
+### 显式不做
+- **不留 `search_similar_chunks` alias** —— CLAUDE.md "一次性硬切"
+- **不动 `insert_chunks_batch` 的 chunk_index 自动赋值** —— 调用方都依赖，性价比低
+- **PG `chunks_vector` 表的写入路径不在本批修** —— service 层只写 `knowledge_chunks`；`chunks_vector` 表是否保留留给 P3-2
+- **不动 schema/migration** —— 本批只重排代码组织
