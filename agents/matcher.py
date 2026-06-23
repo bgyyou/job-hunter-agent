@@ -317,7 +317,9 @@ class MatcherAgent(BaseAgent):
             job = self.state.get("job", {})
 
             resume_skills = set(s.lower() for s in resume.get("skills", []))
-            job_skills = set(s.lower() for s in job.get("skills_required", []))
+            job_tags = set(s.lower() for s in job.get("tags", []))
+            job_parsed = job.get("parsed_sections", {})
+            job_skills = set(s.lower() for s in job_parsed.get("skills", [])) | job_tags
 
             matched = resume_skills & job_skills
             missing = job_skills - resume_skills
@@ -726,7 +728,13 @@ class MatcherAgent(BaseAgent):
         salary_max = job.get("salary_max")
         salary_range = f"{salary_min}k-{salary_max}k" if salary_min and salary_max else "面议"
 
-        skills_required = ", ".join(job.get("skills_required", []))
+        skills_required = ", ".join(job.get("tags", []))
+        # parsed_sections.requirements 是 list；prompt 期望字符串，需要 join
+        job_reqs = job.get("parsed_sections", {}).get("requirements", [])
+        if isinstance(job_reqs, list):
+            requirements_str = "; ".join(job_reqs)
+        else:
+            requirements_str = str(job_reqs or "")
 
         return self.match_prompt.format(
             name=resume.get("name", "未知"),
@@ -741,7 +749,7 @@ class MatcherAgent(BaseAgent):
             company=job.get("company", ""),
             location=job.get("location", ""),
             salary_range=salary_range,
-            requirements=job.get("requirements", ""),
+            requirements=requirements_str,
             skills_required=skills_required or "无"
         )
 

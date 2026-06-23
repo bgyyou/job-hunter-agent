@@ -320,7 +320,7 @@ class ResumeOptimizer(BaseAgent):
                 projects=projects,
                 title=job.get("title", ""),
                 company=job.get("company", ""),
-                skills_required=", ".join(job.get("skills_required", [])),
+                skills_required=", ".join(job.get("tags", [])),
                 gaps=gaps_text
             )
 
@@ -365,6 +365,9 @@ class ResumeOptimizer(BaseAgent):
                 for p in resume.get("projects", [])
             ]) or "无"
 
+            job_reqs = job.get("parsed_sections", {}).get("requirements", [])
+            requirements_str = "; ".join(job_reqs) if isinstance(job_reqs, list) else str(job_reqs or "")
+
             # 构建 Prompt
             prompt = self.customize_prompt.format(
                 name=resume.get("name", ""),
@@ -373,7 +376,7 @@ class ResumeOptimizer(BaseAgent):
                 projects=projects,
                 title=job.get("title", ""),
                 company=job.get("company", ""),
-                requirements=job.get("requirements", "")
+                requirements=requirements_str
             )
 
             messages = [
@@ -501,7 +504,7 @@ class ResumeOptimizer(BaseAgent):
             job = self.state.get("current_job", {})
 
             # 规则生成
-            missing_skills = set(s.lower() for s in job.get("skills_required", [])) - \
+            missing_skills = set(s.lower() for s in job.get("tags", [])) - \
                            set(s.lower() for s in resume.get("skills", []))
 
             if step_name == "generate_suggestions":
@@ -630,7 +633,7 @@ class ResumeOptimizer(BaseAgent):
 
         # 分析技能匹配度
         resume_skills = set(s.lower() for s in resume.get("skills", []))
-        job_skills = set(s.lower() for s in job.get("skills_required", []))
+        job_skills = set(s.lower() for s in job.get("tags", []))
 
         matched = resume_skills & job_skills
         missing = job_skills - resume_skills

@@ -731,3 +731,52 @@ pytest tests/ -v
 - **不在 CI 配 Postgres service** —— 仅 mock 测试，无真实 PG 依赖；真实集成跑 `docker compose up` 手动
 - **不处理 `chunks_vector` 表** —— PDF ingestion 专用，已有 HNSW 索引；本次只补 RAG 主查询路径
 
+
+---
+
+## [P2-2 JD schema 收敛：5 字段 → parsed_sections + tags] 2026-06-23
+
+### 范围
+`jds` 表历史上有 5 个语义重叠字段（`requirements / preferred_requirements / skills_required / implicit_requirements / parsed_data`），职责不清、类型不一致，且 `matcher.py:744` 把 list 当字符串渲染存在潜伏 bug。一次性硬切到统一 schema：`raw_text + parsed_sections(JSON dict) + tags(JSON list)`。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Schema | SQLite 删 5 字段，新增 `parsed_sections TEXT DEFAULT '{}'` + `tags TEXT DEFAULT '[]'` | `data/schema.sql` |
+| Schema | PG 同步，类型为 JSONB，新增 GIN 索引 `idx_jds_tags` + `idx_jds_parsed_sections`（`jsonb_path_ops`） | `data/schema_pg.sql` |
+| Migration | SQLite 004：整表重建（`jds_v3` → DROP → RENAME），`json_object()` 合并旧 4 个 list 字段进 `parsed_sections`；幂等通过 Python 检测 `requirements` 列存在性 | `database/migrations/004_converge_jd_schema.sql` |
+| Migration | PG 004：`ALTER TABLE ADD COLUMN` + `DO $$ ... END $$` 块条件迁移，PG 支持原子 `DROP COLUMN`，单事务安全 | `database/migrations_pg/004_converge_jd_schema.sql` |
+| Backend | `insert_jd / get_jd / list_jds / get_jd_by_url / search_jds / _insert_jd_upsert / insert_jd_from_parsed_pdf` 全部 5 字段 → 2 字段，反序列化字段表 `["parsed_sections", "tags"]` | `database/backends/sqlite_backend.py`, `postgres_backend.py` |
+| 业务逻辑 | `matcher.py`：set diff 改用 `tags` ∪ `parsed_sections.skills`；prompt 渲染从 `parsed_sections.requirements` join 出字符串（修了 L744 list 当 str 渲染的 bug） | `agents/matcher.py` |
+| 业务逻辑 | `resume_optimizer.py`：3 处 `skills_required` → `tags`；定制 prompt 的 `requirements` 改从 `parsed_sections.requirements` 读 | `agents/resume_optimizer.py` |
+| Pipeline | `_clean()` 把 scraper 输出的 `skills_required` 映射成 `parsed_sections.skills + tags`，scraper 层保持不变（最小侵入） | `crawler/pipeline.py` |
+| Web UI | Tab2 三处入库（粘贴/批量/URL）改写 `parsed_sections + tags`，`parsed_data` 字段不再持久化 | `web_app.py` |
+| 测试 | 新增 `test_jd_schema_v3.py`（6 用例）：v3 round-trip、无残留旧列、list/search 可用、migration 幂等、matcher set diff 行为；更新 `test_repository.py` + `test_sqlite_backend_extended.py` 的 sample 数据 | `tests/integration/test_jd_schema_v3.py`, `tests/unit/test_repository.py`, `tests/unit/test_sqlite_backend_extended.py` |
+
+### 架构说明
+
+**为什么 SQLite 整表搬迁，PG 直接 ALTER？**
+- SQLite 的 `ALTER TABLE` 不支持 `DROP COLUMN`（3.35+ 支持但语义不完整），唯一安全做法是建新表 → 拷数据 → DROP → RENAME
+- PG 原生支持 `ALTER TABLE DROP COLUMN`，配合 `DO $$ ... END $$` 块条件判断列存在性即可
+- 两条路径都在 backend 启动时自动跑，用户无感
+
+**幂等保护**
+- SQLite：`_apply_idempotent_migrations` 检测 `PRAGMA table_info(jds)` 是否还有 `requirements` 列，已迁移则跳过 004
+- PG：迁移脚本本身用 `IF EXISTS` + `IF NOT EXISTS` 保护，可重复执行
+
+**字段语义清晰化**
+- `parsed_sections`：结构化 dict，固定 key（`requirements / preferred / skills / implicit`），对应 LLM JD 分析输出的语义分块
+- `tags`：扁平 list，用于 GIN 索引检索（如"找所有 tag 包含 Python 的 JD"）
+- `raw_text`：原始文本，RAG / chunk 切分的源头
+
+### 验证
+- `pytest tests/ -q` → **113 passed in 9s**（+6 P2-2 用例）
+- 全量回归：M1-M6 + P0 + P1 + P2-1 + P2-3 全绿
+- 涵盖 SQLite + PG 双 backend，迁移幂等性已自动测试
+
+### 显式不做
+- **不留兼容 alias** —— CLAUDE.md "一次性硬切"，旧字段名彻底删除
+- **不保留 `parsed_data`** —— 杂项快照，能塞进 `parsed_sections` 的都塞，剩余无用
+- **不动 scraper 输出字段名** —— `skills_required` 保留在 scraper 层，pipeline 做映射，最小侵入
+- **不动 `industry_tag / function_tag / position_tag`** —— 这是分类树（互斥），与 `tags`（自由标签）互补

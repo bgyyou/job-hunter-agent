@@ -35,7 +35,8 @@ def _sample_jd():
         "company": "ACME",
         "location": "HK",
         "raw_text": "岗位职责：负责 AI 产品。任职要求：3 年以上 PM 经验。",
-        "skills_required": ["LLM", "PRD"],
+        "parsed_sections": {"requirements": ["3y PM"], "skills": ["LLM", "PRD"]},
+        "tags": ["LLM", "PRD"],
         "source": "manual",
         "platform": "jobsdb",
         "language": "zh",
@@ -75,7 +76,8 @@ class TestJDRoundTrip:
         assert got is not None
         assert got["title"] == "AI Product Manager"
         assert got["company"] == "ACME"
-        assert got["skills_required"] == ["LLM", "PRD"]
+        assert got["tags"] == ["LLM", "PRD"]
+        assert got["parsed_sections"]["skills"] == ["LLM", "PRD"]
 
     def test_get_by_url(self, tmp_db):
         jid = tmp_db.insert_jd(_sample_jd())

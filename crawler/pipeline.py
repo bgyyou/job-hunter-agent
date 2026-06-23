@@ -126,16 +126,17 @@ class CrawlPipeline:
     def _clean(job: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize raw job data into the format expected by insert_jd()."""
         now = job.get("crawled_at")
+        skills = job.get("skills_required") or job.get("tags") or []
         return {
             "url": job.get("source_url", ""),
             "title": str(job.get("title", "")).strip(),
             "company": str(job.get("company", "")).strip(),
             "location": str(job.get("location", "")).strip(),
             "salary_str": job.get("salary_str"),
-            "skills_required": job.get("skills_required", []),
-            "skills_nice": job.get("skills_nice", []),
-            "experience_level": job.get("experience_level", ""),
-            "education": job.get("education", ""),
+            "parsed_sections": {
+                "skills": list(skills),
+            },
+            "tags": list(skills),
             "raw_text": str(job.get("raw_text", ""))[:10000],
             "platform": job.get("platform", ""),
             "search_keyword": job.get("search_keyword", ""),

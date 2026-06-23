@@ -86,10 +86,20 @@ class SqliteBackend(BaseBackend):
 
         # 编号迁移文件：database/migrations/NNN_description.sql
         mig_dir = Path(__file__).parent.parent.parent / "database" / "migrations"
-        if mig_dir.exists():
-            for mig_file in sorted(mig_dir.glob("*.sql")):
-                logger.info(f"migration: applying {mig_file.name}")
-                conn.executescript(mig_file.read_text(encoding="utf-8"))
+        if not mig_dir.exists():
+            return
+
+        # 004 迁移前检查：jds 表是否还有旧字段
+        jds_cols = {r[1] for r in conn.execute("PRAGMA table_info(jds)").fetchall()}
+        has_legacy_jd_fields = "requirements" in jds_cols
+
+        for mig_file in sorted(mig_dir.glob("*.sql")):
+            # 004 幂等防护：jds 已迁移过就直接跳过
+            if not has_legacy_jd_fields and "004_" in mig_file.name:
+                logger.info(f"migration: skip {mig_file.name} (jds already on v3 schema)")
+                continue
+            logger.info(f"migration: applying {mig_file.name}")
+            conn.executescript(mig_file.read_text(encoding="utf-8"))
 
     def _row_to_dict(self, row: sqlite3.Row) -> Optional[Dict]:
         return dict(row) if row else None
@@ -177,21 +187,18 @@ class SqliteBackend(BaseBackend):
             conn.execute(
                 """INSERT OR IGNORE INTO jds
                    (id, user_id, url, title, company, location, salary_str,
-                    salary_min, salary_max, requirements, preferred_requirements,
-                    skills_required, implicit_requirements, raw_text, parsed_data,
+                    salary_min, salary_max, parsed_sections, tags, raw_text,
                     source, search_keyword, platform, job_id, language,
                     industry_tag, function_tag, position_tag, auto_classified,
                     is_public, crawled_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (jd_id, data.get("user_id", "default"), data.get("url", ""),
                  data.get("title", ""), data.get("company", ""), data.get("location", ""),
                  data.get("salary_str"), data.get("salary_min"), data.get("salary_max"),
-                 self._json_serialize(data.get("requirements")),
-                 self._json_serialize(data.get("preferred_requirements")),
-                 self._json_serialize(data.get("skills_required", [])),
-                 data.get("implicit_requirements"), data.get("raw_text", ""),
-                 self._json_serialize(data.get("parsed_data")),
+                 self._json_serialize(data.get("parsed_sections", {})),
+                 self._json_serialize(data.get("tags", [])),
+                 data.get("raw_text", ""),
                  data.get("source", "manual"), data.get("search_keyword"),
                  data.get("platform"), data.get("job_id"), data.get("language", "zh"),
                  data.get("industry_tag"), data.get("function_tag"), data.get("position_tag"),
@@ -221,7 +228,7 @@ class SqliteBackend(BaseBackend):
             if not row:
                 return None
             d = self._row_to_dict(row)
-            for field in ["requirements", "preferred_requirements", "skills_required", "parsed_data"]:
+            for field in ["parsed_sections", "tags"]:
                 d[field] = self._json_deserialize(d[field])
             return d
         finally:
@@ -236,7 +243,7 @@ class SqliteBackend(BaseBackend):
                 query += " AND source = ?"; params.append(source)
             query += " ORDER BY crawled_at DESC LIMIT ?"; params.append(limit)
             rows = conn.execute(query, params).fetchall()
-            return self._deserialize_all(rows, ["requirements", "preferred_requirements", "skills_required", "parsed_data"])
+            return self._deserialize_all(rows, ["parsed_sections", "tags"])
         finally:
             conn.close()
 
@@ -247,7 +254,7 @@ class SqliteBackend(BaseBackend):
             if not row:
                 return None
             d = self._row_to_dict(row)
-            for field in ["requirements", "preferred_requirements", "skills_required", "parsed_data"]:
+            for field in ["parsed_sections", "tags"]:
                 d[field] = self._json_deserialize(d[field])
             return d
         finally:
@@ -269,7 +276,7 @@ class SqliteBackend(BaseBackend):
             query = "SELECT * FROM jds WHERE " + " AND ".join(conditions)
             query += " ORDER BY crawled_at DESC LIMIT ?"; params.append(limit)
             rows = conn.execute(query, params).fetchall()
-            return self._deserialize_all(rows, ["requirements", "preferred_requirements", "skills_required", "parsed_data"])
+            return self._deserialize_all(rows, ["parsed_sections", "tags"])
         finally:
             conn.close()
 
@@ -692,12 +699,9 @@ class SqliteBackend(BaseBackend):
             "salary_str": None,
             "salary_min": None,
             "salary_max": None,
-            "requirements": [],
-            "preferred_requirements": [],
-            "skills_required": [],
-            "implicit_requirements": None,
+            "parsed_sections": {},
+            "tags": [],
             "raw_text": raw_text,
-            "parsed_data": {"pdf_path": str(pdf_path), "chunk_count": len(chunks)},
             "source": "pdf",
             "search_keyword": None,
             "platform": None,
@@ -794,26 +798,23 @@ class SqliteBackend(BaseBackend):
             conn.execute(
                 """INSERT INTO jds
                    (id, user_id, url, title, company, location, salary_str,
-                    salary_min, salary_max, requirements, preferred_requirements,
-                    skills_required, implicit_requirements, raw_text, parsed_data,
+                    salary_min, salary_max, parsed_sections, tags, raw_text,
                     source, search_keyword, platform, job_id, language,
                     industry_tag, function_tag, position_tag, auto_classified,
                     is_public, crawled_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT (id) DO UPDATE SET
                      title=EXCLUDED.title, company=EXCLUDED.company,
-                     raw_text=EXCLUDED.raw_text, parsed_data=EXCLUDED.parsed_data,
-                     updated_at=EXCLUDED.updated_at""",
+                     raw_text=EXCLUDED.raw_text, parsed_sections=EXCLUDED.parsed_sections,
+                     tags=EXCLUDED.tags, updated_at=EXCLUDED.updated_at""",
                 (
                     jd_id, data.get("user_id", "default"), data.get("url", ""),
                     data.get("title", ""), data.get("company", ""), data.get("location", ""),
                     data.get("salary_str"), data.get("salary_min"), data.get("salary_max"),
-                    self._json_serialize(data.get("requirements")),
-                    self._json_serialize(data.get("preferred_requirements")),
-                    self._json_serialize(data.get("skills_required", [])),
-                    data.get("implicit_requirements"), data.get("raw_text", ""),
-                    self._json_serialize(data.get("parsed_data")),
+                    self._json_serialize(data.get("parsed_sections", {})),
+                    self._json_serialize(data.get("tags", [])),
+                    data.get("raw_text", ""),
                     data.get("source", "manual"), data.get("search_keyword"),
                     data.get("platform"), data.get("job_id"), data.get("language", "zh"),
                     data.get("industry_tag"), data.get("function_tag"), data.get("position_tag"),

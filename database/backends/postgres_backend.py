@@ -184,22 +184,19 @@ class PostgresBackend(BaseBackend):
         self._execute(
             """INSERT INTO jds
                (id, user_id, url, title, company, location, salary_str,
-                salary_min, salary_max, requirements, preferred_requirements,
-                skills_required, implicit_requirements, raw_text, parsed_data,
+                salary_min, salary_max, parsed_sections, tags, raw_text,
                 source, search_keyword, platform, job_id, language,
                 industry_tag, function_tag, position_tag, auto_classified,
                 is_public, crawled_at, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (url, user_id) DO NOTHING""",
             (jd_id, data.get("user_id", "default"), data.get("url", ""),
              data.get("title", ""), data.get("company", ""), data.get("location", ""),
              data.get("salary_str"), data.get("salary_min"), data.get("salary_max"),
-             self._json_serialize(data.get("requirements")),
-             self._json_serialize(data.get("preferred_requirements")),
-             self._json_serialize(data.get("skills_required", [])),
-             data.get("implicit_requirements"), data.get("raw_text", ""),
-             self._json_serialize(data.get("parsed_data")),
+             self._json_serialize(data.get("parsed_sections", {})),
+             self._json_serialize(data.get("tags", [])),
+             data.get("raw_text", ""),
              data.get("source", "manual"), data.get("search_keyword"),
              data.get("platform"), data.get("job_id"), data.get("language", "zh"),
              data.get("industry_tag"), data.get("function_tag"), data.get("position_tag"),
@@ -212,7 +209,7 @@ class PostgresBackend(BaseBackend):
         rows = self._fetchall("SELECT * FROM jds WHERE id = %s AND deleted_at IS NULL", (jd_id,))
         if not rows:
             return None
-        return self._deserialize_list(rows[0], ["requirements", "preferred_requirements", "skills_required", "parsed_data"])
+        return self._deserialize_list(rows[0], ["parsed_sections", "tags"])
 
     def list_jds(self, user_id: str = "default", source: Optional[str] = None, limit: int = 100) -> List[Dict]:
         query = "SELECT * FROM jds WHERE user_id = %s AND deleted_at IS NULL"
@@ -221,7 +218,7 @@ class PostgresBackend(BaseBackend):
             query += " AND source = %s"; params.append(source)
         query += " ORDER BY crawled_at DESC LIMIT %s"; params.append(limit)
         rows = self._fetchall(query, params)
-        return [self._deserialize_list(r, ["requirements", "preferred_requirements", "skills_required", "parsed_data"]) for r in rows]
+        return [self._deserialize_list(r, ["parsed_sections", "tags"]) for r in rows]
 
     def get_jd_by_url(self, url: str, user_id: str = "default") -> Optional[Dict]:
         rows = self._fetchall(
@@ -229,7 +226,7 @@ class PostgresBackend(BaseBackend):
         )
         if not rows:
             return None
-        return self._deserialize_list(rows[0], ["requirements", "preferred_requirements", "skills_required", "parsed_data"])
+        return self._deserialize_list(rows[0], ["parsed_sections", "tags"])
 
     def search_jds(self, keyword: str, industry_tag: Optional[str] = None,
                    function_tag: Optional[str] = None, position_tag: Optional[str] = None,
@@ -245,7 +242,7 @@ class PostgresBackend(BaseBackend):
         query = "SELECT * FROM jds WHERE " + " AND ".join(conditions)
         query += " ORDER BY crawled_at DESC LIMIT %s"; params.append(limit)
         rows = self._fetchall(query, params)
-        return [self._deserialize_list(r, ["requirements", "preferred_requirements", "skills_required", "parsed_data"]) for r in rows]
+        return [self._deserialize_list(r, ["parsed_sections", "tags"]) for r in rows]
 
     def soft_delete_jd(self, jd_id: str) -> None:
         now = datetime.now().isoformat()
@@ -532,12 +529,9 @@ class PostgresBackend(BaseBackend):
             "salary_str": None,
             "salary_min": None,
             "salary_max": None,
-            "requirements": [],
-            "preferred_requirements": [],
-            "skills_required": [],
-            "implicit_requirements": None,
+            "parsed_sections": {},
+            "tags": [],
             "raw_text": raw_text,
-            "parsed_data": {"pdf_path": str(pdf_path), "chunk_count": len(chunks)},
             "source": "pdf",
             "search_keyword": None,
             "platform": None,

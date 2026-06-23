@@ -22,7 +22,9 @@ def _resume():
 def _jd(url="https://e.com/1"):
     return {
         "url": url, "title": "PM", "company": "ACME", "location": "HK",
-        "raw_text": "岗位职责：A\n任职要求：B", "skills_required": ["LLM"],
+        "raw_text": "岗位职责：A\n任职要求：B",
+        "parsed_sections": {"skills": ["LLM"]},
+        "tags": ["LLM"],
         "source": "manual", "platform": "test",
     }
 

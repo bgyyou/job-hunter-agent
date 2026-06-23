@@ -67,12 +67,9 @@ CREATE TABLE IF NOT EXISTS jds (
     salary_str TEXT,
     salary_min INTEGER,
     salary_max INTEGER,
-    requirements JSONB,
-    preferred_requirements JSONB,
-    skills_required JSONB DEFAULT '[]',
-    implicit_requirements TEXT,
+    parsed_sections JSONB NOT NULL DEFAULT '{}',
+    tags JSONB NOT NULL DEFAULT '[]',
     raw_text TEXT NOT NULL DEFAULT '',
-    parsed_data JSONB,
     source TEXT NOT NULL DEFAULT 'manual',
     search_keyword TEXT,
     platform TEXT,
@@ -105,6 +102,9 @@ CREATE INDEX IF NOT EXISTS idx_jds_deleted ON jds(deleted_at);
 -- Trigram index for fuzzy title/company search
 CREATE INDEX IF NOT EXISTS idx_jds_title_trgm ON jds USING gin (title gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_jds_company_trgm ON jds USING gin (company gin_trgm_ops);
+-- GIN indexes for JSON search on parsed_sections and tags
+CREATE INDEX IF NOT EXISTS idx_jds_tags ON jds USING gin (tags jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_jds_parsed_sections ON jds USING gin (parsed_sections jsonb_path_ops);
 
 -- ============================================================
 -- Table: knowledge_chunks

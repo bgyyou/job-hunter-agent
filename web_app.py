@@ -424,11 +424,13 @@ with tab2:
                         "salary_str": jd_result.get("salary_range"),
                         "raw_text": jd_text,
                         "source": "manual",
-                        "requirements": jd_result.get("core_requirements", []),
-                        "preferred_requirements": jd_result.get("preferred_requirements", []),
-                        "skills_required": jd_result.get("keywords", []),
-                        "implicit_requirements": jd_result.get("implicit_requirements", ""),
-                        "parsed_data": jd_result,
+                        "parsed_sections": {
+                            "requirements": jd_result.get("core_requirements", []),
+                            "preferred": jd_result.get("preferred_requirements", []),
+                            "skills": jd_result.get("keywords", []),
+                            "implicit": jd_result.get("implicit_requirements", ""),
+                        },
+                        "tags": list(jd_result.get("keywords", [])),
                     }
                     from database.classifier import Classifier
                     clf = Classifier()
@@ -549,11 +551,13 @@ with tab2:
                                         "company": jd_result.get("company", ""),
                                         "location": jd_result.get("location", ""),
                                         "salary_str": jd_result.get("salary_range"),
-                                        "requirements": jd_result.get("core_requirements", []),
-                                        "preferred_requirements": jd_result.get("preferred_requirements", []),
-                                        "skills_required": jd_result.get("keywords", []),
-                                        "implicit_requirements": jd_result.get("implicit_requirements", ""),
-                                        "parsed_data": jd_result,
+                                        "parsed_sections": {
+                                            "requirements": jd_result.get("core_requirements", []),
+                                            "preferred": jd_result.get("preferred_requirements", []),
+                                            "skills": jd_result.get("keywords", []),
+                                            "implicit": jd_result.get("implicit_requirements", ""),
+                                        },
+                                        "tags": list(jd_result.get("keywords", [])),
                                     })
                                 except Exception as _ae:
                                     st.caption(f"⚠️ #{i+1} LLM 解析失败，仅按 raw_text 入库：{_ae}")
@@ -638,11 +642,13 @@ with tab2:
                         "salary_str": jd_result.get("salary_range"),
                         "raw_text": jd_result.get("raw_text", jd_url),
                         "source": "url",
-                        "requirements": jd_result.get("core_requirements", []),
-                        "preferred_requirements": jd_result.get("preferred_requirements", []),
-                        "skills_required": jd_result.get("keywords", []),
-                        "implicit_requirements": jd_result.get("implicit_requirements", ""),
-                        "parsed_data": jd_result,
+                        "parsed_sections": {
+                            "requirements": jd_result.get("core_requirements", []),
+                            "preferred": jd_result.get("preferred_requirements", []),
+                            "skills": jd_result.get("keywords", []),
+                            "implicit": jd_result.get("implicit_requirements", ""),
+                        },
+                        "tags": list(jd_result.get("keywords", [])),
                     }
                     from database.classifier import Classifier as _Clf
                     _tags = _Clf().classify(jd_for_db["title"], jd_for_db["raw_text"])
