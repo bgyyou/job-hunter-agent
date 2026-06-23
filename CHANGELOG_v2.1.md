@@ -952,3 +952,40 @@ python smoke_test_flow_a.py  # source=rag n_chunks=15 ✓
 - **症状一样不代表根因一样**：上次"RAG 0 命中"是因为 filter_position 硬过滤；这次还是"0 命中"但根因完全不同，是 db 漂移。修第二轮时不能 assume 第一轮的诊断框架还有效。
 - **隐性依赖是隐患**：`Retriever()` 内部偷偷 `get_db()` 看着方便，实际是把环境耦合塞进类构造里。调用方明明已经有 db 实例，应该显式传。已支持注入但默认行为没强制，所以漂移没被发现。
 - **`.env` 默认值要"开箱即用"**：把 DATABASE_URL 默认指向一个需要 docker compose 才有的服务，违反"零配置默认能跑"原则。
+
+---
+
+## [Flow A bugfix #3: LLM 占位符 + 太懒收尾] 2026-06-24
+
+### 背景：第二次实测翻车
+
+bug #2 修完后 RAG 命中了 15 条 ✓，但用户实测生成出来的简历全是 `[您的姓名]` `[X]年` `202X.XX` 这种占位符 —— 看着像 ChatGPT 默认模板。
+
+用户反馈：「AI 没问那么多问题就让我点 [DONE] 了」。
+
+### 根因
+
+两层问题，且互相放大：
+
+1. **chat 阶段太懒**：`_CONVERSATION_SYSTEM` 只说"当信息足够完整时输出 [DONE]"，主观判断空间太大；LLM 没收齐 L1 必填项就早早收尾。
+2. **generate 阶段瞎编**：`_GENERATE_SYSTEM` 原版只写"不编造经历"，没禁占位符。LLM 拿到稀疏 extracted，按 JD 模板编了一份"理想候选人"，姓名/公司/日期全部填占位符 —— 这是基础模型在简历语料上学到的坏习惯，必须显式 prompt 禁止 + 代码层兜底。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| chat prompt 严格化 | L1 必填项收齐之前**禁止**输出 [DONE]：姓名、最近一段经历、学历、至少 1 个量化成果 | `agents/resume_flow_a.py` `_CONVERSATION_SYSTEM` |
+| generate prompt 加禁令 | 4 条绝对禁令：禁占位符、禁编造、禁套用 JD 模板、可空就留空。字段处理规则写死："用户没提到 → 留空字符串"。 | `agents/resume_flow_a.py` `_GENERATE_SYSTEM` |
+| 代码层占位符防火墙 | 新增 `_strip_placeholders`：正则匹配 `[xxx]` / `20[xX]+` / `xxx` / `待补充|TBD`，递归剥除字符串、列表、dict。整合进 `_normalize_resume_shape` —— LLM 不听话时最后一道闸 | `agents/resume_flow_a.py` |
+| 测试 | 新增 `test_generate_final_strips_llm_placeholders`：模拟 LLM 偷塞 `[您的姓名]` `[X]年` `202X.XX` `xxx` `[待补充]`，验证全被剥成空字符串，真实成果（"30%"）保留 | `tests/integration/test_resume_flow_a.py` |
+
+### 验证
+```bash
+pytest tests/ -q  # 124 passed
+```
+
+### 第一性反思
+- **LLM 默认行为不是 helpful 而是 plausible**：拿到稀疏输入，它会"补完看似合理的内容"而不是"标记 unknown"。Prompt 必须显式说"宁可空也别编"，代码兜底必须正则剥占位符。
+- **prompt 软约束需要硬验证**：之前 `_GENERATE_SYSTEM` 写了"不编造经历"，但 LLM 把"占位符填空"理解成"不算编造"。规则必须列举反例（`[您的姓名]` `202X.XX`）才有约束力。
+- **chat 收尾判定要客观化**：「信息足够完整」是主观判断，LLM 不可靠。改成"L1 必填项 = 姓名/经历/学历/量化"这样的可枚举条件。
+- **bug 修复要看现象组合**：一次实测两条 bug（占位符 + 太懒），单独修任何一条都没用 —— LLM 太懒导致 extracted 稀疏，generate 必然占位符填空。要同时改两端。

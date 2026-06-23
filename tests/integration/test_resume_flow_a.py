@@ -236,6 +236,51 @@ def test_generate_final_produces_resume_dict():
     assert "LLM" in result["skills"]
 
 
+def test_generate_final_strips_llm_placeholders():
+    """LLM 偷塞 [您的姓名] [X]年 202X.XX 这种占位符时，normalize 必须把它们剥成空。"""
+    placeholder_resume = json.dumps({
+        "header": {
+            "name": "[您的姓名]",
+            "contact": {"phone": "[您的手机号]", "email": "[您的邮箱]"},
+            "summary": "拥有[X]年AI产品经验的产品经理。",
+        },
+        "experience": [
+            {"title": "高级产品经理", "company": "[前一家公司名称]",
+             "duration": "202X.XX - 至今",
+             "achievements": ["上线 Agent 系统，满意度提升 30%"]},
+        ],
+        "skills": ["LLM", "xxx", "[待补充]"],
+        "education": [{"school": "[大学名称]", "degree": "[学士/硕士]",
+                       "major": "计算机", "start_year": "", "end_year": ""}],
+        "projects": [],
+    }, ensure_ascii=False)
+
+    flow = ResumeFlowA(_llm_with_responses(placeholder_resume))
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(flow.generate_final(
+            {"header": {"name": ""}, "experience": [], "skills": [], "education": [], "projects": []},
+            skeleton={"text": "", "source": "fallback", "n_chunks": 0, "industries_covered": []},
+            position="AI产品经理",
+        ))
+    finally:
+        loop.close()
+    # 占位符全被剥成空
+    assert result["header"]["name"] == ""
+    assert result["header"]["contact"] == {"phone": "", "email": ""}
+    assert "[X]" not in result["header"]["summary"]
+    assert result["experience"][0]["company"] == ""
+    # 202X.XX 被剥掉，可能残留"至今"，但不再有 X/占位符特征
+    assert "X" not in result["experience"][0]["duration"]
+    assert "[" not in result["experience"][0]["duration"]
+    # 真实成果保留
+    assert "30%" in result["experience"][0]["achievements"][0]
+    # skills 里 xxx 和 [待补充] 被剥除，只剩 LLM
+    assert result["skills"] == ["LLM"]
+    assert result["education"][0]["school"] == ""
+    assert result["education"][0]["major"] == "计算机"
+
+
 def test_generate_final_falls_back_on_bad_json():
     """LLM 返回非 JSON 时，应回退到 extracted 数据并 normalize 出齐全字段"""
     extracted = {"header": {"name": "Leon"}, "skills": ["X"]}
