@@ -165,7 +165,7 @@ def test_build_skeleton_empty_when_no_rag_results(monkeypatch):
 
     # mock Retriever 返回空
     from tools import retriever as retriever_mod
-    monkeypatch.setattr(retriever_mod, "Retriever", lambda: MagicMock(retrieve=MagicMock(return_value=[])))
+    monkeypatch.setattr(retriever_mod, "Retriever", lambda **kw: MagicMock(retrieve=MagicMock(return_value=[])))
 
     loop = asyncio.new_event_loop()
     try:
@@ -190,7 +190,7 @@ def test_build_skeleton_with_rag_data(monkeypatch):
          "metadata": {"jd_industry_tag": "快消"}},
     ]
     from tools import retriever as retriever_mod
-    monkeypatch.setattr(retriever_mod, "Retriever", lambda: MagicMock(retrieve=MagicMock(return_value=mock_chunks)))
+    monkeypatch.setattr(retriever_mod, "Retriever", lambda **kw: MagicMock(retrieve=MagicMock(return_value=mock_chunks)))
 
     loop = asyncio.new_event_loop()
     try:
@@ -286,7 +286,7 @@ def test_flow_a_end_to_end(monkeypatch):
 
     mock_chunks = [{"chunk_text": "熟悉 LLM", "chunk_type": "requirement"}]
     from tools import retriever as retriever_mod
-    monkeypatch.setattr(retriever_mod, "Retriever", lambda: MagicMock(retrieve=MagicMock(return_value=mock_chunks)))
+    monkeypatch.setattr(retriever_mod, "Retriever", lambda **kw: MagicMock(retrieve=MagicMock(return_value=mock_chunks)))
 
     messages = [
         {"role": "user", "content": "我想申请 AI 产品经理"},

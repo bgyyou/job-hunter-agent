@@ -1656,7 +1656,7 @@ with tab7:
             with st.spinner("AI 思考中..."):
                 try:
                     llm_client = st.session_state.agent.llm_client
-                    flow_a = ResumeFlowA(llm_client)
+                    flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     reply = loop.run_until_complete(
@@ -1687,7 +1687,7 @@ with tab7:
             with st.spinner("正在分析对话、检索行业要求、生成简历..."):
                 try:
                     llm_client = st.session_state.agent.llm_client
-                    flow_a = ResumeFlowA(llm_client)
+                    flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     extracted = loop.run_until_complete(flow_a.extract_resume(st.session_state.fa_messages))

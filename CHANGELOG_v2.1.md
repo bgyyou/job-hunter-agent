@@ -906,3 +906,49 @@ python -c "from agents.resume_flow_a import ResumeFlowA; print(len(ResumeFlowA(N
 ### 第一性反思
 - **数据现实优先于设计美感**：P0 设计"position 主过滤 + industry rerank"理论上 elegant，但在 JD 分类覆盖率 0.2% 时是 anti-pattern。后续添加 filter 类参数前先 `SELECT COUNT(*) WHERE filter_field IS NOT NULL` —— 覆盖率不到 50% 就别硬过滤。
 - **兜底链不能有断点**：用户路径上任一 LLM/外部依赖失败都不能让产出"为空"。`None or fallback` 模式默认 OK 但要保证 fallback 自己也是完整 shape。
+
+---
+
+## [Flow A bugfix #2: RAG 真根因 — db 注入断层] 2026-06-24
+
+### 背景：上次没修对
+
+用户实测仍然 RAG 0 命中、简历空白。上一发 commit `9c8fb66` 把检索改纯语义、加兜底，但用户实测毫无变化。
+
+### 真根因（第一性诊断）
+
+上次只看了 `_retrieve_rag_chunks` 内部逻辑，没看**db 是从哪来的**。重新跑：
+
+```bash
+# CLI 跑：返回 15 条 ✓
+python -c "from agents.resume_flow_a import ResumeFlowA; ..."
+# 但在 streamlit 里跑：返回 0 条 ✗
+```
+
+差别在数据库连接：
+
+1. `web_app.py:150` 写死 `SqliteBackend(db_path=settings.db_path)`，绕过 factory → UI 看到的 db 里有 511 条 JD ✓
+2. `tools/retriever.py` 的 `Retriever()` 调 `get_db()` → 走 factory → 读 `.env` 的 `DATABASE_URL=postgresql://...` → 尝试连 postgres → 没启动 → 抛异常
+3. `ResumeFlowA._retrieve_rag_chunks` 的 `except` 吞掉异常返回 `[]` → 0 命中
+
+**UI 用的 db 和 RAG 用的 db 不是同一个**。这是 P3-1 backend 做薄之后 `Retriever` 内部 `get_db()` 引入的隐性漂移；上次修复全跑在错的 db 上面。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| db 注入 | `ResumeFlowA.__init__` 加 `db=None` 参数；`_retrieve_rag_chunks` 用 `Retriever(db=self.db)` 而不是 `Retriever()` | `agents/resume_flow_a.py` |
+| 调用点 | `web_app.py` 两处构造 `ResumeFlowA(llm_client, db=st.session_state.db)`，把 UI 已有的 SqliteBackend 实例传下去 | `web_app.py` |
+| .env | `DATABASE_URL` 默认改回 `sqlite:///data/jobhunter_v2.db`；postgres 那行注释掉。**理由**：postgres 是可选进阶项，但 `.env` 默认指向一个没启动的服务，会让任何 `get_db()` 调用炸锅 | `.env` |
+| 测试 fixture | `monkeypatch` Retriever 的 lambda 改 `lambda **kw:` 接受 `db=` kwarg | `tests/integration/test_resume_flow_a.py` |
+
+### 验证
+```bash
+pytest tests/ -q  # 123 passed
+python smoke_test_flow_a.py  # source=rag n_chunks=15 ✓
+```
+
+### 第一性反思
+- **症状一样不代表根因一样**：上次"RAG 0 命中"是因为 filter_position 硬过滤；这次还是"0 命中"但根因完全不同，是 db 漂移。修第二轮时不能 assume 第一轮的诊断框架还有效。
+- **隐性依赖是隐患**：`Retriever()` 内部偷偷 `get_db()` 看着方便，实际是把环境耦合塞进类构造里。调用方明明已经有 db 实例，应该显式传。已支持注入但默认行为没强制，所以漂移没被发现。
+- **`.env` 默认值要"开箱即用"**：把 DATABASE_URL 默认指向一个需要 docker compose 才有的服务，违反"零配置默认能跑"原则。
