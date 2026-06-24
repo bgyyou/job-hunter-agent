@@ -1038,7 +1038,8 @@ with tab4:
                             optimizer.optimize(
                                 st.session_state.resume_data,
                                 st.session_state.jd_result,
-                                recommendations
+                                recommendations,
+                                reference_chunks=reference_chunks,
                             )
                         )
                         loop.close()
@@ -1812,11 +1813,17 @@ with tab7:
 
                     collected = st.session_state.fa_section_data or {}
 
-                    # 派生 summary + core_competencies
+                    # RAG 骨架：先检索岗位核心要求，作为 derive 的输入
+                    skeleton = loop.run_until_complete(flow_a.build_skeleton(
+                        st.session_state.fa_position, st.session_state.fa_industry,
+                    ))
+
+                    # 派生 summary + core_competencies（朝 skeleton 蒸馏出的岗位要求靠拢）
                     derived = loop.run_until_complete(flow_a.derive_summary_and_competencies(
                         collected,
                         industry=st.session_state.fa_industry,
                         position=st.session_state.fa_position,
+                        skeleton_text=skeleton.get("text", ""),
                     ))
 
                     # 组装 raw_resume 给 normalize
@@ -1842,11 +1849,6 @@ with tab7:
                         "skills": skills_val or [],
                         "languages": languages_val or [],
                     }
-
-                    # RAG 骨架（可选，给商业化场景信任锚点）
-                    skeleton = loop.run_until_complete(flow_a.build_skeleton(
-                        st.session_state.fa_position, st.session_state.fa_industry,
-                    ))
 
                     final_data = flow_a._normalize_resume_shape(raw_resume)
                     loop.close()

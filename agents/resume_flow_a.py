@@ -65,6 +65,11 @@ _DERIVE_SYSTEM = """你是资深简历优化专家。基于已采集的简历数
 【目标岗位上下文】
 行业：{industry}    岗位：{position}
 
+【目标岗位核心要求（来自 JD 库蒸馏）】
+{skeleton_block}
+
+派生原则：core_competencies **优先**选用与上述岗位核心要求**有真实证据支撑**的技能/经验角度来组织表述（用户简历里有的内容，用岗位要求的视角包装）；summary 写法朝岗位要求靠拢。**严禁**把用户没做过的岗位要求点编造成核心能力。
+
 返回 JSON：
 {{
     "summary": "1-2 句个人总结",
@@ -298,8 +303,14 @@ class ResumeFlowA:
         collected: Dict[str, Any],
         industry: str,
         position: str,
+        skeleton_text: str = "",
     ) -> Dict[str, Any]:
-        """采集完所有 section 后，LLM 派生 summary 和 core_competencies。"""
+        """采集完所有 section 后，LLM 派生 summary 和 core_competencies。
+
+        skeleton_text: 由 build_skeleton 蒸馏出的岗位核心要求文本。传了就让 LLM
+        派生 summary / 核心能力时朝岗位要求靠拢；空字符串则降级为纯用户数据派生。
+        """
+        skeleton_block = skeleton_text.strip() if skeleton_text else "（无可用岗位要求参考，请基于用户数据派生通用性更强的核心能力）"
         prompt = (
             f"已采集的简历数据：\n{json.dumps(collected, ensure_ascii=False, indent=2)}\n\n"
             f"请基于以上数据派生 summary（1-2 句）和 core_competencies（3-5 条）。"
@@ -307,7 +318,9 @@ class ResumeFlowA:
         llm_messages = [
             LLMMessage(
                 role="system",
-                content=_DERIVE_SYSTEM.format(industry=industry, position=position),
+                content=_DERIVE_SYSTEM.format(
+                    industry=industry, position=position, skeleton_block=skeleton_block,
+                ),
             ),
             LLMMessage(role="user", content=prompt),
         ]

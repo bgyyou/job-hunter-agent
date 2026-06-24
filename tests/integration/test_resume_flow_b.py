@@ -119,6 +119,48 @@ def test_optimizer_falls_back_to_original_on_bad_json():
     assert result == _resume_input()
 
 
+def test_optimizer_passes_reference_chunks_into_prompt():
+    """RAG 召回的 reference_chunks 必须出现在传给 LLM 的 prompt 里。
+    回归保护 #30：之前 web_app 召回了但没传，等于白召回。"""
+    client = _mock_llm()
+    optimizer = ResumeOptimizer(client)
+    ref_chunks = [
+        {"chunk_text": "熟悉大模型应用开发与 prompt 工程最佳实践", "chunk_type": "requirement"},
+        {"chunk_text": "具备 RAG 系统设计与向量检索调优经验", "chunk_type": "requirement"},
+    ]
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(
+            optimizer.optimize(
+                _resume_input(), _jd_input(), _recommendations(),
+                reference_chunks=ref_chunks,
+            )
+        )
+    finally:
+        loop.close()
+
+    # 校验 user prompt 里真的拼进了 chunk 文本
+    user_msg = client.analyze.call_args.kwargs["messages"][1].content
+    assert "大模型应用开发" in user_msg
+    assert "RAG 系统设计" in user_msg
+    assert "高频要求参考" in user_msg
+
+
+def test_optimizer_no_reference_block_when_chunks_empty():
+    """不传 / 传空 chunks 时，prompt 里不要出现「高频要求参考」段，保持原行为。"""
+    client = _mock_llm()
+    optimizer = ResumeOptimizer(client)
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(
+            optimizer.optimize(_resume_input(), _jd_input(), _recommendations())
+        )
+    finally:
+        loop.close()
+    user_msg = client.analyze.call_args.kwargs["messages"][1].content
+    assert "高频要求参考" not in user_msg
+
+
 # -------- Step 2：Generator markdown --------
 
 def test_generator_markdown_contains_name_and_sections():

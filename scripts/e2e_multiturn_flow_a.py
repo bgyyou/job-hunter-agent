@@ -298,11 +298,12 @@ async def main():
 
     # 派生 + 渲染
     print(f"\n{'━' * 70}")
-    print("▶ 派生 summary + core_competencies")
+    print("▶ 派生 summary + core_competencies（输入：collected + skeleton.text）")
     print(f"{'━' * 70}")
     try:
         derived = await flow.derive_summary_and_competencies(
             collected, industry=industry, position=position,
+            skeleton_text=skeleton.get("text", ""),
         )
         print(f"  ✅ summary: {derived.get('summary', '')[:120]}")
         print(f"  ✅ core_competencies ({len(derived.get('core_competencies', []))} 条):")

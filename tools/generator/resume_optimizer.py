@@ -24,7 +24,8 @@ class ResumeOptimizer:
         self,
         resume_data: Dict[str, Any],
         jd_result: Dict[str, Any],
-        recommendations: List[Dict[str, Any]]
+        recommendations: List[Dict[str, Any]],
+        reference_chunks: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         根据建议优化简历
@@ -33,15 +34,16 @@ class ResumeOptimizer:
             resume_data: 原始简历数据
             jd_result: JD分析结果
             recommendations: 优化建议列表
+            reference_chunks: RAG 召回的同类岗位 JD 片段，会拼进 prompt 让
+                LLM 改写措辞时朝行业高频要求靠拢。None / 空列表 = 不拼。
 
         Returns:
             优化后的简历数据
         """
         self.logger.info("开始优化简历")
 
-        # 首先，让LLM根据建议完整优化整个简历
         optimized_data = await self._optimize_with_llm(
-            resume_data, jd_result, recommendations
+            resume_data, jd_result, recommendations, reference_chunks or [],
         )
 
         return optimized_data
@@ -50,7 +52,8 @@ class ResumeOptimizer:
         self,
         resume_data: Dict[str, Any],
         jd_result: Dict[str, Any],
-        recommendations: List[Dict[str, Any]]
+        recommendations: List[Dict[str, Any]],
+        reference_chunks: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
         使用LLM优化简历
@@ -78,6 +81,20 @@ class ResumeOptimizer:
 
         recommendations_text = "\n".join(rec_texts) if rec_texts else "无特殊建议"
 
+        # 把 RAG 召回的同类岗位 JD 片段拼成一段「行业高频要求参考」
+        if reference_chunks:
+            ref_lines = []
+            for rc in reference_chunks[:5]:  # 控量，避免 prompt 太胖
+                text = (rc.get("chunk_text") or "").strip()
+                if text:
+                    ref_lines.append(f"- {text[:200]}")
+            reference_block = (
+                "\n【同类岗位 JD 高频要求参考（来自 RAG 召回，仅供改写措辞参考，不要据此编造经历）】\n"
+                + "\n".join(ref_lines)
+            ) if ref_lines else ""
+        else:
+            reference_block = ""
+
         # 使用 string.format() 避免 f-string 解析复杂表达式时的问题
         system_prompt = """你是资深简历优化专家。你的任务是根据目标职位的要求和具体的优化建议，重写简历的核心内容。
 
@@ -87,7 +104,8 @@ class ResumeOptimizer:
 3. **具体性**：给出完整的改写文本，不要空泛建议
 4. **格式**：返回完整的 JSON 简历对象，保持与原始简历相同的结构
 
-如果你发现简历中有与目标职位无关的内容，可以弱化或删除，但不要添加新的经历。"""
+如果你发现简历中有与目标职位无关的内容，可以弱化或删除，但不要添加新的经历。
+当提供"同类岗位 JD 高频要求参考"时，把它当成改写措辞的参考词典，**不要**把里面的具体要求当成用户的真实经历。"""
 
         prompt = """请根据以下信息优化简历。
 
@@ -97,7 +115,7 @@ class ResumeOptimizer:
 - 核心要求：
 {core_requirements}
 - 关键词：{keywords}
-
+{reference_block}
 【优化建议】
 {recommendations}
 
@@ -109,6 +127,7 @@ class ResumeOptimizer:
             company=jd_result.get('company', ''),
             core_requirements='\n'.join(f'- {r}' for r in jd_result.get('core_requirements', [])),
             keywords=', '.join(jd_result.get('keywords', [])),
+            reference_block=reference_block,
             recommendations=recommendations_text,
             resume_json=json.dumps(resume_data, ensure_ascii=False, indent=2)
         )

@@ -227,6 +227,33 @@ def test_derive_summary_and_competencies():
     assert len(result["core_competencies"]) == 3
 
 
+def test_derive_uses_skeleton_in_prompt():
+    """derive: 传入 skeleton_text 时，必须把它拼进 system prompt 给 LLM 看到。"""
+    derived_json = json.dumps({
+        "summary": "AI 产品经理候选人",
+        "core_competencies": ["LLM 应用", "Prompt Engineering", "数据驱动"],
+    }, ensure_ascii=False)
+    flow = ResumeFlowA(_llm_with_responses(derived_json))
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(flow.derive_summary_and_competencies(
+            collected={"header": {"name": "Leon"}, "skills": ["LLM"]},
+            industry="互联网/软件",
+            position="AI产品经理",
+            skeleton_text="1. 熟悉 LLM 应用\n2. 有产品 0-1 经验\n3. 数据驱动决策",
+        ))
+    finally:
+        loop.close()
+
+    # 验证 system message 里塞了 skeleton 文本
+    call_args = flow.llm_client.analyze.call_args
+    sys_msg = call_args.kwargs["messages"][0].content
+    assert "熟悉 LLM 应用" in sys_msg
+    assert "产品 0-1 经验" in sys_msg
+    assert "数据驱动决策" in sys_msg
+
+
 def test_section_data_roundtrip_to_markdown():
     """8 个 section 的 collected dict → normalize → to_markdown，验证新字段都被渲染。"""
     flow = ResumeFlowA(_llm_with_responses(""))
