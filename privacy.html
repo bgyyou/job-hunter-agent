@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隐私政策 — JobHunter</title>
+<style>
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #fafafa;
+    background: #0a0a0f;
+    line-height: 1.75;
+  }
+  a { color: #c4b5fd; }
+
+  .topnav {
+    padding: 1.2rem 2rem;
+    border-bottom: 1px solid rgba(139, 92, 246, 0.18);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .topnav .logo {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow: 0 0 12px rgba(139, 92, 246, 0.5);
+  }
+  .topnav .back {
+    color: #c4b5fd;
+    font-size: 0.92rem;
+  }
+  .topnav .back:hover { color: #ffffff; }
+
+  .container {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 4rem 2rem 6rem;
+  }
+  h1 {
+    font-size: clamp(2rem, 4vw, 2.8rem);
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.5rem;
+  }
+  .updated {
+    color: #64748b;
+    font-size: 0.88rem;
+    margin: 0 0 3rem;
+  }
+  h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #c4b5fd;
+    margin: 2.5rem 0 1rem;
+    letter-spacing: -0.02em;
+  }
+  p, li {
+    color: #cbd5e1;
+    font-size: 0.95rem;
+    margin: 0 0 1rem;
+  }
+  ul {
+    padding-left: 1.4rem;
+    margin: 0 0 1rem;
+  }
+  li { margin-bottom: 0.5rem; }
+  .contact-box {
+    margin-top: 3rem;
+    padding: 1.5rem 1.8rem;
+    background: #1a0b2e;
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 12px;
+  }
+  .contact-box h3 {
+    color: #ffffff;
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+  }
+  .contact-box p { margin: 0; color: #c4b5fd; font-size: 0.9rem; }
+
+  footer {
+    border-top: 1px solid rgba(139, 92, 246, 0.12);
+    padding: 1.5rem 2rem;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.82rem;
+  }
+  footer a { color: #64748b; }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="logo">JobHunter</div>
+  <a href="/" class="back">← 返回首页</a>
+</nav>
+
+<div class="container">
+  <h1>隐私政策</h1>
+  <p class="updated">最近更新：2026 年 6 月 26 日</p>
+
+  <p>JobHunter（以下简称"我们"）重视你的隐私。本政策说明我们收集什么数据、如何使用、如何保护，以及你享有哪些权利。使用本服务即视为你同意本政策。</p>
+
+  <h2>1. 我们收集的数据</h2>
+  <ul>
+    <li><strong>账号信息</strong>：注册时提交的用户名、密码（PBKDF2 加盐哈希存储，明文不可逆）。</li>
+    <li><strong>简历数据</strong>：你在 Flow A / Flow B 中输入或生成的基础信息、工作经历、项目经历、技能、个人陈述等。</li>
+    <li><strong>JD 库数据</strong>：公开招聘平台公开 JD（已脱敏）+ 用户手动添加的 JD。</li>
+    <li><strong>使用日志</strong>：访问时间、页面路径、操作行为，用于排查问题和优化体验。</li>
+  </ul>
+
+  <h2>2. 数据用途</h2>
+  <ul>
+    <li>生成定制简历、RAG 检索召回、差距分析。</li>
+    <li>调用 LLM 时仅传递改写所需的最小上下文，不留存在第三方。</li>
+    <li>统计聚合（如岗位热度、技能分布），结果不关联到具体用户。</li>
+    <li>不用于任何商业广告投放，不出售给第三方。</li>
+  </ul>
+
+  <h2>3. 数据存储</h2>
+  <ul>
+    <li>默认存储在本地 SQLite 数据库（<code>data/jobhunter_v2.db</code>），文件级隔离。</li>
+    <li>进阶部署可使用 PostgreSQL + pgvector，数据存放在你自建的服务器。</li>
+    <li>不使用云端托管数据库，你的简历数据不出你的基础设施。</li>
+    <li>密码使用 PBKDF2 加盐哈希，原始密码不入库。</li>
+  </ul>
+
+  <h2>4. LLM 调用</h2>
+  <ul>
+    <li>LLM 调用通过你配置的 API Key 直接发起，请求不经过我们的服务器中转。</li>
+    <li>仅传递简历改写所需的最小上下文片段，不传递完整简历全文。</li>
+    <li>LLM 服务商（如 Agnes、火山引擎、OpenAI、DeepSeek）的处理受其各自隐私政策约束。</li>
+  </ul>
+
+  <h2>5. 第三方服务</h2>
+  <ul>
+    <li>招聘平台（JobsDB、猎聘、Boss、51job 等）：仅采集公开 JD 数据，不涉及登录凭证。</li>
+    <li>LLM 提供商：按其隐私政策处理请求内容。</li>
+    <li>不接入 Google Analytics、Facebook Pixel 等追踪广告 SDK。</li>
+  </ul>
+
+  <h2>6. Cookie 使用</h2>
+  <p>本服务使用 Streamlit 内置 session cookie 维持登录状态，不放置追踪 Cookie，不进行跨站行为分析。</p>
+
+  <h2>7. 数据保留与删除</h2>
+  <ul>
+    <li>账号和简历数据保留至你主动删除为止。</li>
+    <li>JD 库中的公共爬取数据采用软删除（标记 deleted_at），不会物理删除以保留历史关联。</li>
+    <li>你可在"账号设置"中导出或删除你的全部数据。</li>
+  </ul>
+
+  <h2>8. 你的权利</h2>
+  <ul>
+    <li><strong>访问权</strong>：随时查看你提交的所有数据。</li>
+    <li><strong>更正权</strong>：随时修改简历信息和账号资料。</li>
+    <li><strong>删除权</strong>：随时删除账号及关联数据。</li>
+    <li><strong>导出权</strong>：以 Markdown / JSON 格式导出你的简历数据。</li>
+  </ul>
+
+  <h2>9. 未成年人保护</h2>
+  <p>本服务面向 18 岁及以上求职者。如发现未成年人注册，我们将立即删除其账号和数据。</p>
+
+  <h2>10. 政策更新</h2>
+  <p>本政策可能随服务演进更新。重大变更将在首页和登录页提示，继续使用即视为接受更新后的政策。</p>
+
+  <div class="contact-box">
+    <h3>联系我们</h3>
+    <p>如对本政策有疑问，请发送邮件至 <a href="mailto:privacy@jobhunter.dev">privacy@jobhunter.dev</a>，我们将在 3 个工作日内回复。</p>
+  </div>
+</div>
+
+<footer>
+  © 2026 JobHunter. &nbsp;|&nbsp; <a href="/?page=terms">服务条款</a> &nbsp;|&nbsp; <a href="/">返回首页</a>
+</footer>
+
+</body>
+</html>

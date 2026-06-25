@@ -322,6 +322,37 @@ def render_top_nav() -> None:
 def render_landing() -> None:
     import re
 
+    page = st.query_params.get("page")
+    if page in {"privacy", "terms"}:
+        page_path = PROJECT_ROOT / f"{page}.html"
+        if not page_path.exists():
+            st.error(f"{page}.html 缺失，请检查项目根目录。")
+            return
+        html = page_path.read_text(encoding="utf-8")
+        style_match = re.search(r"<style>(.*?)</style>", html, re.DOTALL)
+        body_match = re.search(r"<body>(.*?)</body>", html, re.DOTALL)
+        style = style_match.group(1) if style_match else ""
+        body = body_match.group(1) if body_match else ""
+        hide_chrome = """
+div[data-testid="stSidebar"],
+div[data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"],
+div[data-testid="stToolbar"],
+div[data-testid="stDecoration"] {
+    display: none !important;
+}
+section[data-testid="stMain"] {
+    padding: 0 !important;
+}
+section[data-testid="stMain"] > div,
+section[data-testid="stMain"] > div > div {
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+"""
+        st.html("<style>" + style + "\n" + hide_chrome + "</style>" + body)
+        return
+
     if st.session_state.get("pending_auth_dialog"):
         st.session_state.pending_auth_dialog = False
         render_auth_dialog()

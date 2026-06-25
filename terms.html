@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>服务条款 — JobHunter</title>
+<style>
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #fafafa;
+    background: #0a0a0f;
+    line-height: 1.75;
+  }
+  a { color: #c4b5fd; }
+
+  .topnav {
+    padding: 1.2rem 2rem;
+    border-bottom: 1px solid rgba(139, 92, 246, 0.18);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .topnav .logo {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow: 0 0 12px rgba(139, 92, 246, 0.5);
+  }
+  .topnav .back {
+    color: #c4b5fd;
+    font-size: 0.92rem;
+  }
+  .topnav .back:hover { color: #ffffff; }
+
+  .container {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 4rem 2rem 6rem;
+  }
+  h1 {
+    font-size: clamp(2rem, 4vw, 2.8rem);
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.5rem;
+  }
+  .updated {
+    color: #64748b;
+    font-size: 0.88rem;
+    margin: 0 0 3rem;
+  }
+  h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #c4b5fd;
+    margin: 2.5rem 0 1rem;
+    letter-spacing: -0.02em;
+  }
+  p, li {
+    color: #cbd5e1;
+    font-size: 0.95rem;
+    margin: 0 0 1rem;
+  }
+  ul {
+    padding-left: 1.4rem;
+    margin: 0 0 1rem;
+  }
+  li { margin-bottom: 0.5rem; }
+  .contact-box {
+    margin-top: 3rem;
+    padding: 1.5rem 1.8rem;
+    background: #1a0b2e;
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 12px;
+  }
+  .contact-box h3 {
+    color: #ffffff;
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+  }
+  .contact-box p { margin: 0; color: #c4b5fd; font-size: 0.9rem; }
+
+  footer {
+    border-top: 1px solid rgba(139, 92, 246, 0.12);
+    padding: 1.5rem 2rem;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.82rem;
+  }
+  footer a { color: #64748b; }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="logo">JobHunter</div>
+  <a href="/" class="back">← 返回首页</a>
+</nav>
+
+<div class="container">
+  <h1>服务条款</h1>
+  <p class="updated">最近更新：2026 年 6 月 26 日</p>
+
+  <p>欢迎使用 JobHunter（以下简称"本服务"）。使用本服务即视为你已阅读并同意以下条款。如不同意任何条款，请停止使用。</p>
+
+  <h2>1. 服务描述</h2>
+  <p>本服务提供基于公开 JD 数据的简历生成与优化工具，包括 JD 库检索、RAG 差距分析、经历改写、多岗位定位、多格式导出等功能。本服务为开源软件，可自部署。</p>
+
+  <h2>2. 用户责任</h2>
+  <ul>
+    <li>你提交的简历信息必须真实、合法，且你拥有完整的使用权。</li>
+    <li>不得使用本服务生成虚假简历、伪造工作经历、欺诈招聘方。</li>
+    <li>不得批量爬取、转售本服务提供的 JD 数据。</li>
+    <li>不得对本服务进行压力测试、攻击、反向工程或破坏。</li>
+    <li>不得将本服务用于任何违反中国法律法规的目的。</li>
+  </ul>
+
+  <h2>3. 知识产权</h2>
+  <ul>
+    <li>本服务源代码基于开源协议发布，你可在协议允许范围内使用、修改、分发。</li>
+    <li>你生成的简历内容版权归你所有。</li>
+    <li>JD 库中的职位描述版权归原始招聘平台和发布公司所有，本服务仅做脱敏后的检索引用。</li>
+    <li>JobHunter 品牌名称、Logo、页面设计版权归项目维护者所有。</li>
+  </ul>
+
+  <h2>4. LLM 服务</h2>
+  <ul>
+    <li>本服务通过你配置的 API Key 调用第三方 LLM 服务（Agnes、火山引擎、OpenAI、DeepSeek 等）。</li>
+    <li>LLM 生成内容可能存在错误、偏见或不准确，你应当独立判断并对其使用负责。</li>
+    <li>我们不保证 LLM 服务的可用性、准确性或时效性。</li>
+    <li>LLM 服务商的计费、隐私、合规由你与该服务商直接约定。</li>
+  </ul>
+
+  <h2>5. 数据与隐私</h2>
+  <ul>
+    <li>数据收集和使用详见 <a href="/privacy.html">隐私政策</a>。</li>
+    <li>你需自行承担本地数据的安全备份责任。</li>
+    <li>我们不因系统故障导致的数据丢失承担责任，建议定期导出备份。</li>
+  </ul>
+
+  <h2>6. 服务变更与终止</h2>
+  <ul>
+    <li>我们保留随时修改、暂停、终止服务的权利。</li>
+    <li>重大变更会提前在首页公告。</li>
+    <li>你可随时删除账号停止使用，删除后数据按隐私政策处理。</li>
+  </ul>
+
+  <h2>7. 免责声明</h2>
+  <ul>
+    <li>本服务按"现状"提供，不提供任何明示或默示的担保。</li>
+    <li>不保证生成的简历能通过任何特定公司的筛选或获得面试机会。</li>
+    <li>不对你因使用本服务而产生的任何直接或间接损失（包括但不限于求职失败、机会成本、数据丢失）承担责任。</li>
+    <li>JD 数据来源于公开渠道，我们不对其准确性、完整性、时效性负责。</li>
+  </ul>
+
+  <h2>8. 违规处理</h2>
+  <p>如发现你违反本条款，我们可能采取以下措施：警告、暂停服务、删除账号、追究法律责任。</p>
+
+  <h2>9. 适用法律</h2>
+  <p>本条款受中华人民共和国法律管辖。因使用本服务产生的争议，双方应友好协商解决；协商不成的，提交项目维护者所在地人民法院诉讼解决。</p>
+
+  <h2>10. 条款变更</h2>
+  <p>本条款可能随服务演进更新。重大变更将在首页和登录页提示，继续使用即视为接受更新后的条款。</p>
+
+  <div class="contact-box">
+    <h3>联系我们</h3>
+    <p>如对本条款有疑问，请发送邮件至 <a href="mailto:legal@jobhunter.dev">legal@jobhunter.dev</a>，我们将在 3 个工作日内回复。</p>
+  </div>
+</div>
+
+<footer>
+  © 2026 JobHunter. &nbsp;|&nbsp; <a href="/?page=privacy">隐私政策</a> &nbsp;|&nbsp; <a href="/">返回首页</a>
+</footer>
+
+</body>
+</html>
