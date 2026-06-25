@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JobHunter — 你的全能求职智能体</title>
+<style>
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #0f172a;
+  }
+  a { text-decoration: none; }
+
+  /* ============ HERO ============ */
+  .hero {
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at top, #1e293b 0%, #050507 65%),
+      #050507;
+    color: #fafafa;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0);
+    background-size: 28px 28px;
+    pointer-events: none;
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(16,185,129,0.18) 0%, transparent 70%);
+    top: -200px; right: -150px;
+    filter: blur(40px);
+    pointer-events: none;
+  }
+  .brand {
+    font-size: clamp(4rem, 13vw, 10rem);
+    font-weight: 900;
+    letter-spacing: -0.09em;
+    line-height: 0.9;
+    background: linear-gradient(135deg, #ffffff 0%, #6ee7b7 60%, #34d399 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: rise 0.9s ease-out both;
+    position: relative;
+    z-index: 1;
+  }
+  .slogan {
+    font-size: clamp(1.6rem, 4vw, 3rem);
+    font-weight: 700;
+    color: #ffffff;
+    margin: 1.5rem 0 0.5rem;
+    letter-spacing: -0.02em;
+    animation: rise 0.9s ease-out 0.1s both;
+    position: relative;
+    z-index: 1;
+  }
+  .proof {
+    font-size: 1.1rem;
+    color: #94a3b8;
+    margin: 0.5rem 0 0;
+    animation: rise 0.9s ease-out 0.2s both;
+    position: relative;
+    z-index: 1;
+  }
+  .proof .strong { color: #6ee7b7; font-weight: 600; }
+  .cta {
+    margin-top: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem 2.75rem;
+    background: #10b981;
+    color: #022c22;
+    font-weight: 700;
+    font-size: 1.2rem;
+    border-radius: 999px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 12px 45px rgba(16, 185, 129, 0.45);
+    animation: rise 0.9s ease-out 0.3s both;
+    position: relative;
+    z-index: 1;
+  }
+  .cta:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 55px rgba(16, 185, 129, 0.65);
+  }
+  .cta .arrow { font-size: 1.3rem; line-height: 1; }
+  .scroll-hint {
+    position: absolute;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #64748b;
+    font-size: 0.9rem;
+    animation: bounce 1.8s ease-in-out infinite;
+  }
+
+  /* ============ EXAMPLES ============ */
+  .examples {
+    min-height: 100vh;
+    background: #fafafa;
+    padding: 6rem 2rem;
+  }
+  .examples-inner { max-width: 1200px; margin: 0 auto; }
+  .examples h2 {
+    font-size: clamp(2rem, 4vw, 3rem);
+    font-weight: 800;
+    text-align: center;
+    letter-spacing: -0.03em;
+    margin: 0 0 0.75rem;
+  }
+  .examples .sub {
+    text-align: center;
+    color: #64748b;
+    font-size: 1.05rem;
+    margin: 0 0 4rem;
+  }
+  .case-grid {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr;
+    gap: 1.5rem;
+    align-items: stretch;
+  }
+  @media (max-width: 900px) {
+    .case-grid { grid-template-columns: 1fr; }
+    .arrow-col { transform: rotate(90deg); padding: 1rem 0; }
+  }
+  .arrow-col {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    color: #10b981;
+  }
+  .case-label {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.75rem;
+  }
+  .label-before { background: #fee2e2; color: #991b1b; }
+  .label-after { background: #d1fae5; color: #065f46; }
+
+  /* resume mockup */
+  .resume {
+    background: #ffffff;
+    border-radius: 14px;
+    box-shadow: 0 25px 60px rgba(15, 23, 42, 0.1);
+    padding: 2rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    border: 1px solid #e2e8f0;
+    height: 100%;
+  }
+  .resume.before {
+    background: #f1f5f9;
+    color: #64748b;
+    border-color: #cbd5e1;
+    filter: saturate(0.5);
+  }
+  .resume .name {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #0f172a;
+    letter-spacing: -0.02em;
+  }
+  .resume.before .name { color: #475569; }
+  .resume .role {
+    color: #10b981;
+    font-weight: 700;
+    margin: 0.25rem 0 0.5rem;
+  }
+  .resume.before .role { color: #94a3b8; }
+  .resume .contact {
+    color: #64748b;
+    font-size: 0.78rem;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .resume.before .contact { color: #94a3b8; border-color: #cbd5e1; }
+  .section-title {
+    font-weight: 700;
+    color: #0f172a;
+    margin: 1.1rem 0 0.5rem;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .resume.before .section-title { color: #64748b; }
+  .resume p { margin: 0 0 0.4rem; }
+  .resume .exp { margin-bottom: 0.85rem; }
+  .resume .exp-head {
+    font-weight: 700;
+    color: #0f172a;
+    font-size: 0.92rem;
+  }
+  .resume.before .exp-head { color: #475569; }
+  .resume .exp-meta {
+    color: #94a3b8;
+    font-size: 0.78rem;
+    margin-bottom: 0.25rem;
+  }
+  .resume ul {
+    list-style: none;
+    padding: 0;
+    margin: 0.35rem 0 0;
+  }
+  .resume li {
+    position: relative;
+    padding-left: 1.1rem;
+    margin-bottom: 0.3rem;
+  }
+  .resume li::before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: #10b981;
+    font-weight: 700;
+  }
+  .resume.before li::before { color: #cbd5e1; }
+  .resume .hl {
+    color: #059669;
+    font-weight: 700;
+  }
+  .resume .skills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.35rem;
+  }
+  .skill-tag {
+    padding: 0.2rem 0.6rem;
+    background: #ecfdf5;
+    color: #065f46;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .resume.before .skill-tag {
+    background: #e2e8f0;
+    color: #64748b;
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(22px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translate(-50%, 0); opacity: 0.55; }
+    50% { transform: translate(-50%, 8px); opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <h1 class="brand">JobHunter</h1>
+  <p class="slogan">你的全能求职智能体！</p>
+  <p class="proof">整理全行业 <span class="strong">2w+ 真实 JD 数据</span>，自动分析差距、改写经历、生成定制简历</p>
+  <a href="http://localhost:8501/?auth=1" class="cta">
+    马上开始 <span class="arrow">→</span>
+  </a>
+  <div class="scroll-hint">向下查看简历优化示例 ↓</div>
+</section>
+
+<section class="examples">
+  <div class="examples-inner">
+    <h2>简历修改案例</h2>
+    <p class="sub">把泛泛而谈的经历，改写成目标岗位真正关心的证据。</p>
+
+    <div class="case-grid">
+      <div>
+        <span class="case-label label-before">Before</span>
+        <div class="resume before">
+          <div class="name">张明</div>
+          <div class="role">产品经理</div>
+          <div class="contact">138-xxxx-xxxx &nbsp;|&nbsp; zhangming@email.com</div>
+
+          <div class="section-title">个人陈述</div>
+          <p>负责产品需求分析，参与 AI 工具设计。具备一定的数据分析能力。</p>
+
+          <div class="section-title">工作经历</div>
+          <div class="exp">
+            <div class="exp-head">高级产品经理</div>
+            <div class="exp-meta">ACME 互联网 &nbsp;|&nbsp; 2021 - 2024</div>
+            <ul>
+              <li>负责产品需求分析</li>
+              <li>参与 AI 工具设计</li>
+              <li>与团队协作推进项目</li>
+            </ul>
+          </div>
+
+          <div class="section-title">技能</div>
+          <div class="skills">
+            <span class="skill-tag">Python</span>
+            <span class="skill-tag">SQL</span>
+            <span class="skill-tag">LLM</span>
+            <span class="skill-tag">产品设计</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow-col">→</div>
+
+      <div>
+        <span class="case-label label-after">After</span>
+        <div class="resume">
+          <div class="name">张明</div>
+          <div class="role">AI 产品经理</div>
+          <div class="contact">138-xxxx-xxxx &nbsp;|&nbsp; zhangming@email.com</div>
+
+          <div class="section-title">个人陈述</div>
+          <p>5 年 AI 产品经验，主导 <span class="hl">0→1 大模型问答产品</span>上线，DAU 50w+，基于 RAG 检索召回提升 <span class="hl">35%</span>。</p>
+
+          <div class="section-title">核心能力</div>
+          <ul>
+            <li>RAG 检索链路设计与落地</li>
+            <li>LLM 应用 0→1 产品化</li>
+            <li>数据驱动的质量评估</li>
+          </ul>
+
+          <div class="section-title">工作经历</div>
+          <div class="exp">
+            <div class="exp-head">高级产品经理</div>
+            <div class="exp-meta">ACME 互联网 &nbsp;|&nbsp; 2021 - 2024</div>
+            <ul>
+              <li>主导 AI 搜索产品 <span class="hl">0→1 落地</span>，30 天内完成内测上线</li>
+              <li>设计 RAG 检索链路与多轮 Prompt 编排，召回率从 52% 提升至 <span class="hl">87%</span></li>
+              <li>联合算法团队上线 LLM 质量评估体系，误判率下降 <span class="hl">40%</span></li>
+            </ul>
+          </div>
+
+          <div class="section-title">技能</div>
+          <div class="skills">
+            <span class="skill-tag">RAG 检索设计</span>
+            <span class="skill-tag">LLM 应用落地</span>
+            <span class="skill-tag">产品 0→1</span>
+            <span class="skill-tag">Python</span>
+            <span class="skill-tag">SQL</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

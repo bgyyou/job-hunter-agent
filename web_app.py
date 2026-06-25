@@ -60,15 +60,6 @@ st.markdown(
     """
 <style>
     .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1180px; }
-    .landing-shell { scroll-snap-type: y proximity; scroll-behavior: smooth; }
-    .hero-screen { min-height: calc(100vh - 4rem); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; scroll-snap-align:start; }
-    .brand-title { font-size: clamp(4rem, 11vw, 8.5rem); line-height:.9; font-weight:900; letter-spacing:-0.08em; color:#0f172a; margin-bottom:1.4rem; animation: heroRise .8s ease-out both; }
-    .hero-slogan { font-size: clamp(1.7rem, 3.5vw, 3rem); font-weight:750; color:#111827; margin-bottom:.75rem; animation: heroRise .8s ease-out .08s both; }
-    .hero-proof { font-size:1.05rem; color:#64748b; margin-bottom:2rem; animation: heroRise .8s ease-out .16s both; }
-    .scroll-hint { margin-top:2rem; color:#94a3b8; font-size:.9rem; animation: floatHint 1.8s ease-in-out infinite; }
-    .examples-screen { min-height: calc(100vh - 4rem); display:flex; flex-direction:column; justify-content:center; scroll-snap-align:start; }
-    @keyframes heroRise { from { opacity:0; transform: translateY(18px); } to { opacity:1; transform: translateY(0); } }
-    @keyframes floatHint { 0%,100% { transform: translateY(0); opacity:.55; } 50% { transform: translateY(8px); opacity:1; } }
     .hero-title { font-size: 3.3rem; line-height: 1.05; font-weight: 800; letter-spacing: -0.04em; color: #111827; }
     .hero-subtitle { font-size: 1.15rem; color: #475569; line-height: 1.8; margin: 1rem 0 1.5rem 0; }
     .muted { color: #64748b; }
@@ -329,40 +320,56 @@ def render_top_nav() -> None:
 
 
 def render_landing() -> None:
-    st.markdown('<div class="landing-shell">', unsafe_allow_html=True)
+    import re
+
+    if st.session_state.get("pending_auth_dialog"):
+        st.session_state.pending_auth_dialog = False
+        render_auth_dialog()
+        return
+
+    if st.query_params.get("auth") == "1":
+        st.session_state.pending_auth_dialog = True
+        st.query_params.pop("auth", None)
+        return
+
+    landing_path = PROJECT_ROOT / "landing.html"
+    if not landing_path.exists():
+        st.error("landing.html 缺失，请检查项目根目录。")
+        return
+
+    html = landing_path.read_text(encoding="utf-8")
+    style_match = re.search(r"<style>(.*?)</style>", html, re.DOTALL)
+    body_match = re.search(r"<body>(.*?)</body>", html, re.DOTALL)
+    style = style_match.group(1) if style_match else ""
+    body = body_match.group(1) if body_match else ""
+
     st.markdown(
-        """
-        <section class="hero-screen">
-            <div class="brand-title">JobHunter</div>
-            <div class="hero-slogan">你的全能求职智能体！</div>
-            <div class="hero-proof">整理全行业 2w+ 真实 JD 数据</div>
+        f"""
+        <style>
+        {style}
+        div[data-testid="stSidebar"],
+        div[data-testid="stSidebarCollapsedControl"],
+        header[data-testid="stHeader"],
+        div[data-testid="stToolbar"],
+        div[data-testid="stDecoration"] {{
+            display: none !important;
+        }}
+        section[data-testid="stMain"] {{
+            padding: 0 !important;
+        }}
+        section[data-testid="stMain"] > div {{
+            padding: 0 !important;
+            max-width: 100% !important;
+        }}
+        section[data-testid="stMain"] > div > div {{
+            padding: 0 !important;
+            max-width: 100% !important;
+        }}
+        </style>
+        {body}
         """,
         unsafe_allow_html=True,
     )
-    c1, c2, c3 = st.columns([2, 1, 2])
-    with c2:
-        if st.button("马上开始", type="primary", use_container_width=True):
-            render_auth_dialog()
-    st.markdown('<div class="scroll-hint">向下查看简历优化示例 ↓</div></section>', unsafe_allow_html=True)
-
-    st.markdown('<section class="examples-screen">', unsafe_allow_html=True)
-    st.markdown("### 简历修改案例")
-    st.caption("把泛泛而谈的经历，改写成目标岗位真正关心的证据。")
-    cases = [
-        ("项目经历太泛", "参与多智能体系统开发", "设计 Agent 协作链路与缓存策略，推动求职匹配流程从手工筛选转为自动化推荐。"),
-        ("技能列表堆砌", "Python、SQL、LLM", "将 Python/SQL/LLM 落到 RAG 检索、Prompt 链路、质量评估等岗位相关场景。"),
-        ("成果不够岗位化", "提升效率", "用目标 JD 的高频能力词重写成果：检索召回、用户转化、自动化运营、跨团队落地。"),
-    ]
-    cols = st.columns(3)
-    for col, (title, before, after) in zip(cols, cases):
-        with col:
-            st.markdown('<div class="soft-card">', unsafe_allow_html=True)
-            st.markdown(f"#### {title}")
-            st.markdown(f'<div class="before-card"><b>Before</b><br/>{before}</div>', unsafe_allow_html=True)
-            st.markdown(" ")
-            st.markdown(f'<div class="after-card"><b>After</b><br/>{after}</div>', unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown('</section></div>', unsafe_allow_html=True)
 
 
 def render_mode_select() -> None:
