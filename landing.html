@@ -10,7 +10,8 @@
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-    color: #0f172a;
+    color: #fafafa;
+    background: #0a0a0f;
   }
   a { text-decoration: none; }
 
@@ -18,8 +19,8 @@
   .hero {
     min-height: 100vh;
     background:
-      radial-gradient(ellipse at top, #1e293b 0%, #050507 65%),
-      #050507;
+      radial-gradient(ellipse at top, #1a0b2e 0%, #0a0a0f 65%),
+      #0a0a0f;
     color: #fafafa;
     display: flex;
     flex-direction: column;
@@ -34,7 +35,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0);
+    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.04) 1px, transparent 0);
     background-size: 28px 28px;
     pointer-events: none;
   }
@@ -42,7 +43,7 @@
     content: "";
     position: absolute;
     width: 600px; height: 600px;
-    background: radial-gradient(circle, rgba(16,185,129,0.18) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.28) 0%, transparent 70%);
     top: -200px; right: -150px;
     filter: blur(40px);
     pointer-events: none;
@@ -52,10 +53,10 @@
     font-weight: 900;
     letter-spacing: -0.09em;
     line-height: 0.9;
-    background: linear-gradient(135deg, #ffffff 0%, #6ee7b7 60%, #34d399 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: #ffffff;
+    text-shadow:
+      0 0 30px rgba(139, 92, 246, 0.55),
+      0 0 60px rgba(139, 92, 246, 0.35);
     animation: rise 0.9s ease-out both;
     position: relative;
     z-index: 1;
@@ -72,33 +73,35 @@
   }
   .proof {
     font-size: 1.1rem;
-    color: #94a3b8;
+    color: #a78bfa;
     margin: 0.5rem 0 0;
     animation: rise 0.9s ease-out 0.2s both;
     position: relative;
     z-index: 1;
   }
-  .proof .strong { color: #6ee7b7; font-weight: 600; }
+  .proof .strong { color: #c4b5fd; font-weight: 600; }
   .cta {
     margin-top: 2.75rem;
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
     padding: 1rem 2.75rem;
-    background: #10b981;
-    color: #022c22;
+    background: #8b5cf6;
+    color: #ffffff;
     font-weight: 700;
     font-size: 1.2rem;
     border-radius: 999px;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    box-shadow: 0 12px 45px rgba(16, 185, 129, 0.45);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    box-shadow: 0 12px 45px rgba(139, 92, 246, 0.5);
     animation: rise 0.9s ease-out 0.3s both;
     position: relative;
     z-index: 1;
+    cursor: pointer;
   }
   .cta:hover {
     transform: translateY(-2px);
-    box-shadow: 0 16px 55px rgba(16, 185, 129, 0.65);
+    background: #7c3aed;
+    box-shadow: 0 16px 55px rgba(139, 92, 246, 0.75);
   }
   .cta .arrow { font-size: 1.3rem; line-height: 1; }
   .scroll-hint {
@@ -114,7 +117,7 @@
   /* ============ EXAMPLES ============ */
   .examples {
     min-height: 100vh;
-    background: #fafafa;
+    background: #0a0a0f;
     padding: 6rem 2rem;
   }
   .examples-inner { max-width: 1200px; margin: 0 auto; }
@@ -124,10 +127,11 @@
     text-align: center;
     letter-spacing: -0.03em;
     margin: 0 0 0.75rem;
+    color: #ffffff;
   }
   .examples .sub {
     text-align: center;
-    color: #64748b;
+    color: #a78bfa;
     font-size: 1.05rem;
     margin: 0 0 4rem;
   }
@@ -146,7 +150,7 @@
     align-items: center;
     justify-content: center;
     font-size: 2.5rem;
-    color: #10b981;
+    color: #8b5cf6;
   }
   .case-label {
     display: inline-block;
@@ -158,50 +162,51 @@
     letter-spacing: 0.06em;
     margin-bottom: 0.75rem;
   }
-  .label-before { background: #fee2e2; color: #991b1b; }
-  .label-after { background: #d1fae5; color: #065f46; }
+  .label-before { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
+  .label-after { background: rgba(139, 92, 246, 0.25); color: #c4b5fd; }
 
   /* resume mockup */
   .resume {
-    background: #ffffff;
+    background: #1a0b2e;
+    border: 1px solid rgba(139, 92, 246, 0.3);
     border-radius: 14px;
-    box-shadow: 0 25px 60px rgba(15, 23, 42, 0.1);
+    box-shadow: 0 25px 60px rgba(139, 92, 246, 0.15);
     padding: 2rem;
     font-size: 0.875rem;
     line-height: 1.6;
-    border: 1px solid #e2e8f0;
     height: 100%;
+    color: #e9d5ff;
   }
   .resume.before {
-    background: #f1f5f9;
+    background: #0f0f17;
+    border-color: rgba(100, 116, 139, 0.2);
     color: #64748b;
-    border-color: #cbd5e1;
     filter: saturate(0.5);
   }
   .resume .name {
     font-size: 1.6rem;
     font-weight: 800;
-    color: #0f172a;
+    color: #ffffff;
     letter-spacing: -0.02em;
   }
-  .resume.before .name { color: #475569; }
+  .resume.before .name { color: #94a3b8; }
   .resume .role {
-    color: #10b981;
+    color: #a78bfa;
     font-weight: 700;
     margin: 0.25rem 0 0.5rem;
   }
-  .resume.before .role { color: #94a3b8; }
+  .resume.before .role { color: #64748b; }
   .resume .contact {
-    color: #64748b;
+    color: #94a3b8;
     font-size: 0.78rem;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid rgba(139, 92, 246, 0.25);
     padding-bottom: 0.75rem;
     margin-bottom: 1rem;
   }
-  .resume.before .contact { color: #94a3b8; border-color: #cbd5e1; }
+  .resume.before .contact { color: #475569; border-color: rgba(100, 116, 139, 0.2); }
   .section-title {
     font-weight: 700;
-    color: #0f172a;
+    color: #c4b5fd;
     margin: 1.1rem 0 0.5rem;
     font-size: 0.85rem;
     text-transform: uppercase;
@@ -212,12 +217,12 @@
   .resume .exp { margin-bottom: 0.85rem; }
   .resume .exp-head {
     font-weight: 700;
-    color: #0f172a;
+    color: #ffffff;
     font-size: 0.92rem;
   }
-  .resume.before .exp-head { color: #475569; }
+  .resume.before .exp-head { color: #94a3b8; }
   .resume .exp-meta {
-    color: #94a3b8;
+    color: #64748b;
     font-size: 0.78rem;
     margin-bottom: 0.25rem;
   }
@@ -235,12 +240,12 @@
     content: "•";
     position: absolute;
     left: 0;
-    color: #10b981;
+    color: #8b5cf6;
     font-weight: 700;
   }
-  .resume.before li::before { color: #cbd5e1; }
+  .resume.before li::before { color: #475569; }
   .resume .hl {
-    color: #059669;
+    color: #c4b5fd;
     font-weight: 700;
   }
   .resume .skills {
@@ -251,15 +256,17 @@
   }
   .skill-tag {
     padding: 0.2rem 0.6rem;
-    background: #ecfdf5;
-    color: #065f46;
+    background: rgba(139, 92, 246, 0.2);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.35);
     border-radius: 6px;
     font-size: 0.78rem;
     font-weight: 600;
   }
   .resume.before .skill-tag {
-    background: #e2e8f0;
+    background: rgba(100, 116, 139, 0.15);
     color: #64748b;
+    border-color: rgba(100, 116, 139, 0.2);
   }
 
   @keyframes rise {
@@ -278,7 +285,7 @@
   <h1 class="brand">JobHunter</h1>
   <p class="slogan">你的全能求职智能体！</p>
   <p class="proof">整理全行业 <span class="strong">2w+ 真实 JD 数据</span>，自动分析差距、改写经历、生成定制简历</p>
-  <a href="http://localhost:8501/?auth=1" class="cta">
+  <a href="/?auth=1" class="cta">
     马上开始 <span class="arrow">→</span>
   </a>
   <div class="scroll-hint">向下查看简历优化示例 ↓</div>

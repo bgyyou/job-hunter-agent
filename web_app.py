@@ -343,33 +343,25 @@ def render_landing() -> None:
     style = style_match.group(1) if style_match else ""
     body = body_match.group(1) if body_match else ""
 
-    st.markdown(
-        f"""
-        <style>
-        {style}
-        div[data-testid="stSidebar"],
-        div[data-testid="stSidebarCollapsedControl"],
-        header[data-testid="stHeader"],
-        div[data-testid="stToolbar"],
-        div[data-testid="stDecoration"] {{
-            display: none !important;
-        }}
-        section[data-testid="stMain"] {{
-            padding: 0 !important;
-        }}
-        section[data-testid="stMain"] > div {{
-            padding: 0 !important;
-            max-width: 100% !important;
-        }}
-        section[data-testid="stMain"] > div > div {{
-            padding: 0 !important;
-            max-width: 100% !important;
-        }}
-        </style>
-        {body}
-        """,
-        unsafe_allow_html=True,
-    )
+    hide_chrome = """
+div[data-testid="stSidebar"],
+div[data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"],
+div[data-testid="stToolbar"],
+div[data-testid="stDecoration"] {
+    display: none !important;
+}
+section[data-testid="stMain"] {
+    padding: 0 !important;
+}
+section[data-testid="stMain"] > div,
+section[data-testid="stMain"] > div > div {
+    padding: 0 !important;
+    max-width: 100% !important;
+}
+"""
+
+    st.html("<style>" + style + "\n" + hide_chrome + "</style>" + body)
 
 
 def render_mode_select() -> None:
