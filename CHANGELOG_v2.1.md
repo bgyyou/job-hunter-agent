@@ -1051,3 +1051,43 @@ pytest tests/ -q  # 129 passed (124 + 5 新)
 
 ### 第一性反思
 用户原话："**作为 Agent 应该具备这样的能力** —— 一轮一轮生成，最后汇总。" 这恰恰戳中了 Flow A 之前的核心问题：**LLM 的对话能力很强，但状态机责任不该外包**。section 状态机把"问什么/什么时候算问完/什么时候推进"这三件事拿回到代码层，LLM 只负责具体的提问措辞，整体可控性提升一个量级。
+
+
+---
+
+## [M7 产品化 UI 重构：Landing + 双流程 + JD库] 2026-06-25
+
+### 范围
+把 Streamlit 从调试型 7-tab 工具改成可演示的产品信息架构：首屏 Hero、登录/注册、两条独立核心流程、JD库。LLM/Agent 从用户可见配置变成后台自动初始化。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 产品壳层 | `web_app.py` 改为 route-driven UI：`landing / mode_select / flow_a / flow_b / jd_library` | `web_app.py` |
+| Landing | 新增 Hero Slogan、`马上开始` CTA、CSS before/after 简历修改案例卡片 | `web_app.py` |
+| 登录注册 | 新增本地邮箱/手机号账号服务，密码用 PBKDF2 + salt 存储；预留 `provider/provider_subject` 给微信/短信/邮箱验证码 | `services/auth_service.py`, `data/schema.sql`, `database/migrations/005_users.sql` |
+| 双流程隔离 | 登录后只展示 `从0生成简历` / `修改已有简历` 两个入口，不再把两个流程混在一个页面 | `web_app.py` |
+| Flow A | 复用 section 状态机：选择目标岗位 → 多轮对话 → RAG skeleton → 派生 summary/core_competencies → 生成简历 | `web_app.py`, `agents/resume_flow_a.py` |
+| Flow B | 合并原 Tab1-4：上传简历 → 上传/选择 JD → 匹配分析 → 顶部按钮生成优化简历 / Cover Letter | `web_app.py` |
+| RAG 回归保护 | Flow B 生成优化简历继续传 `reference_chunks` 给 `ResumeOptimizer.optimize()`，避免 LLM 看不见 RAG | `web_app.py`, `tools/generator/resume_optimizer.py` |
+| JD库 | “知识库”改名为 `JD库`，统一读取 SQLite `jds` 表，不再使用旧 JSON KnowledgeBase UI | `services/jd_library_service.py`, `web_app.py` |
+| 历史爬取 JD | 将 `jobsdb_batch / liepin_batch / crawler / jd_crawler / smart_collector` 等默认用户 JD 标记为 `is_public=1`，所有用户可见为公共种子库 | `services/jd_library_service.py` |
+| 数据归属 | 用户上传 JD / 简历 / match / optimization 写入当前 `auth_user_id`；PDF JD 入库补 `user_id` | `web_app.py`, `services/pdf_ingestion_service.py` |
+| 删除 UI | 移除用户可见的 LLM API Key、初始化 Agent、测试 LLM、旧知识库切换、投递历史页面；后端表保留 | `web_app.py` |
+| 测试 | 新增 AuthService、JDLibraryService、用户可见 JD 库集成测试 | `tests/unit/test_auth_service.py`, `tests/unit/test_jd_library_service.py`, `tests/integration/test_user_scoped_jd_library.py` |
+
+### 验证
+```bash
+python -m pytest tests/ -q  # 136 passed
+python -m py_compile web_app.py services/auth_service.py services/jd_library_service.py services/pdf_ingestion_service.py
+python -m streamlit run web_app.py --server.headless true --server.port 8502  # HTTP smoke 200
+```
+
+### 显式不做
+- 不接真实微信开放平台回调。
+- 不接短信验证码服务。
+- 不接邮件验证码服务。
+- 不删除爬虫代码，只从产品 UI 隐藏实验性入口。
+- 不删除 `match_history` 表，只删除投递历史 UI。
+- 不复制历史 JD/chunks 到每个用户，采用公共种子库。

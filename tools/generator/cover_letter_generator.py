@@ -72,7 +72,12 @@ class CoverLetterGenerator:
 
         # 格式化技能
         skills = resume_data.get("skills", {})
-        skills_text = ", ".join(skills.get("technical", []))
+        if isinstance(skills, dict):
+            skills_text = ", ".join(skills.get("technical", []))
+        elif isinstance(skills, list):
+            skills_text = ", ".join(str(skill) for skill in skills)
+        else:
+            skills_text = str(skills or "")
 
         # 格式化职位信息
         job_title = job_profile.get("title", "")

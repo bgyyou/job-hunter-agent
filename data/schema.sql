@@ -22,6 +22,31 @@ INSERT OR IGNORE INTO schema_version (id, version, description)
 VALUES (1, 1, 'Initial schema - unified job hunter database');
 
 -- ============================================================
+-- Table: users
+-- Product auth identities. First provider is local email/phone;
+-- provider/provider_subject leave room for WeChat/SMS/email adapters.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE,
+    phone TEXT UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'local',
+    provider_subject TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT,
+    CHECK (email IS NOT NULL OR phone IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
+CREATE INDEX IF NOT EXISTS idx_users_provider_subject ON users(provider, provider_subject);
+CREATE INDEX IF NOT EXISTS idx_users_deleted ON users(deleted_at);
+
+-- ============================================================
 -- Table: resumes
 -- Persistent resume profiles. One user may have multiple versions.
 -- ============================================================

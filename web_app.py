@@ -1,1651 +1,377 @@
 #!/usr/bin/env python3
-"""
-Job Hunter - 网页版 (Streamlit)
-更直观、更漂亮地展示简历分析结果！
-"""
+# -*- coding: utf-8 -*-
+"""Job Hunter product UI (Streamlit)."""
+from __future__ import annotations
+
+import asyncio
 import sys
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
-import json
-import asyncio
-import re
+from dotenv import load_dotenv
 from loguru import logger
 
-from dotenv import load_dotenv
-import os
 load_dotenv()
 
-# v2.1 P0.5: 首次运行配置向导（无 key 时阻断在 set_page_config 之前）
-from setup_wizard import run_if_needed as _run_setup_wizard
-_run_setup_wizard()
-
-# v2.1 M1.5: 启用 loguru 滚动日志（20MB / 7 天）
+from agents.coordinator import CoordinatorAgent
+from agents.resume_flow_a import ResumeFlowA, SECTIONS
 from config.settings import settings
-settings.setup_logging()
-
+from database.backends.sqlite_backend import SqliteBackend
+from database.classifier import Classifier
+from services.auth_service import AuthError, AuthService
+from services.jd_library_service import (
+    JdLibraryError,
+    delete_user_jd,
+    ensure_public_seed_jds,
+    get_visible_jd,
+    insert_user_jd,
+    list_sources,
+    list_visible_jds,
+)
+from services.pdf_ingestion_service import PdfIngestionService
+from tools import taxonomy
+from tools.generator.cover_letter_generator import CoverLetterGenerator
+from tools.generator.resume_generator import ResumeGenerator
+from tools.generator.resume_optimizer import ResumeOptimizer
+from tools.jd_indexer import embed_and_store_jd_chunks
 from tools.llm import OpenAICompatibleClient
 from tools.resume_parser import ResumeParser
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced
 from tools.scraper.scraper_manager import ScraperManager
-from tools.generator.resume_generator import ResumeGenerator
-from tools.generator.resume_optimizer import ResumeOptimizer
-from tools.generator.cover_letter_generator import CoverLetterGenerator
-from tools.knowledge_base import KnowledgeBase
-from database.backends.sqlite_backend import SqliteBackend
-from database.classifier import Classifier
-from database.factory import get_db
-from config.settings import settings
-from agents.coordinator import CoordinatorAgent
-from core.cache import Cache
 
-# 页面配置
+settings.setup_logging()
+
 st.set_page_config(
-    page_title="Job Hunter - 智能求职助手",
+    page_title="JobHunter",
     page_icon="💼",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed",
 )
 
-# 自定义样式
-st.markdown("""
+st.markdown(
+    """
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1e3a8a;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        color: #64748b;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .section-card {
-        background-color: #f8fafc;
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-        border: 1px solid #e2e8f0;
-    }
-    .match-high {
-        color: #059669;
-        font-weight: bold;
-        font-size: 1.5rem;
-    }
-    .match-medium {
-        color: #d97706;
-        font-weight: bold;
-        font-size: 1.5rem;
-    }
-    .match-low {
-        color: #dc2626;
-        font-weight: bold;
-        font-size: 1.5rem;
-    }
-    .skill-tag {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        margin: 0.25rem;
-        border-radius: 9999px;
-        font-size: 0.9rem;
-    }
-    .skill-match {
-        background-color: #dcfce7;
-        color: #166534;
-    }
-    .skill-gap {
-        background-color: #fee2e2;
-        color: #991b1b;
-    }
-    .skill-neutral {
-        background-color: #e0e7ff;
-        color: #3730a3;
-    }
-    .divider {
-        margin: 2rem 0;
-        border-bottom: 2px solid #e2e8f0;
-    }
+    .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1180px; }
+    .hero-title { font-size: 3.3rem; line-height: 1.05; font-weight: 800; letter-spacing: -0.04em; color: #111827; }
+    .hero-subtitle { font-size: 1.15rem; color: #475569; line-height: 1.8; margin: 1rem 0 1.5rem 0; }
+    .muted { color: #64748b; }
+    .product-card { border: 1px solid #e5e7eb; border-radius: 22px; padding: 1.4rem; background: #ffffff; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06); }
+    .soft-card { border: 1px solid #e2e8f0; border-radius: 18px; padding: 1.25rem; background: #f8fafc; }
+    .choice-card { border: 1px solid #e5e7eb; border-radius: 24px; padding: 1.6rem; background: #ffffff; min-height: 260px; }
+    .before-card { border-left: 4px solid #ef4444; padding: 1rem; background: #fef2f2; border-radius: 14px; color: #7f1d1d; }
+    .after-card { border-left: 4px solid #10b981; padding: 1rem; background: #ecfdf5; border-radius: 14px; color: #064e3b; }
+    .step-pill { display:inline-block; padding: .35rem .7rem; border-radius: 999px; background:#eef2ff; color:#3730a3; font-size:.85rem; font-weight:600; margin-right:.4rem; }
+    .public-badge { display:inline-block; padding:.2rem .55rem; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:.78rem; }
+    .private-badge { display:inline-block; padding:.2rem .55rem; border-radius:999px; background:#ecfdf5; color:#047857; font-size:.78rem; }
+    div[data-testid="stSidebar"] { display: none; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# 初始化 Session State
-if 'agent' not in st.session_state:
-    st.session_state.agent = None
-if 'resume_data' not in st.session_state:
-    st.session_state.resume_data = None
-if 'resume_id' not in st.session_state:
-    st.session_state.resume_id = None
-if 'jd_result' not in st.session_state:
-    st.session_state.jd_result = None
-if 'jd_id' not in st.session_state:
-    st.session_state.jd_id = None
-if 'match_result' not in st.session_state:
-    st.session_state.match_result = None
-if 'last_match_id' not in st.session_state:
-    st.session_state.last_match_id = None
-if 'last_opt_ids' not in st.session_state:
-    st.session_state.last_opt_ids = []  # v2.1 M2: 最近一次生成建议的 opt_id 列表
-if 'optimized_resume' not in st.session_state:
-    st.session_state.optimized_resume = None
-if 'optimized_resume_html' not in st.session_state:
-    st.session_state.optimized_resume_html = None
-if 'cover_letter' not in st.session_state:
-    st.session_state.cover_letter = None
-if 'kb' not in st.session_state:
-    st.session_state.kb = KnowledgeBase()
-if 'current_db' not in st.session_state:
-    st.session_state.current_db = "AI产品经理"
-    st.session_state.kb.switch_database("AI产品经理")
-if 'auto_save' not in st.session_state:
-    st.session_state.auto_save = True
-if 'scraper_manager' not in st.session_state:
-    st.session_state.scraper_manager = None
-if 'db' not in st.session_state:
-    st.session_state.db = SqliteBackend(db_path=settings.db_path)
 
-# P2-3 Flow A 状态
-if 'fa_industry' not in st.session_state:
-    st.session_state.fa_industry = None
-if 'fa_function' not in st.session_state:
-    st.session_state.fa_function = None
-if 'fa_position' not in st.session_state:
-    st.session_state.fa_position = None
-if 'fa_messages' not in st.session_state:
-    st.session_state.fa_messages = []  # [{role, content}]
-if 'fa_chat_done' not in st.session_state:
+# ---------------------------------------------------------------------------
+# Session / services
+# ---------------------------------------------------------------------------
+
+
+def run_async(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def init_session_state() -> None:
+    defaults = {
+        "app_route": "landing",
+        "auth_user": None,
+        "auth_user_id": None,
+        "services_ready": False,
+        "llm_init_error": None,
+        "llm_client": None,
+        "agent": None,
+        "scraper_manager": None,
+        "db": None,
+        "resume_data": None,
+        "resume_id": None,
+        "jd_result": None,
+        "jd_id": None,
+        "match_result": None,
+        "last_match_id": None,
+        "last_opt_ids": [],
+        "last_match_score": None,
+        "optimized_resume": None,
+        "optimized_resume_html": None,
+        "cover_letter": None,
+        "flow_b_step": "resume",
+        "flow_b_company_name": "",
+        "flow_b_jd_input_type": "粘贴 JD",
+        "fa_industry": None,
+        "fa_function": None,
+        "fa_position": None,
+        "fa_messages": [],
+        "fa_chat_done": False,
+        "fa_resume_data": None,
+        "fa_resume_md": None,
+        "fa_resume_html": None,
+        "fa_skeleton": None,
+        "fa_section_index": 0,
+        "fa_section_data": {},
+        "fa_section_messages": {},
+        "fa_section_done": [],
+        "fa_section_skipped": [],
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def init_app_services() -> None:
+    if st.session_state.db is None:
+        st.session_state.db = SqliteBackend(db_path=settings.db_path)
+        try:
+            ensure_public_seed_jds(st.session_state.db)
+        except Exception as exc:
+            logger.warning(f"public JD seed setup failed: {exc}")
+
+    if st.session_state.services_ready or st.session_state.llm_init_error:
+        return
+
+    if not settings.llm_api_key or not settings.llm_base_url or not settings.llm_model:
+        st.session_state.services_ready = False
+        st.session_state.llm_init_error = "AI 服务未配置，请先在环境变量中配置 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL。"
+        return
+
+    try:
+        llm_client = OpenAICompatibleClient(
+            api_key=settings.llm_api_key,
+            api_url=settings.llm_base_url.rstrip("/"),
+            model=settings.llm_model,
+            is_coding_api=False,
+            use_anthropic_format=settings.llm_use_anthropic_format,
+        )
+        st.session_state.llm_client = llm_client
+        st.session_state.agent = CoordinatorAgent(llm_client=llm_client)
+        st.session_state.scraper_manager = ScraperManager(llm_client=llm_client)
+        st.session_state.services_ready = True
+        st.session_state.llm_init_error = None
+    except Exception as exc:
+        st.session_state.services_ready = False
+        st.session_state.llm_init_error = f"AI 服务初始化失败：{exc}"
+
+
+def current_user_label() -> str:
+    user = st.session_state.auth_user or {}
+    return user.get("name") or user.get("email") or user.get("phone") or "用户"
+
+
+def require_services() -> bool:
+    if st.session_state.services_ready:
+        return True
+    st.warning(st.session_state.llm_init_error or "AI 服务暂不可用。")
+    return False
+
+
+def reset_flow_a_state() -> None:
+    for key in [
+        "fa_industry", "fa_function", "fa_position", "fa_resume_data",
+        "fa_resume_md", "fa_resume_html", "fa_skeleton",
+    ]:
+        st.session_state[key] = None
+    st.session_state.fa_messages = []
     st.session_state.fa_chat_done = False
-if 'fa_resume_data' not in st.session_state:
-    st.session_state.fa_resume_data = None
-if 'fa_resume_md' not in st.session_state:
-    st.session_state.fa_resume_md = None
-if 'fa_resume_html' not in st.session_state:
-    st.session_state.fa_resume_html = None
-if 'fa_skeleton' not in st.session_state:
-    st.session_state.fa_skeleton = None
-
-# Flow A section 状态机
-if 'fa_section_index' not in st.session_state:
     st.session_state.fa_section_index = 0
-if 'fa_section_data' not in st.session_state:
-    st.session_state.fa_section_data = {}  # {section_key: extracted_value}
-if 'fa_section_messages' not in st.session_state:
-    st.session_state.fa_section_messages = {}  # {section_key: [msg]}
-if 'fa_section_done' not in st.session_state:
-    st.session_state.fa_section_done = []  # [section_key]
-if 'fa_section_skipped' not in st.session_state:
-    st.session_state.fa_section_skipped = []  # [section_key]
+    st.session_state.fa_section_data = {}
+    st.session_state.fa_section_messages = {}
+    st.session_state.fa_section_done = []
+    st.session_state.fa_section_skipped = []
 
-# 侧边栏
-with st.sidebar:
-    st.markdown("## 💼 Job Hunter")
-    st.markdown("### 智能求职助手")
-    st.divider()
 
-    st.markdown("### 🔧 设置")
+def reset_flow_b_state() -> None:
+    for key in [
+        "resume_data", "resume_id", "jd_result", "jd_id", "match_result",
+        "last_match_id", "last_match_score", "optimized_resume",
+        "optimized_resume_html", "cover_letter",
+    ]:
+        st.session_state[key] = None
+    st.session_state.last_opt_ids = []
+    st.session_state.flow_b_step = "resume"
 
-    api_key = st.text_input("LLM API Key", type="password", value=os.getenv("LLM_API_KEY", ""))
-    api_url = st.text_input("API Base URL", value=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1"))
-    model = st.text_input("模型", value=os.getenv("LLM_MODEL", "agnes-2.0-flash"))
-    use_anthropic_format = st.checkbox("使用 Anthropic 格式", value=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("初始化 Agent", type="primary"):
+# ---------------------------------------------------------------------------
+# Auth UI
+# ---------------------------------------------------------------------------
+
+
+@st.dialog("登录 / 注册")
+def render_auth_dialog() -> None:
+    auth = AuthService(st.session_state.db)
+    login_tab, register_tab = st.tabs(["登录", "注册"])
+
+    with login_tab:
+        with st.form("login_form"):
+            identifier = st.text_input("邮箱或手机号")
+            password = st.text_input("密码", type="password")
+            submitted = st.form_submit_button("登录", type="primary")
+        if submitted:
             try:
-                with st.spinner("正在初始化 Agent..."):
-                    llm_client = OpenAICompatibleClient(
-                        api_key=api_key,
-                        api_url=api_url.rstrip('/'),
-                        model=model,
-                        is_coding_api=False,
-                        use_anthropic_format=True
-                    )
-                    st.session_state.agent = CoordinatorAgent(llm_client=llm_client)
-                    # 给知识库也设置LLM客户端
-                    st.session_state.kb.set_llm_client(llm_client)
-                    # 初始化爬虫管理器
-                    st.session_state.scraper_manager = ScraperManager(llm_client=llm_client)
-                    st.success("✅ Agent 初始化成功！")
-            except Exception as e:
-                st.error(f"初始化失败: {e}")
-
-    with col2:
-        if st.button("测试 LLM 连接"):
-            if not api_key:
-                st.error("请先输入 API Key！")
-            else:
-                try:
-                    with st.spinner("正在测试 LLM 连接..."):
-                        llm_client = OpenAICompatibleClient(
-                            api_key=api_key,
-                            api_url=api_url.rstrip('/'),
-                            model=model,
-                            is_coding_api=False,
-                            use_anthropic_format=True
-                        )
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        from tools.llm import LLMMessage
-                        messages = [LLMMessage(role="user", content="你好，请回复'连接成功'")]
-
-                        # 重置统计
-                        llm_client.reset_stats()
-
-                        st.info(f"🔗 正在调用 API: {api_url}")
-                        st.info(f"🤖 模型: {model}")
-                        st.info(f"📝 格式: {'Anthropic' if use_anthropic_format else 'OpenAI'}")
-
-                        response = loop.run_until_complete(llm_client.analyze(messages=messages, max_tokens=50))
-                        loop.close()
-
-                        st.success("✅ LLM 真实被调用！")
-                        st.markdown(f"**响应内容**: {response.content[:200]}")
-
-                        # 显示统计信息
-                        stats = llm_client.get_stats()
-                        st.info(f"📊 调用次数: {stats.get('total_calls', 0)}")
-                        st.info(f"🎯 使用 Token: {stats.get('total_tokens', 0)}")
-                        st.info(f"🤖 模型返回: {response.model}")
-
-                except Exception as e:
-                    st.error(f"❌ 连接失败: {e}")
-                    import traceback
-                    st.error(traceback.format_exc())
-
-    st.divider()
-    st.markdown("### 📚 知识库设置")
-
-    # 数据库选择
-    db_list = st.session_state.kb.list_databases()
-    selected_db = st.selectbox(
-        "选择数据库",
-        db_list,
-        index=db_list.index(st.session_state.current_db) if st.session_state.current_db in db_list else 0
-    )
-    if selected_db != st.session_state.current_db:
-        st.session_state.current_db = selected_db
-        st.session_state.kb.switch_database(selected_db)
-
-    # 新数据库创建
-    new_db_name = st.text_input("创建新数据库", placeholder="输入数据库名称...")
-    if st.button("创建新库") and new_db_name:
-        st.session_state.kb.create_database(new_db_name)
-        st.session_state.current_db = new_db_name
-        st.session_state.kb.switch_database(new_db_name)
-        st.success(f"已创建并切换到: {new_db_name}")
-
-    # 自动保存开关
-    st.session_state.auto_save = st.checkbox(
-        "自动保存到知识库",
-        value=st.session_state.auto_save,
-        help="分析JD后自动保存到当前数据库"
-    )
-
-    st.divider()
-    st.markdown("### 📊 当前状态")
-    if st.session_state.resume_data:
-        st.success("✅ 简历已解析")
-    if st.session_state.jd_result:
-        st.success("✅ JD 已分析")
-    if st.session_state.match_result:
-        st.success("✅ 匹配度已分析")
-
-    st.divider()
-    if st.button("🔄 重置所有"):
-        st.session_state.resume_data = None
-        st.session_state.jd_result = None
-        st.session_state.match_result = None
-        st.session_state.optimized_resume = None
-        st.session_state.cover_letter = None
-        st.rerun()
-
-# 主页面
-st.markdown('<div class="main-header">💼 Job Hunter</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">智能求职助手 - 让找工作更简单</div>', unsafe_allow_html=True)
-
-# 标签页（v2.1 M2: 新增 📈 投递历史；P2-3: 新增 ✨ 从零生成）
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📄 上传简历",
-    "🎯 分析职位",
-    "📊 匹配度分析",
-    "🚀 生成优化内容",
-    "📚 知识库",
-    "📈 投递历史",
-    "✨ 从零生成简历",
-])
-
-# =====================================================
-# 标签页 1: 上传简历
-# =====================================================
-with tab1:
-    st.header("上传简历")
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        uploaded_file = st.file_uploader("选择简历文件", type=["pdf", "docx", "md", "txt"])
-
-        if uploaded_file is not None:
-            # 保存临时文件
-            temp_path = PROJECT_ROOT / "data" / "temp" / uploaded_file.name
-            temp_path.parent.mkdir(exist_ok=True, parents=True)
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getvalue())
-
-            st.info(f"✅ 文件已上传: {uploaded_file.name}")
-
-            if st.button("解析简历", type="primary"):
-                if not st.session_state.agent:
-                    st.error("请先在侧边栏初始化 Agent！")
-                else:
-                    with st.spinner("正在解析简历..."):
-                        try:
-                            # v2.1 M2.5: 优先用 LLM 抽取，失败自动降级到正则
-                            llm_client = st.session_state.agent.llm_client if st.session_state.agent else None
-                            parser = ResumeParser(llm_client=llm_client)
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            resume_data = loop.run_until_complete(parser.parse(str(temp_path)))
-                            loop.close()
-
-                            st.session_state.resume_data = resume_data
-
-                            # 持久化到数据库（v2.1 M2：保留 resume_id 供后续 match/optimization 关联）
-                            db = st.session_state.db
-                            resume_id = db.insert_resume(resume_data)
-                            st.session_state.resume_id = resume_id
-                            st.success(f"✅ 简历解析成功并已保存！(ID: {resume_id[:8]})")
-                        except Exception as e:
-                            st.error(f"解析失败: {e}")
-
-    with col2:
-        if st.session_state.resume_data:
-            st.markdown("### 简历解析结果")
-
-            rd = st.session_state.resume_data
-
-            # 基本信息
-            with st.expander("👤 基本信息", expanded=True):
-                header = rd.get("header", {})
-                st.write(f"**姓名**: {header.get('name', 'N/A')}")
-                st.write(f"**邮箱**: {header.get('contact', {}).get('email', 'N/A')}")
-                st.write(f"**电话**: {header.get('contact', {}).get('phone', 'N/A')}")
-                st.write(f"**个人简介**: {header.get('summary', 'N/A')}")
-
-            # 技能
-            with st.expander("🛠️ 技能列表", expanded=True):
-                skills = rd.get("skills", {})
-                tech_skills = skills.get("technical", [])
-                if tech_skills:
-                    for skill in tech_skills:
-                        st.markdown(f'<span class="skill-tag skill-neutral">{skill}</span>', unsafe_allow_html=True)
-
-            # 工作经历
-            with st.expander("💼 工作经历", expanded=True):
-                exp = rd.get("experience", [])
-                for job in exp:
-                    st.markdown(f"**{job.get('company', 'N/A')}** - {job.get('title', 'N/A')}")
-                    st.write(job.get('description', ''))
-                    st.divider()
-
-            # 教育经历
-            with st.expander("🎓 教育经历", expanded=False):
-                edu = rd.get("education", [])
-                for school in edu:
-                    st.markdown(f"**{school.get('school', 'N/A')}**")
-                    st.write(f"{school.get('degree', '')} - {school.get('major', '')}")
-                    st.divider()
-
-# =====================================================
-# 标签页 2: 分析职位
-# =====================================================
-with tab2:
-    st.header("分析职位描述")
-
-    input_type = st.radio("选择输入方式", ["直接粘贴 JD", "批量粘贴 JD", "上传 PDF 文件", "输入职位 URL"])
-
-    if input_type == "直接粘贴 JD":
-        jd_text = st.text_area("职位描述 (JD)", height=300, placeholder="请复制粘贴完整的职位描述...")
-
-        if st.button("分析 JD", type="primary") and jd_text and st.session_state.agent:
-            with st.spinner("正在分析职位描述..."):
-                try:
-                    llm_client = st.session_state.agent.llm_client
-                    analyzer = JDAnalyzerEnhanced(llm_client=llm_client)
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    jd_result = loop.run_until_complete(analyzer.parse_from_text(jd_text))
-
-                    # 自动分类JD
-                    classification = loop.run_until_complete(st.session_state.kb.classify_jd(jd_result))
-                    loop.close()
-
-                    st.session_state.jd_result = jd_result
-
-                    # 持久化到数据库（含自动分类）
-                    db = st.session_state.db
-                    jd_for_db = {
-                        "url": jd_result.get("_url", f"pasted://{len(jd_text)}chars"),
-                        "title": jd_result.get("title", ""),
-                        "company": jd_result.get("company", ""),
-                        "location": jd_result.get("location", ""),
-                        "salary_str": jd_result.get("salary_range"),
-                        "raw_text": jd_text,
-                        "source": "manual",
-                        "parsed_sections": {
-                            "requirements": jd_result.get("core_requirements", []),
-                            "preferred": jd_result.get("preferred_requirements", []),
-                            "skills": jd_result.get("keywords", []),
-                            "implicit": jd_result.get("implicit_requirements", ""),
-                        },
-                        "tags": list(jd_result.get("keywords", [])),
-                    }
-                    from database.classifier import Classifier
-                    clf = Classifier()
-                    tags = clf.classify(jd_for_db["title"], jd_text)
-                    jd_for_db.update(tags)
-                    jd_id = db.insert_jd(jd_for_db)
-                    st.session_state.jd_id = jd_id  # v2.1 M2: 供 Tab3 写 match_history
-
-                    # v2.1 M3.4: JD 入库后语义切分 + 向量化
-                    try:
-                        from tools.jd_indexer import embed_and_store_jd_chunks
-                        n_chunks = embed_and_store_jd_chunks(db, jd_id, jd_text)
-                        if n_chunks:
-                            st.caption(f"🧩 已切分 {n_chunks} 个语义 chunk 并向量化")
-                    except Exception as _ex:
-                        st.caption(f"⚠️ 向量化失败：{_ex}")
-
-                    # 显示分类结果
-                    st.info(f"📋 自动分类: **{classification['category']}** (置信度: {int(classification['confidence']*100)}%)")
-                    if classification['reasoning']:
-                        st.caption(f"理由: {classification['reasoning']}")
-
-                    # 自动切换数据库并保存
-                    if st.session_state.auto_save:
-                        kb = st.session_state.kb
-                        kb.switch_database(classification['category'])
-                        st.session_state.current_db = classification['category']
-
-                        jd_id = kb.add_jd({
-                            "raw_text": jd_text,
-                            "parsed_data": jd_result,
-                            "source": "manual"
-                        })
-                        st.success(f"✅ JD 分析成功！已保存到「{classification['category']}」(ID: {jd_id})")
-                    else:
-                        st.success("✅ JD 分析成功！")
-                except Exception as e:
-                    st.error(f"分析失败: {e}")
-
-    elif input_type == "批量粘贴 JD":
-        # v2.1 M6.A.2: 批量预览/确认
-        st.markdown(
-            "一次粘贴多条 JD，**用 `---` 或连续空行分隔**。"
-            "下一行会解析出列表预览，可勾选后批量保存（自动跑分类 + 切分 + 向量化）。"
-        )
-        batch_text = st.text_area(
-            "批量 JD（多条）", height=300,
-            placeholder="JD 1...\n\n---\n\nJD 2...\n\n---\n\nJD 3...",
-            key="batch_jd_input",
-        )
-
-        # 切分：先按 --- 分，再按 2+ 连续空行兜底
-        def _split_batch(raw: str):
-            if not raw or not raw.strip():
-                return []
-            parts = [p.strip() for p in re.split(r"^\s*---+\s*$", raw, flags=re.MULTILINE) if p.strip()]
-            if len(parts) <= 1:
-                parts = [p.strip() for p in re.split(r"\n\s*\n\s*\n+", raw) if p.strip()]
-            return parts
-
-        if st.button("预览解析", key="batch_preview_btn") and batch_text:
-            pieces = _split_batch(batch_text)
-            if not pieces:
-                st.warning("未检测到有效 JD，请确认用 `---` 或两空行分隔。")
-            else:
-                st.session_state["batch_pieces"] = pieces
-                st.success(f"已切出 {len(pieces)} 条 JD，下方可勾选保存。")
-
-        pieces = st.session_state.get("batch_pieces") or []
-        if pieces:
-            st.markdown(f"### 预览（{len(pieces)} 条）")
-            cols = st.columns([1, 6])
-            with cols[0]:
-                if st.button("全选", key="batch_sel_all"):
-                    st.session_state["batch_sel"] = list(range(len(pieces)))
-                if st.button("反选", key="batch_sel_inv"):
-                    cur = set(st.session_state.get("batch_sel", []))
-                    st.session_state["batch_sel"] = [i for i in range(len(pieces)) if i not in cur]
-            selected = []
-            for i, p in enumerate(pieces):
-                preview = p[:120].replace("\n", " ")
-                if len(p) > 120:
-                    preview += "…"
-                with cols[1]:
-                    chk = st.checkbox(f"#{i+1}  {preview}", key=f"batch_chk_{i}")
-                if chk:
-                    selected.append(i)
-            st.session_state["batch_sel"] = selected
-
-            if st.button("💾 批量保存", type="primary", key="batch_save_btn"):
-                if not selected:
-                    st.warning("请至少勾选一条 JD。")
-                else:
-                    db = st.session_state.db
-                    llm_client = st.session_state.agent.llm_client if st.session_state.agent else None
-                    analyzer = JDAnalyzerEnhanced(llm_client=llm_client) if llm_client else None
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    from database.classifier import Classifier as _Bclf
-                    bclf = _Bclf()
-                    ok, fail = 0, 0
-                    progress = st.progress(0.0)
-                    for idx, i in enumerate(selected):
-                        jd_text_i = pieces[i]
-                        try:
-                            jd_for_db = {
-                                "url": f"pasted://batch/{i}/{len(jd_text_i)}chars",
-                                "title": "",
-                                "company": "",
-                                "raw_text": jd_text_i,
-                                "source": "manual_batch",
-                            }
-                            if analyzer is not None:
-                                try:
-                                    jd_result = loop.run_until_complete(analyzer.parse_from_text(jd_text_i))
-                                    jd_for_db.update({
-                                        "title": jd_result.get("title", ""),
-                                        "company": jd_result.get("company", ""),
-                                        "location": jd_result.get("location", ""),
-                                        "salary_str": jd_result.get("salary_range"),
-                                        "parsed_sections": {
-                                            "requirements": jd_result.get("core_requirements", []),
-                                            "preferred": jd_result.get("preferred_requirements", []),
-                                            "skills": jd_result.get("keywords", []),
-                                            "implicit": jd_result.get("implicit_requirements", ""),
-                                        },
-                                        "tags": list(jd_result.get("keywords", [])),
-                                    })
-                                except Exception as _ae:
-                                    st.caption(f"⚠️ #{i+1} LLM 解析失败，仅按 raw_text 入库：{_ae}")
-                            tags = bclf.classify(jd_for_db["title"], jd_text_i)
-                            jd_for_db.update(tags)
-                            jid = db.insert_jd(jd_for_db)
-                            try:
-                                from tools.jd_indexer import embed_and_store_jd_chunks
-                                embed_and_store_jd_chunks(db, jid, jd_text_i)
-                            except Exception as _ie:
-                                st.caption(f"⚠️ #{i+1} 向量化失败：{_ie}")
-                            ok += 1
-                        except Exception as e:
-                            fail += 1
-                            st.caption(f"❌ #{i+1} 保存失败：{e}")
-                        progress.progress((idx + 1) / len(selected))
-                    loop.close()
-                    st.success(f"批量保存完成：✅ {ok} 成功 / ❌ {fail} 失败")
-                    st.caption(f"DB 当前 JD 总数：{len(db.list_jds())}")
-
-    elif input_type == "上传 PDF 文件":
-        st.markdown("上传 JD 相关的 PDF 文件（简历、职位描述等），系统将自动解析、分块并向量化入库。")
-
-        uploaded_pdf = st.file_uploader("选择 PDF 文件", type=["pdf"])
-
-        if uploaded_pdf is not None:
-            pdf_path = PROJECT_ROOT / "data" / "uploads" / uploaded_pdf.name
-            pdf_path.parent.mkdir(exist_ok=True, parents=True)
-            with open(pdf_path, "wb") as f:
-                f.write(uploaded_pdf.getvalue())
-            st.info(f"✅ 文件已上传: {uploaded_pdf.name}")
-
-            if st.button("解析并入库 PDF", type="primary"):
-                with st.spinner("正在解析 PDF 并入库..."):
-                    try:
-                        db = get_db()
-                        # 可选传入 classifier
-                        clf = Classifier()
-                        from services.pdf_ingestion_service import PdfIngestionService
-                        jd_id = PdfIngestionService(db=db, classifier=clf).ingest(str(pdf_path))
-
-                        # 获取 chunk 数量
-                        chunks = db.get_chunks_by_jd(jd_id)
-                        chunk_count = len(chunks)
-
-                        st.success(f"✅ PDF 入库成功！")
-                        st.info(f"JD ID: `{jd_id}` | 解析出 {chunk_count} 个知识块")
-
-                        if chunk_count > 0:
-                            st.caption("已自动完成语义分块 + 上下文生成 + 向量化存储。")
-
-                    except Exception as e:
-                        st.error(f"PDF 解析入库失败: {e}")
-                        import traceback
-                        st.error(traceback.format_exc())
-
-    else:
-        jd_url = st.text_input("职位 URL", placeholder="https://www.zhipin.com/job_detail/...")
-
-        if st.button("从 URL 分析 JD", type="primary") and jd_url and st.session_state.agent:
-            with st.spinner("正在从 URL 分析 JD..."):
-                try:
-                    llm_client = st.session_state.agent.llm_client
-                    analyzer = JDAnalyzerEnhanced(llm_client=llm_client)
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    jd_result = loop.run_until_complete(analyzer.parse_from_url(jd_url))
-
-                    # 自动分类JD
-                    classification = loop.run_until_complete(st.session_state.kb.classify_jd(jd_result))
-                    loop.close()
-
-                    st.session_state.jd_result = jd_result
-
-                    # v2.1 M2: 同步落到 jobhunter_v2.db，供 Tab3 写 match_history
-                    db = st.session_state.db
-                    jd_for_db = {
-                        "url": jd_url,
-                        "title": jd_result.get("title", ""),
-                        "company": jd_result.get("company", ""),
-                        "location": jd_result.get("location", ""),
-                        "salary_str": jd_result.get("salary_range"),
-                        "raw_text": jd_result.get("raw_text", jd_url),
-                        "source": "url",
-                        "parsed_sections": {
-                            "requirements": jd_result.get("core_requirements", []),
-                            "preferred": jd_result.get("preferred_requirements", []),
-                            "skills": jd_result.get("keywords", []),
-                            "implicit": jd_result.get("implicit_requirements", ""),
-                        },
-                        "tags": list(jd_result.get("keywords", [])),
-                    }
-                    from database.classifier import Classifier as _Clf
-                    _tags = _Clf().classify(jd_for_db["title"], jd_for_db["raw_text"])
-                    jd_for_db.update(_tags)
-                    st.session_state.jd_id = db.insert_jd(jd_for_db)
-
-                    # v2.1 M3.4: JD 入库后语义切分 + 向量化
-                    try:
-                        from tools.jd_indexer import embed_and_store_jd_chunks
-                        n_chunks = embed_and_store_jd_chunks(
-                            db, st.session_state.jd_id, jd_for_db["raw_text"]
-                        )
-                        if n_chunks:
-                            st.caption(f"🧩 已切分 {n_chunks} 个语义 chunk 并向量化")
-                    except Exception as _ex:
-                        st.caption(f"⚠️ 向量化失败：{_ex}")
-
-                    # 显示分类结果
-                    st.info(f"📋 自动分类: **{classification['category']}** (置信度: {int(classification['confidence']*100)}%)")
-                    if classification['reasoning']:
-                        st.caption(f"理由: {classification['reasoning']}")
-
-                    # 自动入库
-                    if st.session_state.auto_save:
-                        kb = st.session_state.kb
-                        kb.switch_database(classification['category'])
-                        st.session_state.current_db = classification['category']
-
-                        jd_id = kb.add_jd({
-                            "raw_text": jd_url,
-                            "parsed_data": jd_result,
-                            "source": "url"
-                        })
-                        st.success(f"✅ JD 分析成功！已保存到「{classification['category']}」(ID: {jd_id})")
-                    else:
-                        st.success("✅ JD 分析成功！")
-                except Exception as e:
-                    # v2.1 M2.5: URL 抓取失败给出明确指引
-                    err_msg = str(e)
-                    st.error(f"❌ URL 分析失败：{err_msg}")
-                    if "登录" in err_msg or "反爬" in err_msg or "Cloudflare" in err_msg or "未能" in err_msg:
-                        st.info(
-                            "💡 解决方案：\n"
-                            "1. 改用「直接粘贴 JD」路径（推荐，最稳定）；\n"
-                            "2. 或运行 `python scripts/collectors/login_jobsdb.py` 完成首次登录后重试；\n"
-                            "3. 或在弹出的浏览器中手动过验证后再次尝试。"
-                        )
-
-    if st.session_state.jd_result:
-        st.divider()
-        st.markdown("### 📋 职位分析结果")
-
-        jdr = st.session_state.jd_result
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            with st.expander("🏢 职位信息", expanded=True):
-                st.write(f"**职位**: {jdr.get('title', 'N/A')}")
-                st.write(f"**公司**: {jdr.get('company', 'N/A')}")
-                st.write(f"**地点**: {jdr.get('location', 'N/A')}")
-                st.write(f"**薪资**: {jdr.get('salary', 'N/A')}")
-
-        with col2:
-            with st.expander("🎯 核心要求", expanded=True):
-                reqs = jdr.get("core_requirements", [])
-                for i, req in enumerate(reqs, 1):
-                    st.write(f"{i}. {req}")
-
-        with st.expander("🔑 技能关键词", expanded=True):
-            keywords = jdr.get("keywords", [])
-            for skill in keywords:
-                st.markdown(f'<span class="skill-tag skill-neutral">{skill}</span>', unsafe_allow_html=True)
-
-# =====================================================
-# 标签页 3: 匹配度分析
-# =====================================================
-with tab3:
-    st.header("匹配度分析")
-
-    if not st.session_state.resume_data:
-        st.warning("⚠️ 请先在第一个标签页上传并解析简历！")
-    elif not st.session_state.jd_result:
-        st.warning("⚠️ 请先在第二个标签页分析职位描述！")
-    else:
-        if st.button("分析匹配度", type="primary"):
-            with st.spinner("正在分析匹配度 (使用 LLM)..."):
-                try:
-                    # 使用 CoordinatorAgent 执行匹配分析
-                    agent = st.session_state.agent
-
-                    # 先设置 agent 状态中的 resume_data 和 jd_result
-                    agent.state['resume_data'] = st.session_state.resume_data
-                    agent.state['jd_result'] = st.session_state.jd_result
-
-                    # 重置 agent 的 LLM 调用统计
-                    if hasattr(agent.llm_client, 'reset_stats'):
-                        agent.llm_client.reset_stats()
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                    # 执行匹配分析
-                    match_result = loop.run_until_complete(agent._tool_analyze_match())
-
-                    agent.state['match_result'] = match_result.get('match_result')
-
-                    loop.close()
-
-                    st.session_state.match_result = match_result.get('match_result')
-                    st.success("✅ 匹配度分析成功！")
-
-                    # v2.1 M2: 落库 match_history
-                    mr_payload = match_result.get('match_result') or {}
-                    rid = st.session_state.get('resume_id')
-                    jid = st.session_state.get('jd_id')
-                    if rid and jid:
-                        try:
-                            db = st.session_state.db
-                            match_id = db.insert_match({
-                                'resume_id': rid,
-                                'jd_id': jid,
-                                'score': int(mr_payload.get('score', 0) or 0),
-                                'reasoning': mr_payload.get('reasoning', ''),
-                                'matched_skills': mr_payload.get('matching_skills', []),
-                                'missing_skills': mr_payload.get('missing_skills', []),
-                                'gaps': mr_payload.get('gaps', []),
-                                'recommendations': mr_payload.get('recommendations', []),
-                                'skill_mapping': mr_payload.get('skill_mapping', []),
-                                'should_apply': 1 if mr_payload.get('should_apply') else 0,
-                            })
-                            st.session_state.last_match_id = match_id
-                            # v2.1 M6.A.3: 供 AI 浮窗上下文使用
-                            st.session_state.last_match_score = mr_payload.get('score')
-                            st.caption(f"💾 已记录匹配 ID: `{match_id[:8]}` (Tab6 投递历史可查)")
-
-                            # v2.1 M2: 同步把每条 recommendation 写入 optimizations 表
-                            opt_ids = []
-                            for rec in mr_payload.get('recommendations', []) or []:
-                                if not isinstance(rec, dict):
-                                    continue
-                                rec_type = rec.get('type', 'modify')
-                                # 兼容三种 type：modify / delete / suggest_add
-                                if rec_type == 'suggest_add':
-                                    suggested = rec.get('suggestion', '')
-                                    original = ''
-                                else:
-                                    suggested = rec.get('suggested', '')
-                                    original = rec.get('original', '')
-                                try:
-                                    opt_id = db.insert_optimization({
-                                        'resume_id': rid,
-                                        'jd_id': jid,
-                                        'optimization_type': rec_type,
-                                        'section': rec.get('section', ''),
-                                        'original_content': original,
-                                        'suggested_content': suggested,
-                                        'reason': rec.get('reason', ''),
-                                    })
-                                    opt_ids.append(opt_id)
-                                except Exception as exc:
-                                    logger.warning(f"optimization 写入失败: {exc}")
-                            st.session_state.last_opt_ids = opt_ids
-                            if opt_ids:
-                                st.caption(f"💾 已记录 {len(opt_ids)} 条优化建议（可在下方勾选「采纳」）")
-                        except Exception as exc:
-                            logger.warning(f"match_history 写入失败: {exc}")
-                    else:
-                        st.warning("⚠️ resume_id 或 jd_id 缺失，跳过 match_history 落库（请重新解析简历/JD）")
-
-                    # 显示 LLM 调用信息
-                    if hasattr(agent.llm_client, 'get_stats'):
-                        llm_stats = agent.llm_client.get_stats()
-                        if llm_stats.get('total_calls', 0) > 0:
-                            st.markdown("### 🤖 LLM 调用确认")
-                            st.success(f"✅ **LLM 真实被调用！**")
-                            st.info(f"调用次数: {llm_stats.get('total_calls', 0)}")
-                            st.info(f"总 Token 数: {llm_stats.get('total_tokens', 0)}")
-                        else:
-                            st.warning("⚠️ **未检测到 LLM 调用**，可能使用的是规则匹配")
-                    else:
-                        st.info("LLM 统计不可用")
-
-                except Exception as e:
-                    st.error(f"分析失败: {e}")
-                    import traceback
-                    st.error(traceback.format_exc())
-
-        if st.session_state.match_result:
-            st.divider()
-
-            mr = st.session_state.match_result
-            score = mr.get("score", 0)
-
-            # 显示匹配度分数
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.markdown("### 📊 匹配度")
-                if score >= 70:
-                    st.markdown(f'<div class="match-high">{score}%</div>', unsafe_allow_html=True)
-                    st.success("高度匹配！建议投递！")
-                elif score >= 50:
-                    st.markdown(f'<div class="match-medium">{score}%</div>', unsafe_allow_html=True)
-                    st.warning("基本匹配，建议优化后投递")
-                else:
-                    st.markdown(f'<div class="match-low">{score}%</div>', unsafe_allow_html=True)
-                    st.error("匹配度较低，建议寻找更匹配的职位")
-
-            st.divider()
-
-            # ============ 技能映射展示 ============
-            skill_mapping = mr.get("skill_mapping", [])
-            if skill_mapping:
-                st.markdown("### 🔄 技能映射（可迁移技能识别）")
-                st.caption("你的经验如何映射到JD要求")
-
-                for mapping in skill_mapping:
-                    col1, col2, col3 = st.columns([2, 1, 2])
-                    with col1:
-                        st.markdown(f"**你的经验:** {mapping.get('resume_skill', '')}")
-                    with col2:
-                        confidence = mapping.get('confidence', 0)
-                        st.markdown(f"<div style='text-align:center; font-weight:bold; color: #059669'>→ {int(confidence*100)}%</div>", unsafe_allow_html=True)
-                    with col3:
-                        st.markdown(f"**JD要求:** {mapping.get('jd_requirement', '')}")
-                    if mapping.get('explanation'):
-                        st.caption(f"💡 {mapping.get('explanation')}")
-                    st.divider()
-
-            # ============ 智能技能对比 ============
-            st.markdown("### 🛠️ 技能对比")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### ✅ 已匹配/可迁移技能")
-                matching_skills = mr.get("matching_skills", [])
-                if matching_skills:
-                    for skill in matching_skills:
-                        st.markdown(f'<span class="skill-tag skill-match">{skill}</span>', unsafe_allow_html=True)
-                else:
-                    st.write("无")
-
-            with col2:
-                st.markdown("#### ⚠️ 确实缺失的技能")
-                missing_skills = mr.get("missing_skills", [])
-                if missing_skills:
-                    for skill in missing_skills:
-                        st.markdown(f'<span class="skill-tag skill-gap">{skill}</span>', unsafe_allow_html=True)
-                else:
-                    st.write("无")
-
-            # 理由分析
-            with st.expander("🤔 匹配度分析理由", expanded=True):
-                st.write(mr.get("reasoning", "N/A"))
-
-            # 差距分析
-            gaps = mr.get("gaps", [])
-            if gaps:
-                with st.expander("📉 差距分析", expanded=True):
-                    for gap in gaps:
-                        importance = gap.get('importance', 'medium')
-                        emoji = "🔴" if importance == 'high' else "🟡" if importance == 'medium' else "🟢"
-                        st.write(f"{emoji} {gap.get('description', '')}")
-
-            # ============ 详细优化建议 ============
-            recs = mr.get("recommendations", [])
-            opt_ids_for_recs = st.session_state.get('last_opt_ids', [])
-            if recs and len(recs) > 0 and isinstance(recs[0], dict):
-                st.markdown("### ✍️ 详细优化建议")
-                st.caption("每一条建议都说明了「改什么」和「为什么这样改」。勾选「✅ 采纳」会落库到 optimizations.user_adopted")
-
-                for i, rec in enumerate(recs):
-                    rec_type = rec.get('type', 'modify')
-                    type_label = {
-                        'modify': '📝 修改',
-                        'delete': '🗑️ 删除',
-                        'suggest_add': '➕ 建议补充'
-                    }.get(rec_type, '📝 修改')
-
-                    with st.expander(f"建议 #{i+1}: {type_label} - {rec.get('section', '修改')}", expanded=True):
-                        if rec_type == 'modify':
-                            # 修改建议：左右对比
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.markdown("**原文:**")
-                                st.markdown(f"<div style='background-color: #450a0a; color: white; padding:10px; border-radius:5px;'>{rec.get('original', '')}</div>", unsafe_allow_html=True)
-                            with col2:
-                                st.markdown("**建议修改为:**")
-                                st.markdown(f"<div style='background-color: #052e16; color: white; padding:10px; border-radius:5px;'>{rec.get('suggested', '')}</div>", unsafe_allow_html=True)
-
-                            st.markdown("**💡 为什么这样改:**")
-                            st.info(rec.get('reason', ''))
-                        elif rec_type == 'delete':
-                            # 删除建议：只显示原文和理由
-                            st.markdown("**建议删除:**")
-                            st.markdown(f"<div style='background-color: #450a0a; color: white; padding:10px; border-radius:5px;'>{rec.get('original', '')}</div>", unsafe_allow_html=True)
-                            st.markdown("**💡 为什么删除:**")
-                            st.warning(rec.get('reason', ''))
-                        elif rec_type == 'suggest_add':
-                            # 补充建议：显示建议和理由
-                            st.markdown("**建议补充:**")
-                            st.markdown(f"<div style='background-color: #0c4a6e; color: white; padding:10px; border-radius:5px;'>{rec.get('suggestion', '')}</div>", unsafe_allow_html=True)
-                            st.markdown("**💡 为什么补充:**")
-                            st.info(rec.get('reason', ''))
-
-                        # v2.1 M2: 采纳开关
-                        if i < len(opt_ids_for_recs):
-                            opt_id_local = opt_ids_for_recs[i]
-                            adopted_now = st.toggle(
-                                "✅ 采纳此建议",
-                                value=False,
-                                key=f"adopt_{opt_id_local}",
-                                help=f"opt_id: {opt_id_local}",
-                            )
-                            if adopted_now != st.session_state.get(f"_adopted_state_{opt_id_local}", False):
-                                try:
-                                    st.session_state.db.update_optimization_adopted(
-                                        opt_id_local, 1 if adopted_now else 0
-                                    )
-                                    st.session_state[f"_adopted_state_{opt_id_local}"] = adopted_now
-                                except Exception as exc:
-                                    logger.warning(f"采纳状态写库失败: {exc}")
-            else:
-                # 兼容旧格式
-                if recs:
-                    with st.expander("💡 优化建议", expanded=True):
-                        for rec in recs:
-                            st.write(f"• {rec}")
-
-# =====================================================
-# 标签页 4: 生成优化内容
-# =====================================================
-with tab4:
-    st.header("生成优化内容")
-
-    company_name = st.text_input("目标公司名称", value="目标公司")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("生成优化简历", type="primary"):
-            if not st.session_state.resume_data:
-                st.error("请先解析简历！")
-            elif not st.session_state.jd_result or not st.session_state.match_result:
-                st.error("请先分析JD并进行匹配分析！")
-            else:
-                with st.spinner("正在生成优化简历..."):
-                    try:
-                        # 检索相关 JD chunks 作为参考知识
-                        jd_query = st.session_state.jd_result.get("title", "")
-                        reference_chunks = []
-                        try:
-                            from tools.retriever import Retriever
-                            retriever = Retriever()
-                            reference_chunks = retriever.retrieve(
-                                jd_query, top_k=3, filter_chunk_type="responsibility"
-                            )
-                            if reference_chunks:
-                                st.info(f"🔍 检索到 {len(reference_chunks)} 个相关 JD 知识块作为参考")
-                        except Exception as exc:
-                            logger.warning(f"向量检索失败: {exc}")
-                        # 先用ResumeOptimizer优化内容
-                        llm_client = st.session_state.agent.llm_client
-                        optimizer = ResumeOptimizer(llm_client)
-
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-
-                        recommendations = st.session_state.match_result.get('recommendations', [])
-
-                        optimized_resume_data = loop.run_until_complete(
-                            optimizer.optimize(
-                                st.session_state.resume_data,
-                                st.session_state.jd_result,
-                                recommendations,
-                                reference_chunks=reference_chunks,
-                            )
-                        )
-                        loop.close()
-
-                        # 再用ResumeGenerator生成markdown
-                        generator = ResumeGenerator()
-                        md = generator.to_markdown(optimized_resume_data)
-                        html = generator.to_html(optimized_resume_data)
-
-                        st.session_state.optimized_resume = md
-                        st.session_state.optimized_resume_html = html
-                        st.success("✅ 简历优化并生成成功！")
-
-                        # 显示参考知识（如果有）
-                        if reference_chunks:
-                            with st.expander("📚 参考的 JD 知识块", expanded=False):
-                                for i, rc in enumerate(reference_chunks):
-                                    st.markdown(f"**Chunk #{i+1}** (similarity: {rc.get('similarity', 0):.3f})")
-                                    st.caption(f"上下文: {rc.get('context', '')}")
-                                    st.code(rc.get('chunk_text', '')[:500], language=None)
-                                    st.divider()
-                        else:
-                            st.caption("ℹ️ 未检索到相关参考知识，优化建议基于当前 JD 生成。")
-                    except Exception as e:
-                        st.error(f"生成失败: {e}")
-                        import traceback
-                        st.error(traceback.format_exc())
-
-    with col2:
-        if st.button("生成 Cover Letter", type="primary"):
-            if not st.session_state.resume_data or not st.session_state.jd_result:
-                st.error("请先解析简历和分析 JD！")
-            else:
-                with st.spinner("正在生成 Cover Letter..."):
-                    try:
-                        llm_client = st.session_state.agent.llm_client
-                        cl_generator = CoverLetterGenerator(llm_client=llm_client)
-
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        cl = loop.run_until_complete(cl_generator.generate(
-                            st.session_state.resume_data,
-                            st.session_state.jd_result,
-                            company_name
-                        ))
-                        loop.close()
-
-                        st.session_state.cover_letter = cl
-                        st.success("✅ Cover Letter 生成成功！")
-                    except Exception as e:
-                        st.error(f"生成失败: {e}")
-
-    if st.button("完整工作流 (简历优化 + Cover Letter)", type="primary"):
-        if not st.session_state.resume_data or not st.session_state.jd_result:
-            st.error("请先解析简历和分析 JD！")
-        else:
-            with st.spinner("正在执行完整工作流..."):
-                try:
-                    agent = st.session_state.agent
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                    result = loop.run_until_complete(agent.execute({
-                        "company_name": company_name
-                    }))
-                    loop.close()
-
-                    # 更新状态
-                    st.session_state.match_result = result.get('match_result')
-                    st.session_state.optimized_resume = result.get('resume_markdown')
-                    st.session_state.cover_letter = result.get('cover_letter')
-
-                    # 持久化匹配结果
-                    match_data = result.get('match_result', {})
-                    if match_data:
-                        db = st.session_state.db
-                        db.insert_match({
-                            "resume_id": "",  # TODO: 从持久化 resume 取 id
-                            "jd_id": "",      # TODO: 从持久化 jd 取 id
-                            "score": match_data.get("match_result", {}).get("score", 0),
-                            "reasoning": match_data.get("match_result", {}).get("reasoning", ""),
-                            "should_apply": match_data.get("match_result", {}).get("should_apply", False),
-                        })
-
-                    st.success("✅ 完整工作流执行成功！")
-                except Exception as e:
-                    st.error(f"执行失败: {e}")
-
-    st.divider()
-
-    if st.session_state.optimized_resume:
-        st.markdown("### 📄 优化后的简历")
-        st.markdown(st.session_state.optimized_resume)
-
-        dl_col1, dl_col2 = st.columns(2)
-        with dl_col1:
-            st.download_button(
-                "下载简历 (Markdown)",
-                st.session_state.optimized_resume,
-                file_name=f"{company_name}_简历.md",
-                mime="text/markdown"
-            )
-        with dl_col2:
-            html_payload = st.session_state.get("optimized_resume_html")
-            if html_payload:
-                st.download_button(
-                    "下载简历 (HTML，可浏览器打印 PDF)",
-                    html_payload,
-                    file_name=f"{company_name}_简历.html",
-                    mime="text/html"
-                )
-
-    if st.session_state.cover_letter:
-        st.divider()
-        st.markdown("### ✉️ Cover Letter")
-        st.write(st.session_state.cover_letter)
-
-        st.download_button(
-            "下载 Cover Letter",
-            st.session_state.cover_letter,
-            file_name=f"{company_name}_CoverLetter.txt",
-            mime="text/plain"
-        )
-
-st.divider()
-st.markdown("---")
-st.markdown("*Powered by Job Hunter - 智能求职助手*")
-
-# =====================================================
-# 标签页 5: 知识库
-# =====================================================
-with tab5:
-    st.header(f"📚 知识库管理 - {st.session_state.current_db}")
-
-    kb = st.session_state.kb
-
-    # 统计信息
-    stats = kb.get_stats()
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("JD 总数", stats["total_jds"])
-    with col2:
-        st.metric("公司数", len(stats["companies"]))
-    with col3:
-        st.metric("技能种类", len(stats["top_skills"]))
-
-    st.divider()
-
-    # 热门技能
-    if stats["top_skills"]:
-        st.markdown("### 🔥 热门技能")
-        for skill, count in stats["top_skills"]:
-            st.markdown(f'<span class="skill-tag skill-neutral">{skill} ({count})</span>', unsafe_allow_html=True)
-        st.divider()
-
-    # 批量添加JD（主要功能）
-    st.markdown("### 📥 添加职位到知识库")
-    st.success("💡 **推荐方式**: 从招聘网站复制职位描述，粘贴到下方！这是最稳定可靠的方式。")
-
-    input_method = st.radio("选择输入方式", ["批量粘贴JD", "上传文件"], horizontal=True)
-
-    if input_method == "批量粘贴JD":
-        st.markdown("将多个JD粘贴在下方，**用空行分隔**：")
-        jd_input = st.text_area("多个JD（空行分隔）", height=300, placeholder="""Job 1: AI Product Manager @ Company 1
-...
-
-Job 2: AI Engineer @ Company 2
-...
-
-...""")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            auto_analyze = st.checkbox("自动分析并分类", value=True)
-        with col2:
-            auto_save = st.checkbox("自动保存到知识库", value=True)
-
-        if st.button("处理JD", type="primary") and jd_input and st.session_state.agent:
-            # 按空行分割
-            jd_texts = [t.strip() for t in jd_input.split('\n\n') if t.strip()]
-
-            if not jd_texts:
-                st.warning("请输入至少一个JD！")
-            else:
-                success_count = 0
-                progress_bar = st.progress(0)
-
-                for idx, jd_text in enumerate(jd_texts):
-                    try:
-                        with st.spinner(f"正在处理第 {idx+1}/{len(jd_texts)} 个JD..."):
-                            if auto_analyze:
-                                # 分析JD
-                                llm_client = st.session_state.agent.llm_client
-                                analyzer = JDAnalyzerEnhanced(llm_client=llm_client)
-
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                jd_result = loop.run_until_complete(analyzer.parse_from_text(jd_text))
-
-                                # 自动分类
-                                classification = loop.run_until_complete(kb.classify_jd(jd_result))
-                                loop.close()
-
-                                st.info(f"  → 分类为: {classification['category']} (置信度: {int(classification['confidence']*100)}%)")
-
-                                if auto_save:
-                                    # 切换到对应数据库并保存
-                                    kb.switch_database(classification['category'])
-                                    jd_id = kb.add_jd({
-                                        "raw_text": jd_text,
-                                        "parsed_data": jd_result,
-                                        "source": "batch_manual"
-                                    })
-                                    success_count += 1
-                            else:
-                                if auto_save:
-                                    # 只保存不分析
-                                    jd_id = kb.add_jd({
-                                        "raw_text": jd_text,
-                                        "parsed_data": {},
-                                        "source": "batch_manual"
-                                    })
-                                    success_count += 1
-
-                        progress_bar.progress((idx + 1) / len(jd_texts))
-
-                    except Exception as e:
-                        st.error(f"处理第 {idx+1} 个JD失败: {e}")
-
-                st.success(f"✅ 批量处理完成！成功处理 {success_count}/{len(jd_texts)} 个JD")
-
-    else:
-        # 上传文件
-        uploaded_file = st.file_uploader("上传 JD 文件 (JSON/Text)", type=["json", "txt"])
-        if uploaded_file is not None:
-            try:
-                content = uploaded_file.getvalue().decode('utf-8')
-                if uploaded_file.name.endswith('.json'):
-                    import json
-                    jd_list = json.loads(content)
-                    if isinstance(jd_list, list):
-                        for jd_data in jd_list:
-                            kb.add_jd(jd_data)
-                        st.success(f"✅ 成功导入 {len(jd_list)} 个 JD！")
-                    else:
-                        st.error("JSON格式错误，需要是数组格式")
-                else:
-                    # 文本文件，按空行分割
-                    jd_texts = content.split('\n\n')
-                    for jd_text in jd_texts:
-                        if jd_text.strip():
-                            kb.add_jd({
-                                "raw_text": jd_text.strip(),
-                                "parsed_data": {},
-                                "source": "batch_upload"
-                            })
-                    st.success(f"✅ 成功导入 {len(jd_texts)} 个 JD！")
-            except Exception as e:
-                st.error(f"导入失败: {e}")
-
-    st.divider()
-
-    # 智能爬取JD（实验性功能，折叠面板）
-    with st.expander("🤖 实验性功能: 智能爬取JD (可能遇到反爬限制)"):
-        st.info("💡 **提示**: 爬虫功能作为实验性功能提供，如遇反爬限制，请使用上方的手动粘贴功能！")
-
-        if not st.session_state.scraper_manager:
-            st.warning("⚠️ 请先在侧边栏初始化Agent！")
-        else:
-            st.markdown("""
-            #### 📝 使用前准备（首次使用请先登录）
-
-            为了绕过反爬检测，请先运行登录助手：
-
-            1. 在项目目录打开终端/命令行
-            2. 运行: `python login_jobsdb.py`
-            3. 在打开的浏览器中手动登录 JobsDB
-            4. 登录成功后回到终端按回车
-            5. 之后再使用此爬虫功能
-
-            登录状态会自动保存，以后无需重复登录。
-            """)
-
-            # 平台选择
-            scraper_manager = st.session_state.scraper_manager
-            platforms = scraper_manager.get_supported_platforms()
-
-            # 默认选择JobsDB（优先）
-            platform = st.selectbox(
-                "选择平台",
-                platforms,
-                index=0 if platforms and "jobsdb" in platforms else 0,
-                help="JobsDB 是优先推荐的平台"
-            )
-
-            # 显示平台信息
-            platform_info = scraper_manager.get_platform_info(platform)
-            if platform_info:
-                st.info(f"{platform_info.get('name', platform)} - {platform_info.get('region', '')}")
-
-            # 搜索条件
-            col1, col2 = st.columns(2)
-            with col1:
-                keyword = st.text_input("搜索关键词", placeholder="如: AI Product Manager, AI Engineer")
-            with col2:
-                location = st.text_input("地点（可选）", placeholder="如: Hong Kong Island, Kowloon")
-
-            col3, col4 = st.columns(2)
-            with col3:
-                limit = st.number_input("爬取数量", min_value=1, max_value=50, value=5, help="最多爬取的职位数量")
-            with col4:
-                headless = st.checkbox("无头模式（后台运行）", value=False, help="选择后浏览器不会显示")
-
-            # 爬取按钮
-            if st.button("开始爬取JD", type="primary") and keyword:
-                if not st.session_state.agent:
-                    st.error("请先初始化Agent！")
-                else:
-                    # 创建异步事件循环
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                    try:
-                        with st.spinner(f"正在从 {platform_info.get('name', platform)} 爬取JD..."):
-                            # 爬取JD
-                            result = loop.run_until_complete(
-                                scraper_manager.search_jobs(
-                                    platform=platform,
-                                    keyword=keyword,
-                                    location=location if location else None,
-                                    limit=limit,
-                                    headless=headless,
-                                )
-                            )
-
-                            if result.get("success"):
-                                jobs = result.get("jobs", [])
-                                st.success(f"✅ 成功获取 {len(jobs)} 个职位！")
-
-                                if jobs:
-                                    # 显示预览
-                                    st.markdown("#### 📋 职位预览（前5个）")
-                                    for i, job in enumerate(jobs[:5]):
-                                        with st.expander(f"{i+1}. {job.get('title', 'N/A')} @ {job.get('company', 'N/A')}"):
-                                            st.markdown(f"**公司**: {job.get('company', 'N/A')}")
-                                            st.markdown(f"**薪资**: {job.get('salary', 'N/A')}")
-                                            st.markdown(f"**地点**: {job.get('location', 'N/A')}")
-                                            st.markdown(f"**链接**: {job.get('url', '')}")
-
-                                    # 保存按钮
-                                    if st.button("分析并保存到知识库"):
-                                        save_progress = st.progress(0)
-                                        save_success = 0
-
-                                        for i, job in enumerate(jobs):
-                                            try:
-                                                with st.spinner(f"正在分析第 {i+1}/{len(jobs)} 个职位..."):
-                                                    # 分析并保存
-                                                    analyze_result = loop.run_until_complete(
-                                                        scraper_manager.analyze_and_classify_jd(
-                                                            jd=job,
-                                                            knowledge_base=kb,
-                                                        )
-                                                    )
-
-                                                    if analyze_result.get("success"):
-                                                        classification = analyze_result.get("classification", {})
-                                                        st.info(f"{i+1}. {job.get('title')} → 分类为: {classification.get('category')}")
-                                                        save_success += 1
-
-                                                save_progress.progress((i + 1) / len(jobs))
-
-                                            except Exception as e:
-                                                st.error(f"处理第 {i+1} 个职位失败: {e}")
-
-                                        st.success(f"✅ 完成！成功保存 {save_success}/{len(jobs)} 个职位到知识库！")
-
-                            else:
-                                st.error(f"❌ 爬取失败: {result.get('error', '未知错误')}")
-
-                    except Exception as e:
-                        st.error(f"爬取失败: {e}")
-                        import traceback
-                        st.error(traceback.format_exc())
-                    finally:
-                        loop.close()
-
-    st.divider()
-
-    # JD 列表
-    st.markdown("### 📋 JD 列表")
-    jds = kb.list_jds(limit=50)
-
-    if not jds:
-        st.info("知识库为空，先去分析职位或上传JD吧！")
-    else:
-        for idx, jd in enumerate(jds):
-            parsed = jd.get("parsed_data", {})
-            title = parsed.get("title", "未知职位")
-            company = parsed.get("company", "未知公司")
-            source = jd.get("source", "manual")
-            jd_id = jd.get("id", "")
-
-            with st.expander(f"📌 {title} @ {company} ({source})", expanded=False):
-                st.markdown(f"**ID**: {jd_id}")
-                if parsed.get("location"):
-                    st.markdown(f"**地点**: {parsed.get('location')}")
-                if parsed.get("salary"):
-                    st.markdown(f"**薪资**: {parsed.get('salary')}")
-
-                skills = parsed.get("skills", [])
-                if skills:
-                    st.markdown("**技能**:")
-                    for skill in skills:
-                        st.markdown(f'<span class="skill-tag skill-neutral">{skill}</span>', unsafe_allow_html=True)
-
-                requirements = parsed.get("core_requirements", [])
-                if requirements:
-                    st.markdown("**核心要求**:")
-                    for req in requirements[:5]:
-                        st.markdown(f"- {req}")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.text_area("原始内容", jd.get("raw_text", ""), height=150)
-                with col2:
-                    if st.button(f"删除此 JD", key=f"del_{idx}"):
-                        kb.delete_jd(jd_id)
-                        st.success(f"已删除 {jd_id}")
-                        st.rerun()
-
-    st.divider()
-
-    # 清空库
-    st.markdown("### ⚠️ 危险操作")
-    if st.button("清空当前数据库", type="primary"):
-        count = kb.clear_database()
-        st.success(f"已清空数据库，删除了 {count} 个 JD")
-
-# =====================================================
-# 标签页 6: 投递历史 (v2.1 M2)
-# =====================================================
-with tab6:
-    st.header("📈 投递历史")
-    st.caption("所有匹配分析结果都在这里，可标记投递状态、记录反馈，复盘求职转化率。")
-
-    db_t6 = st.session_state.db
-    matches = db_t6.list_matches(limit=200)
-
-    if not matches:
-        st.info("还没有匹配记录。在 Tab3 完成一次匹配分析后，这里会出现条目。")
-    else:
-        # 总览统计
-        total = len(matches)
-        applied = sum(1 for m in matches if m.get("applied"))
-        replied = sum(1 for m in matches if (m.get("user_feedback") or "") in ("replied", "interview", "offer"))
-        col_a, col_b, col_c, col_d = st.columns(4)
-        col_a.metric("总匹配数", total)
-        col_b.metric("已投递", applied)
-        col_c.metric("有回复", replied)
-        col_d.metric("投递率", f"{(applied/total*100):.0f}%" if total else "0%")
-
-        st.divider()
-
-        for m in matches:
-            jd_obj = db_t6.get_jd(m["jd_id"]) or {}
-            title = jd_obj.get("title", "(JD 已删除)")
-            company = jd_obj.get("company", "")
-            score = m.get("score", 0)
-            applied_flag = bool(m.get("applied"))
-            feedback = m.get("user_feedback") or "未反馈"
-            opts = db_t6.list_optimizations(jd_id=m["jd_id"])
-            adopted = sum(1 for o in opts if o.get("user_adopted"))
-            adopt_rate = f"{adopted}/{len(opts)}" if opts else "0/0"
-
-            header = f"{'✅' if applied_flag else '⚪️'} {score}% · {title} @ {company} — 反馈: {feedback} · 采纳率 {adopt_rate}"
-            with st.expander(header, expanded=False):
-                col1, col2, col3 = st.columns([2, 2, 2])
-                with col1:
-                    st.markdown(f"**Match ID**: `{m['id'][:8]}`")
-                    st.markdown(f"**创建时间**: {m.get('created_at', '')}")
-                    if m.get("applied_at"):
-                        st.markdown(f"**投递时间**: {m['applied_at']}")
-                with col2:
-                    st.markdown("**操作**:")
-                    if not applied_flag:
-                        if st.button("📮 标记已投递", key=f"apply_{m['id']}"):
-                            db_t6.update_match_applied(m["id"], 1)
-                            st.rerun()
-                    else:
-                        if st.button("↩️ 撤销投递", key=f"unapply_{m['id']}"):
-                            db_t6.update_match_applied(m["id"], 0, applied_at=None)
-                            st.rerun()
-                with col3:
-                    st.markdown("**反馈状态**:")
-                    fb_options = ["未反馈", "已读未回", "已回复", "进入面试", "拿到 Offer", "拒绝"]
-                    fb_map = {
-                        "未反馈": None,
-                        "已读未回": "read",
-                        "已回复": "replied",
-                        "进入面试": "interview",
-                        "拿到 Offer": "offer",
-                        "拒绝": "rejected",
-                    }
-                    rev_map = {v: k for k, v in fb_map.items()}
-                    current_label = rev_map.get(m.get("user_feedback"), "未反馈")
-                    new_label = st.selectbox(
-                        "选择反馈",
-                        fb_options,
-                        index=fb_options.index(current_label),
-                        key=f"fb_{m['id']}",
-                        label_visibility="collapsed",
-                    )
-                    if new_label != current_label:
-                        target = fb_map[new_label]
-                        if target is None:
-                            db_t6.update_match_feedback(m["id"], "")
-                        else:
-                            db_t6.update_match_feedback(m["id"], target)
-                        st.rerun()
-
-                if m.get("reasoning"):
-                    st.markdown("**匹配理由**:")
-                    st.caption(m["reasoning"])
-
-
-# =====================================================
-# v2.1 M6.A.3: 右下角 AI 聊天浮窗
-# =====================================================
-with st.sidebar:
-    with st.expander("💬 AI 求职助手", expanded=False):
-        st.caption("基于当前简历 / 最近 JD / 匹配分回答。无需切换 Tab。")
-
-        # 初始化对话历史
-        if "ai_chat_history" not in st.session_state:
-            st.session_state.ai_chat_history = []
-
-        # 历史气泡（仅展示最近 6 条避免侧栏爆长）
-        for msg in st.session_state.ai_chat_history[-6:]:
-            role = msg.get("role", "user")
-            with st.chat_message(role):
-                st.markdown(msg.get("content", ""))
-
-        user_input = st.chat_input("问点关于求职的…")
-        if user_input:
-            if not st.session_state.get("agent"):
-                st.error("⚠️ 请先在 Tab1 配置 LLM agent")
-            else:
-                st.session_state.ai_chat_history.append({"role": "user", "content": user_input})
-                with st.chat_message("user"):
-                    st.markdown(user_input)
-
-                # 注入项目上下文
-                ctx = {
-                    "resume": st.session_state.get("resume_data"),
-                    "jd": st.session_state.get("jd_result"),
-                    "match_score": st.session_state.get("last_match_score"),
-                    "history": st.session_state.ai_chat_history,
-                }
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    result = loop.run_until_complete(
-                        st.session_state.agent.chat_assistant(user_input, context=ctx)
-                    )
-                    loop.close()
-                    reply = result.get("reply", "(空)")
-                except Exception as e:
-                    reply = f"⚠️ 调用失败：{e}"
-
-                st.session_state.ai_chat_history.append({"role": "assistant", "content": reply})
-                with st.chat_message("assistant"):
-                    st.markdown(reply)
-
-                # 限制历史长度，避免无限增长
-                if len(st.session_state.ai_chat_history) > 20:
-                    st.session_state.ai_chat_history = st.session_state.ai_chat_history[-12:]
+                user = auth.login_user(identifier=identifier, password=password)
+                st.session_state.auth_user = user
+                st.session_state.auth_user_id = user["id"]
+                st.session_state.app_route = "mode_select"
                 st.rerun()
+            except AuthError as exc:
+                st.error(str(exc))
 
-# =====================================================
-# 标签页 7: 从零生成简历 (P2-3 Flow A)
-# =====================================================
-with tab7:
-    st.header("从零生成简历")
-    st.caption("没有现成简历？告诉我你的目标和经历，AI 帮你写一份。")
+    with register_tab:
+        st.caption("微信登录、短信验证码、邮箱验证码会作为上线 provider 接入；当前先用本地账号跑通用户数据归属。")
+        mode = st.radio("注册方式", ["邮箱", "手机号"], horizontal=True)
+        with st.form("register_form"):
+            name = st.text_input("昵称（可选）")
+            email = st.text_input("邮箱") if mode == "邮箱" else None
+            phone = st.text_input("手机号") if mode == "手机号" else None
+            password = st.text_input("密码（至少 8 位）", type="password")
+            submitted = st.form_submit_button("注册并登录", type="primary")
+        if submitted:
+            try:
+                user = auth.register_user(email=email, phone=phone, password=password, name=name)
+                st.session_state.auth_user = user
+                st.session_state.auth_user_id = user["id"]
+                st.session_state.app_route = "mode_select"
+                st.rerun()
+            except AuthError as exc:
+                st.error(str(exc))
 
-    from tools import taxonomy
-    from agents.resume_flow_a import ResumeFlowA, SECTIONS
 
-    # Section 状态机辅助
-    _COLLECT_SECTIONS = [s for s in SECTIONS if not s.get("derived")]
-    _TOTAL_SECTIONS = len(SECTIONS)  # 8（6 采集 + 2 派生）
+# ---------------------------------------------------------------------------
+# Common navigation
+# ---------------------------------------------------------------------------
 
-    def _fa_reset():
-        for k in ["fa_industry", "fa_function", "fa_position",
-                  "fa_messages", "fa_resume_data", "fa_resume_md",
-                  "fa_resume_html", "fa_skeleton"]:
-            st.session_state[k] = None if k != "fa_messages" else []
-        st.session_state.fa_chat_done = False
-        st.session_state.fa_section_index = 0
-        st.session_state.fa_section_data = {}
-        st.session_state.fa_section_messages = {}
-        st.session_state.fa_section_done = []
-        st.session_state.fa_section_skipped = []
 
-    # --- Step 1: 行业 / 岗位选择 ---
+def render_top_nav() -> None:
+    left, spacer, jd_col, home_col, logout_col = st.columns([3, 3, 1, 1, 1])
+    with left:
+        st.markdown("### JobHunter")
+        st.caption(f"当前账号：{current_user_label()}")
+    with jd_col:
+        if st.button("JD库", use_container_width=True):
+            st.session_state.app_route = "jd_library"
+            st.rerun()
+    with home_col:
+        if st.button("首页", use_container_width=True):
+            st.session_state.app_route = "mode_select"
+            st.rerun()
+    with logout_col:
+        if st.button("退出", use_container_width=True):
+            st.session_state.auth_user = None
+            st.session_state.auth_user_id = None
+            st.session_state.app_route = "landing"
+            st.rerun()
+    st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Landing / mode select
+# ---------------------------------------------------------------------------
+
+
+def render_landing() -> None:
+    hero_left, hero_right = st.columns([1.1, 0.9], gap="large")
+    with hero_left:
+        st.markdown('<div class="hero-title">把你的经历，改写成目标岗位想看的简历</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="hero-subtitle">基于真实 JD 库，自动分析差距、重写表达、生成定制简历和 Cover Letter。</div>',
+            unsafe_allow_html=True,
+        )
+        cta_col, hint_col = st.columns([1, 2])
+        with cta_col:
+            if st.button("马上开始", type="primary", use_container_width=True):
+                render_auth_dialog()
+        with hint_col:
+            st.caption("从 0 生成简历，或上传已有简历做岗位定制优化。")
+        st.markdown(" ")
+        v1, v2, v3 = st.columns(3)
+        v1.metric("JD 召回", "RAG")
+        v2.metric("双流程", "生成 / 优化")
+        v3.metric("输出", "简历 + Cover Letter")
+
+    with hero_right:
+        st.markdown('<div class="product-card">', unsafe_allow_html=True)
+        st.markdown("#### 简历优化示例")
+        st.markdown('<div class="before-card"><b>原始表达</b><br/>负责产品需求分析，参与 AI 工具设计。</div>', unsafe_allow_html=True)
+        st.markdown(" ")
+        st.markdown('<div class="after-card"><b>优化后</b><br/>围绕 AI 搜索场景完成 12 个客户访谈与竞品拆解，定义 MVP 范围并推动 RAG 问答体验上线。</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown("### 简历修改案例")
+    cases = [
+        ("项目经历太泛", "参与多智能体系统开发", "设计 Agent 协作链路与缓存策略，推动求职匹配流程从手工筛选转为自动化推荐。"),
+        ("技能列表堆砌", "Python、SQL、LLM", "将 Python/SQL/LLM 落到 RAG 检索、Prompt 链路、质量评估等岗位相关场景。"),
+        ("成果不够岗位化", "提升效率", "用目标 JD 的高频能力词重写成果：检索召回、用户转化、自动化运营、跨团队落地。"),
+    ]
+    cols = st.columns(3)
+    for col, (title, before, after) in zip(cols, cases):
+        with col:
+            st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+            st.markdown(f"#### {title}")
+            st.markdown(f"**Before**  \n{before}")
+            st.markdown(f"**After**  \n{after}")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_mode_select() -> None:
+    render_top_nav()
+    st.markdown("## 你今天想做什么？")
+    st.caption("两条流程完全隔离：从 0 生成不会混进已有简历优化；修改已有简历也不会跳到对话采集。")
+
+    col_a, col_b = st.columns(2, gap="large")
+    with col_a:
+        st.markdown('<div class="choice-card">', unsafe_allow_html=True)
+        st.markdown("### 从0生成简历")
+        st.write("适合没有现成简历，或想按目标岗位重新组织经历的人。")
+        st.markdown("- 选择行业 / 职能 / 岗位\n- 和 Agent 多轮对话采集经历\n- 基于 JD 库生成岗位化简历")
+        if st.button("开始生成", type="primary", use_container_width=True):
+            reset_flow_a_state()
+            st.session_state.app_route = "flow_a"
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_b:
+        st.markdown('<div class="choice-card">', unsafe_allow_html=True)
+        st.markdown("### 修改已有简历")
+        st.write("适合已有简历，需要针对某个 JD 做匹配分析和定制改写。")
+        st.markdown("- 上传简历和 JD\n- 分析匹配度与差距\n- 生成优化简历和 Cover Letter")
+        if st.button("开始优化", type="primary", use_container_width=True):
+            reset_flow_b_state()
+            st.session_state.app_route = "flow_b"
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Flow A
+# ---------------------------------------------------------------------------
+
+
+def render_flow_a() -> None:
+    render_top_nav()
+    st.header("从0生成简历")
+    st.caption("先确定目标岗位，再按 section 逐步采集信息。")
+
+    if not require_services():
+        return
+
+    collect_sections = [s for s in SECTIONS if not s.get("derived")]
+    total_sections = len(SECTIONS)
+
     if not st.session_state.fa_position:
         st.markdown("### 第 1 步：选择目标岗位")
         col_i, col_f, col_p = st.columns(3)
@@ -1653,10 +379,10 @@ with tab7:
             industries = taxonomy.list_industries()
             industry = st.selectbox("行业", ["(请选择)"] + industries, key="fa_industry_select")
         with col_f:
-            functions = taxonomy.list_functions(industry) if industry and industry != "(请选择)" else []
+            functions = taxonomy.list_functions(industry) if industry != "(请选择)" else []
             function = st.selectbox("职能", ["(请选择)"] + functions if functions else ["(请先选行业)"], key="fa_function_select", disabled=not functions)
         with col_p:
-            positions = taxonomy.list_positions(industry, function) if industry and industry != "(请选择)" and function and function != "(请选择)" else []
+            positions = taxonomy.list_positions(industry, function) if industry != "(请选择)" and function and function != "(请选择)" else []
             position = st.selectbox("岗位", ["(请选择)"] + positions if positions else ["(请先选职能)"], key="fa_position_select", disabled=not positions)
 
         if st.button("确定，开始对话", type="primary", disabled=position == "(请选择)" or not positions):
@@ -1669,247 +395,515 @@ with tab7:
             st.session_state.fa_section_done = []
             st.session_state.fa_section_skipped = []
             st.rerun()
+        return
 
-    # --- Step 2: section 状态机对话 ---
-    elif st.session_state.fa_section_index < len(_COLLECT_SECTIONS):
-        section = _COLLECT_SECTIONS[st.session_state.fa_section_index]
+    if st.session_state.fa_section_index < len(collect_sections):
+        section = collect_sections[st.session_state.fa_section_index]
         section_key = section["key"]
-
-        # 顶部进度条
         finished = len(st.session_state.fa_section_done) + len(st.session_state.fa_section_skipped)
-        st.progress(finished / _TOTAL_SECTIONS, text=f"进度 {finished}/{_TOTAL_SECTIONS}")
+        st.progress(finished / total_sections, text=f"进度 {finished}/{total_sections}")
+        st.markdown(f"### 第 2 步：采集 {section['name']}")
+        st.caption(f"目标：{st.session_state.fa_industry} / {st.session_state.fa_position}")
 
-        # 进度文字
-        done_names = []
-        for k in st.session_state.fa_section_done:
-            s = next((x for x in SECTIONS if x["key"] == k), None)
-            if s: done_names.append(f"{s['name']} ✓")
-        for k in st.session_state.fa_section_skipped:
-            s = next((x for x in SECTIONS if x["key"] == k), None)
-            if s: done_names.append(f"{s['name']} ⏭")
-        pending_names = []
-        for i, s in enumerate(_COLLECT_SECTIONS):
-            if i > st.session_state.fa_section_index:
-                pending_names.append(s["name"])
-        derived_names = [s["name"] for s in SECTIONS if s.get("derived")]
-        st.caption(
-            f"📋 已完成：{' / '.join(done_names) if done_names else '（无）'}    "
-            f"进行中：**{section['name']}**    "
-            f"待办：{' / '.join(pending_names + derived_names) if (pending_names or derived_names) else '（无）'}"
-        )
-
-        st.markdown(f"### 第 2 步：采集 {section['name']}（{st.session_state.fa_industry} / {st.session_state.fa_position}）")
-
-        if st.button("重新选择岗位", key="fa_reset_choose"):
-            _fa_reset()
+        if st.button("重新选择岗位"):
+            reset_flow_a_state()
             st.rerun()
 
-        # 本 section 的对话历史
         sec_msgs = st.session_state.fa_section_messages.setdefault(section_key, [])
+        for msg in sec_msgs:
+            with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+                st.markdown(msg["content"])
 
-        for m in sec_msgs:
-            with st.chat_message("user" if m["role"] == "user" else "assistant"):
-                st.markdown(m["content"])
-
-        # 如果本段还没开始（无 assistant 消息），先让 AI 主动开口
-        needs_assistant_turn = (
-            not sec_msgs
-            or sec_msgs[-1]["role"] == "user"
-        )
-
+        needs_assistant_turn = not sec_msgs or sec_msgs[-1]["role"] == "user"
         if needs_assistant_turn:
-            with st.spinner(f"AI 正在准备 {section['name']} 的问题..."):
+            with st.spinner(f"Agent 正在准备 {section['name']} 的问题..."):
                 try:
-                    llm_client = st.session_state.agent.llm_client
-                    flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
-                    # 第一轮：注入开场用户消息（如果空）
-                    msgs_for_llm = sec_msgs if sec_msgs else [
-                        {"role": "user", "content": f"开始采集{section['name']}吧。"}
-                    ]
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    reply = loop.run_until_complete(flow_a.chat_section(
+                    flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
+                    msgs_for_llm = sec_msgs if sec_msgs else [{"role": "user", "content": f"开始采集{section['name']}吧。"}]
+                    reply = run_async(flow_a.chat_section(
                         section_key=section_key,
                         messages=msgs_for_llm,
                         collected_so_far=st.session_state.fa_section_data,
                         industry=st.session_state.fa_industry,
                         position=st.session_state.fa_position,
                     ))
-                    loop.close()
-
                     if not sec_msgs:
-                        # 首轮：把开场 user 也存进去
                         sec_msgs.append({"role": "user", "content": f"开始采集{section['name']}吧。"})
                     sec_msgs.append({"role": "assistant", "content": reply["message"]})
 
                     if reply["type"] == "section_skipped":
                         st.session_state.fa_section_skipped.append(section_key)
                         st.session_state.fa_section_index += 1
-                        st.rerun()
                     elif reply["type"] == "section_done":
-                        # 立即提取本段数据并存
-                        flow_a2 = ResumeFlowA(llm_client, db=st.session_state.db)
-                        loop2 = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop2)
-                        extracted = loop2.run_until_complete(
-                            flow_a2.extract_section(section_key, sec_msgs)
-                        )
-                        loop2.close()
+                        extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
                         st.session_state.fa_section_data[section_key] = extracted
                         st.session_state.fa_section_done.append(section_key)
                         st.session_state.fa_section_index += 1
-                        st.rerun()
-                    else:
-                        st.rerun()
+                    st.rerun()
                 except Exception as exc:
                     st.error(f"AI 响应失败：{exc}")
-                    import traceback
-                    st.code(traceback.format_exc())
 
         user_input = st.chat_input(f"回复关于「{section['name']}」的问题...")
         if user_input:
             sec_msgs.append({"role": "user", "content": user_input})
             st.rerun()
 
-        # 操作按钮
-        bcol1, bcol2, bcol3 = st.columns(3)
-        with bcol1:
-            if section.get("skippable") and st.button(f"跳过 {section['name']}", key=f"fa_skip_{section_key}"):
+        b1, b2, _ = st.columns(3)
+        with b1:
+            if section.get("skippable") and st.button(f"跳过 {section['name']}"):
                 st.session_state.fa_section_skipped.append(section_key)
                 st.session_state.fa_section_index += 1
                 st.rerun()
-        with bcol2:
-            if st.button(f"完成本节，进入下一节", key=f"fa_next_{section_key}"):
-                # 强制提取并推进
+        with b2:
+            if st.button("完成本节，进入下一节"):
                 try:
-                    llm_client = st.session_state.agent.llm_client
-                    flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                    flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
                     if sec_msgs:
-                        extracted = loop.run_until_complete(
-                            flow_a.extract_section(section_key, sec_msgs)
-                        )
+                        extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
                         st.session_state.fa_section_data[section_key] = extracted
-                    loop.close()
                 except Exception as exc:
                     st.warning(f"提取本节数据时出错（继续推进）：{exc}")
                 st.session_state.fa_section_done.append(section_key)
                 st.session_state.fa_section_index += 1
                 st.rerun()
+        return
 
-    # --- Step 3: 派生 + 生成简历 ---
-    else:
-        st.progress(1.0, text=f"进度 {_TOTAL_SECTIONS}/{_TOTAL_SECTIONS} ✓")
-        st.markdown("### 第 3 步：生成简历")
-
-        if st.session_state.fa_resume_md is None:
-            with st.spinner("正在派生总结与核心能力、检索 JD 行业要求、生成简历..."):
-                try:
-                    llm_client = st.session_state.agent.llm_client
-                    flow_a = ResumeFlowA(llm_client, db=st.session_state.db)
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                    collected = st.session_state.fa_section_data or {}
-
-                    # RAG 骨架：先检索岗位核心要求，作为 derive 的输入
-                    skeleton = loop.run_until_complete(flow_a.build_skeleton(
-                        st.session_state.fa_position, st.session_state.fa_industry,
-                    ))
-
-                    # 派生 summary + core_competencies（朝 skeleton 蒸馏出的岗位要求靠拢）
-                    derived = loop.run_until_complete(flow_a.derive_summary_and_competencies(
-                        collected,
-                        industry=st.session_state.fa_industry,
-                        position=st.session_state.fa_position,
-                        skeleton_text=skeleton.get("text", ""),
-                    ))
-
-                    # 组装 raw_resume 给 normalize
-                    # collected 里:
-                    #   header → dict {name, contact}
-                    #   education / experience / projects → list
-                    #   skills → {"skills": [...]} 或 list
-                    #   languages → {"languages": [...]} 或 list
-                    skills_val = collected.get("skills")
-                    if isinstance(skills_val, dict):
-                        skills_val = skills_val.get("skills", [])
-                    languages_val = collected.get("languages")
-                    if isinstance(languages_val, dict):
-                        languages_val = languages_val.get("languages", [])
-
-                    raw_resume = {
-                        "header": collected.get("header", {}),
-                        "summary": derived.get("summary", ""),
-                        "core_competencies": derived.get("core_competencies", []),
-                        "education": collected.get("education", []) or [],
-                        "experience": collected.get("experience", []) or [],
-                        "projects": collected.get("projects", []) or [],
-                        "skills": skills_val or [],
-                        "languages": languages_val or [],
-                    }
-
-                    final_data = flow_a._normalize_resume_shape(raw_resume)
-                    loop.close()
-
-                    st.session_state.fa_resume_data = final_data
-                    st.session_state.fa_skeleton = skeleton
-                    st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
-                    st.session_state.fa_resume_html = flow_a.to_html(final_data)
-                    st.success("简历生成成功！")
-                except Exception as exc:
-                    st.error(f"生成失败：{exc}")
-                    import traceback
-                    st.code(traceback.format_exc())
-
-        if st.session_state.fa_resume_md:
-            st.markdown("#### 生成的简历")
-            st.markdown(st.session_state.fa_resume_md)
-
-            # 数据来源信息条
-            sk = st.session_state.fa_skeleton or {}
+    st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
+    st.markdown("### 第 3 步：生成简历")
+    if st.session_state.fa_resume_md is None:
+        with st.spinner("正在检索 JD 库、派生总结与核心能力、生成简历..."):
             try:
-                jd_count = st.session_state.db.get_stats().get("jds", 0)
-            except Exception:
-                jd_count = 0
-            source_label = "基于行业 JD 库蒸馏" if sk.get("source") == "rag" else "通用模板兜底（该岗位 JD 样本较少）"
-            industries_line = ""
-            if sk.get("source") == "rag" and sk.get("industries_covered"):
-                industries_line = f"覆盖行业：{', '.join(sk['industries_covered'])}。"
-            st.caption(
-                f"📊 本简历{source_label}。数据来自 **{jd_count:,} 份**公开 JD 数据库 "
-                f"（采集自 LinkedIn、Indeed、JobsDB、猎聘、前程无忧等全球主流招聘平台）。"
-                f"{industries_line}"
-                f"本轮 RAG 命中 {sk.get('n_chunks', 0)} 条相关 chunk。"
-            )
+                flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
+                collected = st.session_state.fa_section_data or {}
+                skeleton = run_async(flow_a.build_skeleton(st.session_state.fa_position, st.session_state.fa_industry))
+                derived = run_async(flow_a.derive_summary_and_competencies(
+                    collected,
+                    industry=st.session_state.fa_industry,
+                    position=st.session_state.fa_position,
+                    skeleton_text=skeleton.get("text", ""),
+                ))
+                skills_val = collected.get("skills")
+                if isinstance(skills_val, dict):
+                    skills_val = skills_val.get("skills", [])
+                languages_val = collected.get("languages")
+                if isinstance(languages_val, dict):
+                    languages_val = languages_val.get("languages", [])
+                raw_resume = {
+                    "header": collected.get("header", {}),
+                    "summary": derived.get("summary", ""),
+                    "core_competencies": derived.get("core_competencies", []),
+                    "education": collected.get("education", []) or [],
+                    "experience": collected.get("experience", []) or [],
+                    "projects": collected.get("projects", []) or [],
+                    "skills": skills_val or [],
+                    "languages": languages_val or [],
+                }
+                final_data = flow_a._normalize_resume_shape(raw_resume)
+                st.session_state.fa_resume_data = final_data
+                st.session_state.fa_skeleton = skeleton
+                st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
+                st.session_state.fa_resume_html = flow_a.to_html(final_data)
+                st.success("简历生成成功！")
+            except Exception as exc:
+                st.error(f"生成失败：{exc}")
 
-            dl1, dl2, dl3 = st.columns(3)
-            with dl1:
-                st.download_button("下载 Markdown", st.session_state.fa_resume_md, file_name=f"{st.session_state.fa_position}_简历.md", mime="text/markdown", key="fa_dl_md")
-            with dl2:
-                if st.session_state.fa_resume_html:
-                    st.download_button("下载 HTML (可打印 PDF)", st.session_state.fa_resume_html, file_name=f"{st.session_state.fa_position}_简历.html", mime="text/html", key="fa_dl_html")
-            with dl3:
-                if st.button("保存到数据库", key="fa_save_db"):
-                    try:
-                        rd = st.session_state.fa_resume_data
-                        # DB schema 暂不支持 languages / core_competencies，入库时丢这两个字段
-                        resume_payload = {
-                            "name": rd.get("header", {}).get("name", ""),
-                            "phone": rd.get("header", {}).get("contact", {}).get("phone", ""),
-                            "email": rd.get("header", {}).get("contact", {}).get("email", ""),
-                            "summary": rd.get("summary", "") or rd.get("header", {}).get("summary", ""),
-                            "skills": rd.get("skills", []),
-                            "education": rd.get("education", []),
-                            "projects": rd.get("projects", []),
-                            "target_roles": [st.session_state.fa_position],
-                        }
-                        resume_id = st.session_state.db.insert_resume(resume_payload)
-                        st.success(f"已保存，resume_id = {resume_id[:12]}...")
-                    except Exception as exc:
-                        st.error(f"保存失败：{exc}")
-
-            if st.button("重新开始", key="fa_restart"):
-                _fa_reset()
+    if st.session_state.fa_resume_md:
+        st.markdown(st.session_state.fa_resume_md)
+        sk = st.session_state.fa_skeleton or {}
+        st.caption(f"本轮 RAG 命中 {sk.get('n_chunks', 0)} 条 JD chunk。")
+        dl1, dl2, dl3, dl4 = st.columns(4)
+        with dl1:
+            st.download_button("下载 Markdown", st.session_state.fa_resume_md, file_name=f"{st.session_state.fa_position}_简历.md", mime="text/markdown")
+        with dl2:
+            st.download_button("下载 HTML", st.session_state.fa_resume_html, file_name=f"{st.session_state.fa_position}_简历.html", mime="text/html")
+        with dl3:
+            if st.button("保存到数据库"):
+                rd = st.session_state.fa_resume_data
+                resume_payload = {
+                    "user_id": st.session_state.auth_user_id,
+                    "name": rd.get("header", {}).get("name", ""),
+                    "phone": rd.get("header", {}).get("contact", {}).get("phone", ""),
+                    "email": rd.get("header", {}).get("contact", {}).get("email", ""),
+                    "summary": rd.get("summary", "") or rd.get("header", {}).get("summary", ""),
+                    "skills": rd.get("skills", []),
+                    "education": rd.get("education", []),
+                    "projects": rd.get("projects", []),
+                    "target_roles": [st.session_state.fa_position],
+                }
+                resume_id = st.session_state.db.insert_resume(resume_payload)
+                st.success(f"已保存，resume_id={resume_id[:12]}...")
+        with dl4:
+            if st.button("重新开始"):
+                reset_flow_a_state()
                 st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Flow B
+# ---------------------------------------------------------------------------
+
+
+def resume_to_db_payload(resume_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    header = resume_data.get("header", {})
+    contact = header.get("contact", {})
+    return {
+        "user_id": user_id,
+        "name": header.get("name", resume_data.get("name", "")),
+        "phone": contact.get("phone", resume_data.get("phone")),
+        "email": contact.get("email", resume_data.get("email")),
+        "summary": header.get("summary", resume_data.get("summary", "")),
+        "skills": resume_data.get("skills", []),
+        "education": resume_data.get("education", []),
+        "projects": resume_data.get("projects", []),
+    }
+
+
+def jd_to_db_payload(jd_text: str, jd_result: Dict[str, Any], user_id: str, source: str = "manual") -> Dict[str, Any]:
+    clf = Classifier()
+    tags = clf.classify(jd_result.get("title", ""), jd_text)
+    return {
+        "user_id": user_id,
+        "url": f"manual://{abs(hash(jd_text))}",
+        "title": jd_result.get("title", ""),
+        "company": jd_result.get("company", ""),
+        "location": jd_result.get("location", ""),
+        "raw_text": jd_text,
+        "source": source,
+        "parsed_sections": {
+            "requirements": jd_result.get("core_requirements", []),
+            "preferred": jd_result.get("preferred_requirements", []),
+            "implicit": jd_result.get("implicit_requirements", ""),
+        },
+        "tags": jd_result.get("keywords", []),
+        "language": jd_result.get("language", "zh"),
+        "industry_tag": tags.get("industry_tag"),
+        "function_tag": tags.get("function_tag"),
+        "position_tag": tags.get("position_tag"),
+        "auto_classified": 1,
+    }
+
+
+def render_generation_toolbar() -> None:
+    can_generate = bool(
+        st.session_state.services_ready
+        and st.session_state.resume_data
+        and st.session_state.jd_result
+        and st.session_state.match_result
+    )
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        if st.button("生成优化简历", type="primary", disabled=not can_generate, use_container_width=True):
+            generate_optimized_resume()
+    with col2:
+        if st.button("生成 Cover Letter", disabled=not can_generate, use_container_width=True):
+            generate_cover_letter()
+    with col3:
+        if not can_generate:
+            st.caption("完成上传简历、上传/选择 JD、匹配度分析后即可生成。")
+
+
+def generate_optimized_resume() -> None:
+    with st.spinner("正在基于 JD 库生成优化简历..."):
+        try:
+            from tools.retriever import Retriever
+            jd_query = st.session_state.jd_result.get("title") or st.session_state.jd_result.get("raw_text", "")[:200]
+            reference_chunks = Retriever().retrieve(jd_query, top_k=3, filter_chunk_type="responsibility")
+            recommendations = st.session_state.match_result.get("recommendations", [])
+            optimizer = ResumeOptimizer(st.session_state.llm_client)
+            optimized = run_async(optimizer.optimize(
+                st.session_state.resume_data,
+                st.session_state.jd_result,
+                recommendations,
+                reference_chunks=reference_chunks,
+            ))
+            generator = ResumeGenerator()
+            st.session_state.optimized_resume = generator.to_markdown(optimized)
+            st.session_state.optimized_resume_html = generator.to_html(optimized)
+            st.success("优化简历已生成。")
+        except Exception as exc:
+            st.error(f"生成优化简历失败：{exc}")
+
+
+def generate_cover_letter() -> None:
+    with st.spinner("正在生成 Cover Letter..."):
+        try:
+            company = st.session_state.flow_b_company_name or st.session_state.jd_result.get("company", "目标公司")
+            generator = CoverLetterGenerator(st.session_state.llm_client)
+            st.session_state.cover_letter = run_async(generator.generate(
+                st.session_state.resume_data,
+                st.session_state.jd_result,
+                company,
+            ))
+            st.success("Cover Letter 已生成。")
+        except Exception as exc:
+            st.error(f"生成 Cover Letter 失败：{exc}")
+
+
+def render_flow_b() -> None:
+    render_top_nav()
+    st.header("修改已有简历")
+    st.caption("上传简历和目标 JD，先看匹配度，再生成优化简历和 Cover Letter。")
+
+    if not require_services():
+        return
+
+    render_generation_toolbar()
+    st.divider()
+
+    step1, step2, step3 = st.columns(3)
+    step1.markdown('<span class="step-pill">1 上传简历</span>', unsafe_allow_html=True)
+    step2.markdown('<span class="step-pill">2 上传 / 选择 JD</span>', unsafe_allow_html=True)
+    step3.markdown('<span class="step-pill">3 匹配分析</span>', unsafe_allow_html=True)
+
+    with st.expander("1. 上传并解析简历", expanded=st.session_state.resume_data is None):
+        uploaded_resume = st.file_uploader("上传简历文件", type=["pdf", "docx", "md", "txt"], key="fb_resume_upload")
+        if uploaded_resume and st.button("解析简历", type="primary"):
+            temp_dir = PROJECT_ROOT / "data" / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = temp_dir / uploaded_resume.name
+            temp_path.write_bytes(uploaded_resume.getbuffer())
+            with st.spinner("正在解析简历..."):
+                parser = ResumeParser(llm_client=st.session_state.llm_client)
+                resume_data = run_async(parser.parse(str(temp_path)))
+                st.session_state.resume_data = resume_data
+                st.session_state.resume_id = st.session_state.db.insert_resume(
+                    resume_to_db_payload(resume_data, st.session_state.auth_user_id)
+                )
+                st.success("简历解析完成。")
+        if st.session_state.resume_data:
+            st.json(st.session_state.resume_data, expanded=False)
+
+    with st.expander("2. 上传 / 选择目标 JD", expanded=st.session_state.resume_data is not None and st.session_state.jd_result is None):
+        input_type = st.radio("JD 来源", ["粘贴 JD", "上传 PDF", "从 JD库选择", "职位 URL"], horizontal=True, key="fb_jd_input_type_radio")
+        if input_type == "粘贴 JD":
+            jd_text = st.text_area("粘贴目标 JD", height=220)
+            if st.button("分析并保存 JD", disabled=not jd_text):
+                with st.spinner("正在分析 JD..."):
+                    analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
+                    jd_result = run_async(analyzer.parse_from_text(jd_text))
+                    jd_payload = jd_to_db_payload(jd_text, jd_result, st.session_state.auth_user_id, source="manual")
+                    jd_id = insert_user_jd(st.session_state.db, st.session_state.auth_user_id, jd_payload)
+                    embed_and_store_jd_chunks(st.session_state.db, jd_id, jd_text, user_id=st.session_state.auth_user_id)
+                    st.session_state.jd_result = jd_result
+                    st.session_state.jd_id = jd_id
+                    st.success("JD 已分析并保存到 JD库。")
+        elif input_type == "上传 PDF":
+            uploaded_pdf = st.file_uploader("上传 JD PDF", type=["pdf"], key="fb_jd_pdf")
+            if uploaded_pdf and st.button("解析 PDF JD"):
+                upload_dir = PROJECT_ROOT / "data" / "uploads"
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                pdf_path = upload_dir / uploaded_pdf.name
+                pdf_path.write_bytes(uploaded_pdf.getbuffer())
+                with st.spinner("正在解析 PDF JD..."):
+                    jd_id = PdfIngestionService(db=st.session_state.db, classifier=Classifier()).ingest(
+                        str(pdf_path), user_id=st.session_state.auth_user_id,
+                    )
+                    jd = st.session_state.db.get_jd(jd_id)
+                    st.session_state.jd_id = jd_id
+                    st.session_state.jd_result = {
+                        "title": jd.get("title", ""),
+                        "company": jd.get("company", ""),
+                        "location": jd.get("location", ""),
+                        "core_requirements": jd.get("parsed_sections", {}).get("requirements", []),
+                        "keywords": jd.get("tags", []),
+                        "raw_text": jd.get("raw_text", ""),
+                    }
+                    st.success("PDF JD 已入库。")
+        elif input_type == "从 JD库选择":
+            rows = list_visible_jds(st.session_state.db, st.session_state.auth_user_id, limit=100)
+            options = {f"{r.get('title') or '未命名'} @ {r.get('company') or '未知公司'} ({r.get('source')})": r["id"] for r in rows}
+            selected = st.selectbox("选择 JD", list(options.keys()) if options else ["JD库暂无内容"])
+            if options and st.button("使用这个 JD"):
+                jd = get_visible_jd(st.session_state.db, st.session_state.auth_user_id, options[selected])
+                st.session_state.jd_id = jd["id"]
+                st.session_state.jd_result = {
+                    "title": jd.get("title", ""),
+                    "company": jd.get("company", ""),
+                    "location": jd.get("location", ""),
+                    "core_requirements": jd.get("parsed_sections", {}).get("requirements", []),
+                    "keywords": jd.get("tags", []),
+                    "raw_text": jd.get("raw_text", ""),
+                }
+                st.success("已选择 JD。")
+        else:
+            jd_url = st.text_input("职位 URL")
+            if st.button("从 URL 分析 JD", disabled=not jd_url):
+                with st.spinner("正在抓取并分析 JD..."):
+                    analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
+                    jd_result = run_async(analyzer.parse_from_url(jd_url))
+                    raw_text = jd_result.get("raw_text", jd_url)
+                    jd_payload = jd_to_db_payload(raw_text, jd_result, st.session_state.auth_user_id, source="url")
+                    jd_payload["url"] = jd_url
+                    jd_id = insert_user_jd(st.session_state.db, st.session_state.auth_user_id, jd_payload)
+                    embed_and_store_jd_chunks(st.session_state.db, jd_id, raw_text, user_id=st.session_state.auth_user_id)
+                    st.session_state.jd_result = jd_result
+                    st.session_state.jd_id = jd_id
+                    st.success("JD 已分析并保存。")
+        if st.session_state.jd_result:
+            st.json(st.session_state.jd_result, expanded=False)
+
+    with st.expander("3. 匹配度分析", expanded=st.session_state.resume_data is not None and st.session_state.jd_result is not None):
+        if st.button("分析匹配度", type="primary", disabled=not st.session_state.resume_data or not st.session_state.jd_result):
+            with st.spinner("正在分析匹配度..."):
+                agent = st.session_state.agent
+                agent.state["resume_data"] = st.session_state.resume_data
+                agent.state["jd_result"] = st.session_state.jd_result
+                result = run_async(agent._tool_analyze_match())
+                match_result = result.get("match_result", result)
+                st.session_state.match_result = match_result
+                score = match_result.get("score", 0)
+                st.session_state.last_match_score = score
+                if st.session_state.resume_id and st.session_state.jd_id:
+                    st.session_state.last_match_id = st.session_state.db.insert_match({
+                        "user_id": st.session_state.auth_user_id,
+                        "resume_id": st.session_state.resume_id,
+                        "jd_id": st.session_state.jd_id,
+                        "score": score,
+                        "reasoning": match_result.get("reasoning", ""),
+                        "matched_skills": match_result.get("matched_skills", []),
+                        "missing_skills": match_result.get("missing_skills", []),
+                        "gaps": match_result.get("gaps", []),
+                        "recommendations": match_result.get("recommendations", []),
+                        "skill_mapping": match_result.get("skill_mapping", []),
+                    })
+                    opt_ids = []
+                    for rec in match_result.get("recommendations", []):
+                        opt_ids.append(st.session_state.db.insert_optimization({
+                            "user_id": st.session_state.auth_user_id,
+                            "resume_id": st.session_state.resume_id,
+                            "jd_id": st.session_state.jd_id,
+                            "optimization_type": rec.get("type", "modify"),
+                            "section": rec.get("section", ""),
+                            "original_content": rec.get("original", ""),
+                            "suggested_content": rec.get("suggestion", ""),
+                            "reason": rec.get("reason", ""),
+                        }))
+                    st.session_state.last_opt_ids = opt_ids
+                st.success("匹配分析完成。")
+        if st.session_state.match_result:
+            match = st.session_state.match_result
+            st.metric("匹配度", f"{match.get('score', 0)}%")
+            if match.get("reasoning"):
+                st.write(match["reasoning"])
+            if match.get("matched_skills"):
+                st.markdown("**已匹配技能**")
+                st.write("、".join(match["matched_skills"]))
+            if match.get("missing_skills"):
+                st.markdown("**缺失技能**")
+                st.write("、".join(match["missing_skills"]))
+            if match.get("recommendations"):
+                st.markdown("**优化建议**")
+                for rec in match["recommendations"]:
+                    st.markdown(f"- **{rec.get('section', '')}**：{rec.get('reason') or rec.get('suggestion', '')}")
+
+    st.divider()
+    st.session_state.flow_b_company_name = st.text_input("目标公司名（用于 Cover Letter）", value=st.session_state.flow_b_company_name or (st.session_state.jd_result or {}).get("company", ""))
+    if st.session_state.optimized_resume:
+        st.markdown("### 优化后简历")
+        st.markdown(st.session_state.optimized_resume)
+        st.download_button("下载优化简历 Markdown", st.session_state.optimized_resume, file_name="optimized_resume.md", mime="text/markdown")
+        if st.session_state.optimized_resume_html:
+            st.download_button("下载优化简历 HTML", st.session_state.optimized_resume_html, file_name="optimized_resume.html", mime="text/html")
+    if st.session_state.cover_letter:
+        st.markdown("### Cover Letter")
+        st.markdown(st.session_state.cover_letter)
+        st.download_button("下载 Cover Letter", st.session_state.cover_letter, file_name="cover_letter.txt", mime="text/plain")
+
+
+# ---------------------------------------------------------------------------
+# JD library
+# ---------------------------------------------------------------------------
+
+
+def render_jd_library() -> None:
+    render_top_nav()
+    st.header("JD库")
+    st.caption("这里保存你上传过的 JD，也能看到之前爬取的公共种子 JD。")
+
+    user_id = st.session_state.auth_user_id
+    try:
+        changed = ensure_public_seed_jds(st.session_state.db)
+        if changed:
+            st.toast(f"已将 {changed} 条历史爬取 JD 标记为公共种子库。")
+    except Exception as exc:
+        st.warning(f"公共 JD 初始化失败：{exc}")
+
+    with st.expander("添加 JD 到我的 JD库"):
+        jd_text = st.text_area("粘贴 JD", height=220, key="jd_library_add_text")
+        if st.button("分析并保存到 JD库", disabled=not jd_text):
+            if not require_services():
+                return
+            with st.spinner("正在分析并保存 JD..."):
+                analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
+                jd_result = run_async(analyzer.parse_from_text(jd_text))
+                jd_payload = jd_to_db_payload(jd_text, jd_result, user_id, source="manual")
+                jd_id = insert_user_jd(st.session_state.db, user_id, jd_payload)
+                embed_and_store_jd_chunks(st.session_state.db, jd_id, jd_text, user_id=user_id)
+                st.success("已保存到 JD库。")
+
+    col_s, col_f = st.columns([2, 1])
+    with col_s:
+        search = st.text_input("搜索 JD", placeholder="职位、公司、关键词")
+    with col_f:
+        sources = ["全部"] + list_sources(st.session_state.db, user_id)
+        source = st.selectbox("来源", sources)
+
+    rows = list_visible_jds(
+        st.session_state.db,
+        user_id,
+        search=search or None,
+        source=None if source == "全部" else source,
+        limit=100,
+    )
+    st.metric("可见 JD", len(rows))
+
+    for jd in rows:
+        owned = jd.get("user_id") == user_id
+        badge = '<span class="private-badge">我的 JD</span>' if owned else '<span class="public-badge">公共 JD</span>'
+        with st.expander(f"{jd.get('title') or '未命名'} @ {jd.get('company') or '未知公司'}"):
+            st.markdown(badge, unsafe_allow_html=True)
+            st.caption(f"来源：{jd.get('source')} · 岗位标签：{jd.get('position_tag') or '未分类'}")
+            st.write((jd.get("raw_text") or "")[:1200])
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("用于修改已有简历", key=f"use_jd_{jd['id']}"):
+                    st.session_state.jd_id = jd["id"]
+                    st.session_state.jd_result = {
+                        "title": jd.get("title", ""),
+                        "company": jd.get("company", ""),
+                        "location": jd.get("location", ""),
+                        "core_requirements": jd.get("parsed_sections", {}).get("requirements", []),
+                        "keywords": jd.get("tags", []),
+                        "raw_text": jd.get("raw_text", ""),
+                    }
+                    st.session_state.app_route = "flow_b"
+                    st.rerun()
+            with c2:
+                if owned and st.button("删除", key=f"delete_jd_{jd['id']}"):
+                    try:
+                        delete_user_jd(st.session_state.db, user_id, jd["id"])
+                        st.success("已删除。")
+                        st.rerun()
+                    except JdLibraryError as exc:
+                        st.error(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+init_session_state()
+init_app_services()
+
+if not st.session_state.auth_user:
+    render_landing()
+elif st.session_state.app_route == "flow_a":
+    render_flow_a()
+elif st.session_state.app_route == "flow_b":
+    render_flow_b()
+elif st.session_state.app_route == "jd_library":
+    render_jd_library()
+else:
+    st.session_state.app_route = "mode_select"
+    render_mode_select()

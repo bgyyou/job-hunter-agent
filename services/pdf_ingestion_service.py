@@ -53,6 +53,7 @@ class PdfIngestionService:
         chunks = self._contextualize(chunks)
 
         jd_data = self._build_jd_data(pdf_path, chunks)
+        jd_data["user_id"] = user_id
         if self.classifier is not None:
             self._apply_classifier(jd_data)
 
