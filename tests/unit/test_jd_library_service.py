@@ -5,10 +5,13 @@ import pytest
 
 from services.jd_library_service import (
     JdLibraryError,
+    cleanup_garbage_public_jds,
+    count_visible_jds,
     delete_user_jd,
     ensure_public_seed_jds,
     get_visible_jd,
     insert_user_jd,
+    is_garbage_jd,
     list_sources,
     list_visible_jds,
 )
@@ -63,6 +66,71 @@ def test_user_can_delete_own_jd(tmp_db):
     delete_user_jd(tmp_db, "user-1", jid)
 
     assert get_visible_jd(tmp_db, "user-1", jid) is None
+
+
+
+
+def test_count_visible_jds_matches_filters(tmp_db):
+    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/pm", source="manual", title="AI PM"))
+    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/data", source="manual_batch", title="Data PM"))
+    insert_user_jd(tmp_db, "user-2", _jd("https://manual.example/other", source="manual", title="Other PM"))
+
+    assert count_visible_jds(tmp_db, "user-1") == 2
+    assert count_visible_jds(tmp_db, "user-1", source="manual_batch") == 1
+    assert count_visible_jds(tmp_db, "user-1", search="Data") == 1
+
+
+def test_list_visible_jds_pagination_after_100(tmp_db):
+    for i in range(105):
+        insert_user_jd(tmp_db, "user-1", _jd(f"https://manual.example/{i}", title=f"PM {i:03d}"))
+
+    first_page = list_visible_jds(tmp_db, "user-1", limit=100, offset=0)
+    second_page = list_visible_jds(tmp_db, "user-1", limit=20, offset=100)
+
+    assert len(first_page) == 100
+    assert len(second_page) == 5
+    assert count_visible_jds(tmp_db, "user-1") == 105
+
+
+def test_garbage_jd_detection_is_conservative():
+    garbage = _jd(
+        "https://liepin.example/verify",
+        source="liepin_batch",
+        title="安全验证",
+    )
+    garbage["company"] = ""
+    garbage["raw_text"] = "人机验证 请先登录后继续访问 verify captcha"
+    garbage["position_tag"] = None
+
+    user_manual = dict(garbage)
+    user_manual["source"] = "manual"
+
+    assert is_garbage_jd(garbage) is True
+    assert is_garbage_jd(user_manual) is False
+
+
+def test_cleanup_garbage_public_jds_soft_deletes_only_public_crawled(tmp_db):
+    garbage_id = tmp_db.insert_jd(_jd("https://liepin.example/verify", source="liepin_batch", title="安全验证"))
+    good_id = tmp_db.insert_jd(_jd("https://liepin.example/good", source="liepin_batch", title="AI 产品经理"))
+    manual_id = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/verify", source="manual", title="安全验证"))
+    ensure_public_seed_jds(tmp_db)
+
+    conn = tmp_db._get_conn()
+    try:
+        conn.execute("UPDATE jds SET company = '', raw_text = ?, position_tag = NULL WHERE id = ?", ("验证码 人机验证 请先登录 verify captcha", garbage_id))
+        conn.execute("UPDATE jds SET company = '', raw_text = ?, position_tag = NULL WHERE id = ?", ("验证码 人机验证 请先登录 verify captcha", manual_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    preview = cleanup_garbage_public_jds(tmp_db, dry_run=True)
+    assert {row["id"] for row in preview} == {garbage_id}
+
+    removed = cleanup_garbage_public_jds(tmp_db, dry_run=False)
+    assert {row["id"] for row in removed} == {garbage_id}
+    assert get_visible_jd(tmp_db, "user-1", garbage_id) is None
+    assert get_visible_jd(tmp_db, "user-1", good_id) is not None
+    assert get_visible_jd(tmp_db, "user-1", manual_id) is not None
 
 
 def test_search_and_source_filter(tmp_db):

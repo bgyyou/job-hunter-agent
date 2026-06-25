@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
+from tools.anti_bot import AntiBotDetector
+
 from .base_scraper import BaseScraper
 from .human_playwright_scraper import HumanPlaywrightScraper
 
@@ -37,6 +39,7 @@ class LiepinScraper(BaseScraper):
         self.headless = headless
         self.human_speed = human_speed
         self.user_data_dir = user_data_dir
+        self.anti_bot = AntiBotDetector()
 
     async def __aenter__(self):
         await self._init_playwright()
@@ -195,8 +198,6 @@ class LiepinScraper(BaseScraper):
             page = self.playwright_scraper.page
 
             # 猎聘 2026 详情页 DOM 经常调整 class 名，靠固定 selector 太脆。
-            # 策略：用一组宽松的候选 selector 取结构化字段，**正文直接用 body 全文兜底**
-            # —— 猎聘详情页除了正文没什么噪声，全文当 raw_text 不影响后续 RAG 切片。
             title = await self._first_text(page, ["h1", ".job-title-left .name", ".name", "[class*='job-title']"])
             company = await self._first_text(page, [
                 "[class*='company-info'] [class*='name']",
@@ -211,10 +212,12 @@ class LiepinScraper(BaseScraper):
                 ".job-area",
             ])
 
-            body_text = await page.evaluate("() => document.body.innerText")
-            body_text = (body_text or "").strip()
+            body_text = ((await page.evaluate("() => document.body.innerText")) or "").strip()
+            detected, reason = self.anti_bot.detect_text(body_text)
+            if detected:
+                logger.warning(f"[liepin] parse_job skipped anti-bot page: {reason} {job_url}")
+                return {}
 
-            # 优先用专门的正文 selector，没命中就用 body 全文
             description = await self._first_text(page, [
                 "[class*='job-intro']",
                 "[class*='job-description']",
@@ -222,11 +225,18 @@ class LiepinScraper(BaseScraper):
                 ".job-item .content",
                 "[class*='describe']",
             ])
+            description = (description or "").strip()
             if not description:
-                description = body_text
+                logger.warning(f"[liepin] parse_job skipped: no job description selector matched {job_url}")
+                return {}
+            if len(description) < 80:
+                logger.warning(f"[liepin] parse_job skipped: description too short {job_url}")
+                return {}
 
-            if not description:
-                logger.warning(f"[liepin] parse_job: body_text 也为空 {job_url}")
+            detected, reason = self.anti_bot.detect_text(description)
+            if detected:
+                logger.warning(f"[liepin] parse_job skipped anti-bot description: {reason} {job_url}")
+                return {}
 
             return {
                 "platform": "liepin",
@@ -236,7 +246,7 @@ class LiepinScraper(BaseScraper):
                 "company": company,
                 "location": location,
                 "description": description,
-                "raw_text": description or body_text,
+                "raw_text": description,
                 "scraped_at": datetime.now().isoformat(),
             }
         except Exception as e:

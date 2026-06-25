@@ -4,6 +4,7 @@
 提供反爬检测和应对策略
 """
 
+import asyncio
 import random
 import time
 from typing import Dict, List, Optional, Tuple
@@ -45,6 +46,13 @@ class AntiBotDetector:
         self.ua = UserAgent()
         self.logger = logger.bind(component="anti_bot_detector")
 
+    def detect_text(self, text: str) -> Tuple[bool, str]:
+        content = (text or "").lower()
+        for keyword in self.ANTI_BOT_KEYWORDS:
+            if keyword.lower() in content:
+                return True, f"检测到关键词: {keyword}"
+        return False, ""
+
     def detect(self, response: object) -> Tuple[bool, str]:
         """
         检测是否被反爬
@@ -62,11 +70,9 @@ class AntiBotDetector:
 
         # 检查响应内容
         if hasattr(response, "text"):
-            content = response.text.lower()
-
-            for keyword in self.ANTI_BOT_KEYWORDS:
-                if keyword in content:
-                    return True, f"检测到关键词: {keyword}"
+            detected, reason = self.detect_text(response.text)
+            if detected:
+                return True, reason
 
         # 检查重定向
         if hasattr(response, "history") and response.history:

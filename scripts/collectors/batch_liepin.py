@@ -37,6 +37,7 @@ from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
 from database.factory import get_db
+from services.jd_library_service import is_garbage_jd
 from tools.scraper.liepin_scraper import LiepinScraper
 
 
@@ -127,6 +128,10 @@ async def crawl_one_keyword(
             continue
 
         row = _map_to_jd_row(detail, keyword)
+        if is_garbage_jd(row):
+            logger.warning(f"[{keyword}] skipped garbage JD: {job_url}")
+            stats["skipped"] += 1
+            continue
         try:
             db.insert_jd(row)
             stats["inserted"] += 1
@@ -151,17 +156,13 @@ async def run(
 
     scraper: Optional[LiepinScraper] = None
     try:
-        # 第一次启动前做登录态检查，但只 warn 不 block——
-        # 猎聘改版后旧 selector 可能失效，真的没登录搜索页会重定向到登录页，到时再失败。
+        # 第一次启动前做登录态检查；登录失效时直接停止，避免把登录/验证页写入 JD 库。
         scraper = LiepinScraper(headless=headless)
         login_ok = await scraper.check_login()
         if not login_ok:
-            logger.warning(
-                "[liepin] check_login selector 没匹配上用户节点，但 profile 已存在；"
-                "继续尝试搜索，若被重定向到登录页再停。"
-            )
-        else:
-            logger.info("[liepin] 登录态 OK，开始批量爬取")
+            logger.error("[liepin] 登录态失效，停止批量爬取。请先重新运行 login_liepin.py。")
+            return total
+        logger.info("[liepin] 登录态 OK，开始批量爬取")
 
         for i, kw in enumerate(keywords):
             if scraper is None:

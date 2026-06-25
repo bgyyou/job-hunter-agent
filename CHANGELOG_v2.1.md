@@ -1091,3 +1091,36 @@ python -m streamlit run web_app.py --server.headless true --server.port 8502  # 
 - 不删除爬虫代码，只从产品 UI 隐藏实验性入口。
 - 不删除 `match_history` 表，只删除投递历史 UI。
 - 不复制历史 JD/chunks 到每个用户，采用公共种子库。
+
+---
+
+## [M8 增量优化：Flow A 降本 + JD库治理 + 极简 Hero] 2026-06-25
+
+### 范围
+按用户反馈收敛产品体验：结构化信息不再走多轮 LLM，对话只保留工作经历/项目经历；JD库去掉 100 条硬限制并治理猎聘验证码/登录页脏数据；Landing 首屏改成极简品牌页。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Flow A 降本 | 新增基础信息表单，姓名、电话、邮箱、学校、专业、学历、技能、语言直接写入 `fa_section_data`，不调用 LLM | `web_app.py` |
+| Flow A 白名单 | LLM section 硬切为 `experience / projects`，个人优势作为素材交给现有 `derive_summary_and_competencies` 与 RAG skeleton 一起归纳 | `web_app.py` |
+| JD库分页 | 新增 `count_visible_jds`，JD库页面显示真实总数、页码和每页数量；Flow B 从 JD库选择也改为搜索 + 分页 | `services/jd_library_service.py`, `web_app.py` |
+| 废数据治理 | 新增高置信垃圾 JD 判断和 `cleanup_garbage_public_jds(dry_run=...)`，只软删除公共爬取来源里的登录/验证码/人机验证页 | `services/jd_library_service.py`, `web_app.py` |
+| Liepin 防线 | `parse_job` 不再把 `body_text` 当 JD 正文兜底；命中反爬文本、正文 selector 缺失或正文过短时跳过 | `tools/scraper/liepin_scraper.py` |
+| Batch 防线 | 猎聘登录态检查失败直接停止；入库前二次调用垃圾 JD 判断 | `scripts/collectors/batch_liepin.py` |
+| 反爬工具 | `AntiBotDetector` 新增 `detect_text`，供 Playwright 页面文本复用 | `tools/anti_bot.py` |
+| Hero | 首屏只保留 `JobHunter`、`你的全能求职智能体！`、`整理全行业 2w+ 真实 JD 数据`、`马上开始`，案例放到第二屏并加轻量滚动动画 | `web_app.py` |
+| 测试 | 增加 JD库 count/filter/pagination/垃圾软删除测试 | `tests/unit/test_jd_library_service.py` |
+
+### 验证
+```bash
+pytest tests/unit/test_jd_library_service.py tests/integration/test_resume_flow_a.py -q  # 22 passed
+pytest tests/ -q  # 140 passed
+```
+
+### 显式不做
+- 不重写 Flow A / Flow B 核心算法。
+- 不硬删除历史 JD，只软删除高置信公共爬取垃圾数据。
+- 不接真实微信、短信、邮箱验证码。
+- 不引入新的前端框架或构建链。

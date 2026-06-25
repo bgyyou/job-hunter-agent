@@ -25,6 +25,8 @@ from database.classifier import Classifier
 from services.auth_service import AuthError, AuthService
 from services.jd_library_service import (
     JdLibraryError,
+    cleanup_garbage_public_jds,
+    count_visible_jds,
     delete_user_jd,
     ensure_public_seed_jds,
     get_visible_jd,
@@ -45,6 +47,8 @@ from tools.scraper.scraper_manager import ScraperManager
 
 settings.setup_logging()
 
+LLM_COLLECT_SECTION_KEYS = {"experience", "projects"}
+
 st.set_page_config(
     page_title="JobHunter",
     page_icon="💼",
@@ -55,7 +59,16 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1180px; }
+    .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1180px; }
+    .landing-shell { scroll-snap-type: y proximity; scroll-behavior: smooth; }
+    .hero-screen { min-height: calc(100vh - 4rem); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; scroll-snap-align:start; }
+    .brand-title { font-size: clamp(4rem, 11vw, 8.5rem); line-height:.9; font-weight:900; letter-spacing:-0.08em; color:#0f172a; margin-bottom:1.4rem; animation: heroRise .8s ease-out both; }
+    .hero-slogan { font-size: clamp(1.7rem, 3.5vw, 3rem); font-weight:750; color:#111827; margin-bottom:.75rem; animation: heroRise .8s ease-out .08s both; }
+    .hero-proof { font-size:1.05rem; color:#64748b; margin-bottom:2rem; animation: heroRise .8s ease-out .16s both; }
+    .scroll-hint { margin-top:2rem; color:#94a3b8; font-size:.9rem; animation: floatHint 1.8s ease-in-out infinite; }
+    .examples-screen { min-height: calc(100vh - 4rem); display:flex; flex-direction:column; justify-content:center; scroll-snap-align:start; }
+    @keyframes heroRise { from { opacity:0; transform: translateY(18px); } to { opacity:1; transform: translateY(0); } }
+    @keyframes floatHint { 0%,100% { transform: translateY(0); opacity:.55; } 50% { transform: translateY(8px); opacity:1; } }
     .hero-title { font-size: 3.3rem; line-height: 1.05; font-weight: 800; letter-spacing: -0.04em; color: #111827; }
     .hero-subtitle { font-size: 1.15rem; color: #475569; line-height: 1.8; margin: 1rem 0 1.5rem 0; }
     .muted { color: #64748b; }
@@ -72,6 +85,32 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+
+def split_items(text: str) -> List[str]:
+    if not text:
+        return []
+    normalized = text.replace("，", ",").replace("；", ";").replace("\n", ",")
+    parts: List[str] = []
+    for chunk in normalized.replace(";", ",").split(","):
+        item = chunk.strip()
+        if item:
+            parts.append(item)
+    return parts
+
+
+def parse_languages(text: str) -> List[Dict[str, str]]:
+    languages = []
+    for item in split_items(text):
+        if "(" in item and item.endswith(")"):
+            name, level = item[:-1].split("(", 1)
+        elif "（" in item and item.endswith("）"):
+            name, level = item[:-1].split("（", 1)
+        else:
+            name, level = item, ""
+        if name.strip():
+            languages.append({"name": name.strip(), "level": level.strip()})
+    return languages
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +166,12 @@ def init_session_state() -> None:
         "fa_section_messages": {},
         "fa_section_done": [],
         "fa_section_skipped": [],
+        "fa_basic_form_done": False,
+        "jd_library_page": 1,
+        "jd_library_page_size": 25,
+        "flow_b_jd_page": 1,
+        "flow_b_jd_page_size": 25,
+        "jd_garbage_preview": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -192,6 +237,7 @@ def reset_flow_a_state() -> None:
     st.session_state.fa_section_messages = {}
     st.session_state.fa_section_done = []
     st.session_state.fa_section_skipped = []
+    st.session_state.fa_basic_form_done = False
 
 
 def reset_flow_b_state() -> None:
@@ -283,35 +329,25 @@ def render_top_nav() -> None:
 
 
 def render_landing() -> None:
-    hero_left, hero_right = st.columns([1.1, 0.9], gap="large")
-    with hero_left:
-        st.markdown('<div class="hero-title">把你的经历，改写成目标岗位想看的简历</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="hero-subtitle">基于真实 JD 库，自动分析差距、重写表达、生成定制简历和 Cover Letter。</div>',
-            unsafe_allow_html=True,
-        )
-        cta_col, hint_col = st.columns([1, 2])
-        with cta_col:
-            if st.button("马上开始", type="primary", use_container_width=True):
-                render_auth_dialog()
-        with hint_col:
-            st.caption("从 0 生成简历，或上传已有简历做岗位定制优化。")
-        st.markdown(" ")
-        v1, v2, v3 = st.columns(3)
-        v1.metric("JD 召回", "RAG")
-        v2.metric("双流程", "生成 / 优化")
-        v3.metric("输出", "简历 + Cover Letter")
+    st.markdown('<div class="landing-shell">', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <section class="hero-screen">
+            <div class="brand-title">JobHunter</div>
+            <div class="hero-slogan">你的全能求职智能体！</div>
+            <div class="hero-proof">整理全行业 2w+ 真实 JD 数据</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3 = st.columns([2, 1, 2])
+    with c2:
+        if st.button("马上开始", type="primary", use_container_width=True):
+            render_auth_dialog()
+    st.markdown('<div class="scroll-hint">向下查看简历优化示例 ↓</div></section>', unsafe_allow_html=True)
 
-    with hero_right:
-        st.markdown('<div class="product-card">', unsafe_allow_html=True)
-        st.markdown("#### 简历优化示例")
-        st.markdown('<div class="before-card"><b>原始表达</b><br/>负责产品需求分析，参与 AI 工具设计。</div>', unsafe_allow_html=True)
-        st.markdown(" ")
-        st.markdown('<div class="after-card"><b>优化后</b><br/>围绕 AI 搜索场景完成 12 个客户访谈与竞品拆解，定义 MVP 范围并推动 RAG 问答体验上线。</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.divider()
+    st.markdown('<section class="examples-screen">', unsafe_allow_html=True)
     st.markdown("### 简历修改案例")
+    st.caption("把泛泛而谈的经历，改写成目标岗位真正关心的证据。")
     cases = [
         ("项目经历太泛", "参与多智能体系统开发", "设计 Agent 协作链路与缓存策略，推动求职匹配流程从手工筛选转为自动化推荐。"),
         ("技能列表堆砌", "Python、SQL、LLM", "将 Python/SQL/LLM 落到 RAG 检索、Prompt 链路、质量评估等岗位相关场景。"),
@@ -322,9 +358,11 @@ def render_landing() -> None:
         with col:
             st.markdown('<div class="soft-card">', unsafe_allow_html=True)
             st.markdown(f"#### {title}")
-            st.markdown(f"**Before**  \n{before}")
-            st.markdown(f"**After**  \n{after}")
+            st.markdown(f'<div class="before-card"><b>Before</b><br/>{before}</div>', unsafe_allow_html=True)
+            st.markdown(" ")
+            st.markdown(f'<div class="after-card"><b>After</b><br/>{after}</div>', unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</section></div>', unsafe_allow_html=True)
 
 
 def render_mode_select() -> None:
@@ -369,8 +407,8 @@ def render_flow_a() -> None:
     if not require_services():
         return
 
-    collect_sections = [s for s in SECTIONS if not s.get("derived")]
-    total_sections = len(SECTIONS)
+    collect_sections = [s for s in SECTIONS if not s.get("derived") and s["key"] in LLM_COLLECT_SECTION_KEYS]
+    total_sections = 1 + len(collect_sections)
 
     if not st.session_state.fa_position:
         st.markdown("### 第 1 步：选择目标岗位")
@@ -385,7 +423,7 @@ def render_flow_a() -> None:
             positions = taxonomy.list_positions(industry, function) if industry != "(请选择)" and function and function != "(请选择)" else []
             position = st.selectbox("岗位", ["(请选择)"] + positions if positions else ["(请先选职能)"], key="fa_position_select", disabled=not positions)
 
-        if st.button("确定，开始对话", type="primary", disabled=position == "(请选择)" or not positions):
+        if st.button("确定，填写基础信息", type="primary", disabled=position == "(请选择)" or not positions):
             st.session_state.fa_industry = industry
             st.session_state.fa_function = function
             st.session_state.fa_position = position
@@ -394,15 +432,86 @@ def render_flow_a() -> None:
             st.session_state.fa_section_messages = {}
             st.session_state.fa_section_done = []
             st.session_state.fa_section_skipped = []
+            st.session_state.fa_basic_form_done = False
             st.rerun()
+        return
+
+    if not st.session_state.fa_basic_form_done:
+        st.progress(0.0, text=f"进度 0/{total_sections}")
+        st.markdown("### 第 2 步：填写基础信息")
+        st.caption("这些结构化字段不调用 LLM，直接进入简历。")
+        if st.button("重新选择岗位"):
+            reset_flow_a_state()
+            st.rerun()
+
+        with st.form("flow_a_basic_form"):
+            st.markdown("#### 个人信息")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                name = st.text_input("姓名 *")
+                phone = st.text_input("电话")
+            with c2:
+                email = st.text_input("邮箱")
+                wechat = st.text_input("微信（可选）")
+            with c3:
+                linkedin = st.text_input("LinkedIn / 作品链接（可选）")
+                location = st.text_input("所在地（可选）")
+
+            st.markdown("#### 教育经历")
+            e1, e2, e3 = st.columns(3)
+            with e1:
+                school = st.text_input("学校 *")
+                degree = st.text_input("学历 *", placeholder="本科 / 硕士 / 博士")
+            with e2:
+                major = st.text_input("专业 *")
+                start_year = st.text_input("入学年份", placeholder="2020")
+            with e3:
+                end_year = st.text_input("毕业年份", placeholder="2024")
+
+            st.markdown("#### 技能与优势")
+            skills_text = st.text_area("技能（用逗号或换行分隔）", placeholder="Python, SQL, LLM, RAG, 产品设计")
+            languages_text = st.text_input("语言能力（用逗号分隔）", placeholder="中文（母语）, 英语（CET-6）")
+            raw_advantages = st.text_area("个人优势 / 亮点素材", placeholder="例如：跨团队推进强、做过 0-1 AI 产品、有数据分析背景……")
+            submitted = st.form_submit_button("保存基础信息，开始经历对话", type="primary")
+
+        if submitted:
+            if not name.strip() or not school.strip() or not degree.strip() or not major.strip():
+                st.error("姓名、学校、学历、专业为必填。")
+            elif not phone.strip() and not email.strip():
+                st.error("电话和邮箱至少填写一项。")
+            else:
+                st.session_state.fa_section_data.update({
+                    "header": {
+                        "name": name.strip(),
+                        "contact": {
+                            "phone": phone.strip(),
+                            "email": email.strip(),
+                            "wechat": wechat.strip(),
+                            "linkedin": linkedin.strip(),
+                        },
+                        "location": location.strip(),
+                    },
+                    "education": [{
+                        "school": school.strip(),
+                        "degree": degree.strip(),
+                        "major": major.strip(),
+                        "start_year": start_year.strip(),
+                        "end_year": end_year.strip(),
+                    }],
+                    "skills": split_items(skills_text),
+                    "languages": parse_languages(languages_text),
+                    "raw_advantages": raw_advantages.strip(),
+                })
+                st.session_state.fa_basic_form_done = True
+                st.rerun()
         return
 
     if st.session_state.fa_section_index < len(collect_sections):
         section = collect_sections[st.session_state.fa_section_index]
         section_key = section["key"]
-        finished = len(st.session_state.fa_section_done) + len(st.session_state.fa_section_skipped)
+        finished = 1 + len(st.session_state.fa_section_done) + len(st.session_state.fa_section_skipped)
         st.progress(finished / total_sections, text=f"进度 {finished}/{total_sections}")
-        st.markdown(f"### 第 2 步：采集 {section['name']}")
+        st.markdown(f"### 第 3 步：采集 {section['name']}")
         st.caption(f"目标：{st.session_state.fa_industry} / {st.session_state.fa_position}")
 
         if st.button("重新选择岗位"):
@@ -469,7 +578,7 @@ def render_flow_a() -> None:
         return
 
     st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
-    st.markdown("### 第 3 步：生成简历")
+    st.markdown("### 第 4 步：生成简历")
     if st.session_state.fa_resume_md is None:
         with st.spinner("正在检索 JD 库、派生总结与核心能力、生成简历..."):
             try:
@@ -710,7 +819,29 @@ def render_flow_b() -> None:
                     }
                     st.success("PDF JD 已入库。")
         elif input_type == "从 JD库选择":
-            rows = list_visible_jds(st.session_state.db, st.session_state.auth_user_id, limit=100)
+            jd_search = st.text_input("搜索 JD库", placeholder="职位、公司、关键词", key="flow_b_jd_search")
+            total = count_visible_jds(st.session_state.db, st.session_state.auth_user_id, search=jd_search or None)
+            page_size = st.session_state.flow_b_jd_page_size
+            max_page = max(1, (total + page_size - 1) // page_size)
+            st.session_state.flow_b_jd_page = min(st.session_state.flow_b_jd_page, max_page)
+            p1, p2, p3 = st.columns([1, 1, 2])
+            with p1:
+                if st.button("上一页", disabled=st.session_state.flow_b_jd_page <= 1, key="fb_jd_prev"):
+                    st.session_state.flow_b_jd_page -= 1
+                    st.rerun()
+            with p2:
+                if st.button("下一页", disabled=st.session_state.flow_b_jd_page >= max_page, key="fb_jd_next"):
+                    st.session_state.flow_b_jd_page += 1
+                    st.rerun()
+            with p3:
+                st.caption(f"共 {total} 条 · 第 {st.session_state.flow_b_jd_page}/{max_page} 页")
+            rows = list_visible_jds(
+                st.session_state.db,
+                st.session_state.auth_user_id,
+                search=jd_search or None,
+                limit=page_size,
+                offset=(st.session_state.flow_b_jd_page - 1) * page_size,
+            )
             options = {f"{r.get('title') or '未命名'} @ {r.get('company') or '未知公司'} ({r.get('source')})": r["id"] for r in rows}
             selected = st.selectbox("选择 JD", list(options.keys()) if options else ["JD库暂无内容"])
             if options and st.button("使用这个 JD"):
@@ -848,14 +979,70 @@ def render_jd_library() -> None:
         sources = ["全部"] + list_sources(st.session_state.db, user_id)
         source = st.selectbox("来源", sources)
 
+    source_filter = None if source == "全部" else source
+    total = count_visible_jds(
+        st.session_state.db,
+        user_id,
+        search=search or None,
+        source=source_filter,
+    )
+    page_options = [10, 25, 50]
+    page_col, size_col, nav_col = st.columns([1, 1, 2])
+    with size_col:
+        page_size = st.selectbox(
+            "每页数量",
+            page_options,
+            index=page_options.index(st.session_state.jd_library_page_size) if st.session_state.jd_library_page_size in page_options else 1,
+        )
+    if page_size != st.session_state.jd_library_page_size:
+        st.session_state.jd_library_page_size = page_size
+        st.session_state.jd_library_page = 1
+        st.rerun()
+
+    max_page = max(1, (total + st.session_state.jd_library_page_size - 1) // st.session_state.jd_library_page_size)
+    st.session_state.jd_library_page = min(st.session_state.jd_library_page, max_page)
+    with page_col:
+        st.metric("可见 JD", total)
+    with nav_col:
+        prev_col, page_info_col, next_col = st.columns([1, 2, 1])
+        with prev_col:
+            if st.button("上一页", disabled=st.session_state.jd_library_page <= 1):
+                st.session_state.jd_library_page -= 1
+                st.rerun()
+        with page_info_col:
+            st.caption(f"第 {st.session_state.jd_library_page}/{max_page} 页")
+        with next_col:
+            if st.button("下一页", disabled=st.session_state.jd_library_page >= max_page):
+                st.session_state.jd_library_page += 1
+                st.rerun()
+
     rows = list_visible_jds(
         st.session_state.db,
         user_id,
         search=search or None,
-        source=None if source == "全部" else source,
-        limit=100,
+        source=source_filter,
+        limit=st.session_state.jd_library_page_size,
+        offset=(st.session_state.jd_library_page - 1) * st.session_state.jd_library_page_size,
     )
-    st.metric("可见 JD", len(rows))
+
+    with st.expander("JD库维护：扫描废数据"):
+        st.caption("只扫描公共爬取来源，并用软删除处理高置信登录/验证码/人机验证页面。")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("扫描疑似废数据"):
+                st.session_state.jd_garbage_preview = cleanup_garbage_public_jds(st.session_state.db, dry_run=True)
+        with c2:
+            if st.button("软删除高置信废数据", disabled=not st.session_state.jd_garbage_preview):
+                removed = cleanup_garbage_public_jds(st.session_state.db, dry_run=False)
+                st.session_state.jd_garbage_preview = []
+                st.success(f"已软删除 {len(removed)} 条高置信废数据。")
+                st.rerun()
+        preview = st.session_state.jd_garbage_preview
+        if preview:
+            st.warning(f"扫描到 {len(preview)} 条疑似废数据。")
+            for item in preview[:10]:
+                st.caption(f"{item.get('title') or '未命名'} · {item.get('source')} · {item.get('company') or '未知公司'}")
+
 
     for jd in rows:
         owned = jd.get("user_id") == user_id
