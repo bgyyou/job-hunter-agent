@@ -488,9 +488,8 @@ def stream_llm_to_sync(async_gen):
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
-        "show_landing": False,
-        "auth_user": DEV_USER if BYPASS_AUTH else None,
-        "auth_user_id": DEV_USER["id"] if BYPASS_AUTH else None,
+        "auth_user": None,
+        "auth_user_id": None,
         "services_ready": False,
         "llm_init_error": None,
         "llm_client": None,
@@ -676,7 +675,9 @@ def render_top_nav() -> None:
     with home_col:
         if st.button("首页", use_container_width=True):
             if BYPASS_AUTH:
-                st.session_state.show_landing = True
+                st.session_state.auth_user = None
+                st.session_state.auth_user_id = None
+                st.session_state.app_route = "landing"
             else:
                 st.session_state.app_route = "mode_select"
             st.rerun()
@@ -1519,10 +1520,7 @@ def render_jd_library() -> None:
 init_session_state()
 init_app_services()
 
-if BYPASS_AUTH and st.session_state.get("show_landing"):
-    st.session_state.show_landing = False
-    render_landing()
-elif not st.session_state.auth_user:
+if not st.session_state.auth_user:
     render_landing()
 elif st.session_state.app_route == "flow_a":
     render_flow_a()
