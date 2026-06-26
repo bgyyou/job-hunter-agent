@@ -25,7 +25,6 @@ from agents.resume_flow_a import ResumeFlowA, SECTIONS
 from config.settings import settings
 from database.backends.sqlite_backend import SqliteBackend
 from database.classifier import Classifier
-from services.auth_service import AuthError, AuthService
 from services.jd_library_service import (
     JdLibraryError,
     cleanup_garbage_public_jds,
@@ -53,14 +52,8 @@ settings.setup_logging()
 
 LLM_COLLECT_SECTION_KEYS = {"experience", "projects"}
 
-# 开发期跳过登录，上线前改 .env BYPASS_AUTH=false 或删除该变量
-BYPASS_AUTH = os.environ.get("BYPASS_AUTH", "true").lower() not in {"false", "0", "no"}
-DEV_USER = {
-    "id": "dev-user",
-    "name": "开发者",
-    "email": "dev@local",
-    "phone": None,
-}
+# 登录系统后期再加，当前用固定 user_id 写库
+ANONYMOUS_USER_ID = "anonymous"
 
 st.set_page_config(
     page_title="JobHunter",
@@ -488,8 +481,6 @@ def stream_llm_to_sync(async_gen):
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
-        "auth_user": None,
-        "auth_user_id": None,
         "services_ready": False,
         "llm_init_error": None,
         "llm_client": None,
@@ -571,9 +562,8 @@ def init_app_services() -> None:
         st.session_state.llm_init_error = f"AI 服务初始化失败：{exc}"
 
 
-def current_user_label() -> str:
-    user = st.session_state.auth_user or {}
-    return user.get("name") or user.get("email") or user.get("phone") or "用户"
+def current_user_id() -> str:
+    return ANONYMOUS_USER_ID
 
 
 def require_services() -> bool:
@@ -615,79 +605,23 @@ def reset_flow_b_state() -> None:
 # ---------------------------------------------------------------------------
 
 
-@st.dialog("登录 / 注册")
-def render_auth_dialog() -> None:
-    auth = AuthService(st.session_state.db)
-    login_tab, register_tab = st.tabs(["登录", "注册"])
-
-    with login_tab:
-        with st.form("login_form"):
-            identifier = st.text_input("邮箱或手机号")
-            password = st.text_input("密码", type="password")
-            submitted = st.form_submit_button("登录", type="primary")
-        if submitted:
-            try:
-                user = auth.login_user(identifier=identifier, password=password)
-                st.session_state.auth_user = user
-                st.session_state.auth_user_id = user["id"]
-                st.session_state.app_route = "mode_select"
-                st.rerun()
-            except AuthError as exc:
-                st.error(str(exc))
-
-    with register_tab:
-        st.caption("微信登录、短信验证码、邮箱验证码会作为上线 provider 接入；当前先用本地账号跑通用户数据归属。")
-        mode = st.radio("注册方式", ["邮箱", "手机号"], horizontal=True)
-        with st.form("register_form"):
-            name = st.text_input("昵称（可选）")
-            email = st.text_input("邮箱") if mode == "邮箱" else None
-            phone = st.text_input("手机号") if mode == "手机号" else None
-            password = st.text_input("密码（至少 8 位）", type="password")
-            submitted = st.form_submit_button("注册并登录", type="primary")
-        if submitted:
-            try:
-                user = auth.register_user(email=email, phone=phone, password=password, name=name)
-                st.session_state.auth_user = user
-                st.session_state.auth_user_id = user["id"]
-                st.session_state.app_route = "mode_select"
-                st.rerun()
-            except AuthError as exc:
-                st.error(str(exc))
-
-
 # ---------------------------------------------------------------------------
 # Common navigation
 # ---------------------------------------------------------------------------
 
 
 def render_top_nav() -> None:
-    if BYPASS_AUTH:
-        left, spacer, jd_col, home_col = st.columns([3, 6, 1, 1])
-    else:
-        left, spacer, jd_col, home_col, logout_col = st.columns([3, 3, 1, 1, 1])
+    left, spacer, jd_col, home_col = st.columns([3, 6, 1, 1])
     with left:
         st.markdown('<div class="topnav-title">JobHunter</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="topnav-account">当前账号：{current_user_label()}</div>', unsafe_allow_html=True)
     with jd_col:
         if st.button("JD库", use_container_width=True):
             st.session_state.app_route = "jd_library"
             st.rerun()
     with home_col:
         if st.button("首页", use_container_width=True):
-            if BYPASS_AUTH:
-                st.session_state.auth_user = None
-                st.session_state.auth_user_id = None
-                st.session_state.app_route = "landing"
-            else:
-                st.session_state.app_route = "mode_select"
+            st.session_state.app_route = "landing"
             st.rerun()
-    if not BYPASS_AUTH:
-        with logout_col:
-            if st.button("退出", use_container_width=True):
-                st.session_state.auth_user = None
-                st.session_state.auth_user_id = None
-                st.session_state.app_route = "landing"
-                st.rerun()
     st.markdown('<hr class="topnav-divider">', unsafe_allow_html=True)
 
 
@@ -730,21 +664,10 @@ section[data-testid="stMain"] > div > div {
         st.html("<style>" + style + "\n" + hide_chrome + "</style>" + body)
         return
 
-    if st.session_state.get("pending_auth_dialog"):
-        st.session_state.pending_auth_dialog = False
-        render_auth_dialog()
-        return
-
-    if st.query_params.get("auth") == "1":
-        if BYPASS_AUTH:
-            st.session_state.auth_user = DEV_USER
-            st.session_state.auth_user_id = DEV_USER["id"]
-            st.session_state.app_route = "mode_select"
-            st.query_params.pop("auth", None)
-            st.rerun()
-            return
-        st.session_state.pending_auth_dialog = True
-        st.query_params.pop("auth", None)
+    route = st.query_params.get("route")
+    if route in {"mode_select", "flow_a", "flow_b", "jd_library"}:
+        st.session_state.app_route = route
+        st.query_params.pop("route", None)
         st.rerun()
         return
 
@@ -1066,7 +989,7 @@ def render_flow_a() -> None:
             if st.button("保存到数据库"):
                 rd = st.session_state.fa_resume_data
                 resume_payload = {
-                    "user_id": st.session_state.auth_user_id,
+                    "user_id": current_user_id(),
                     "name": rd.get("header", {}).get("name", ""),
                     "phone": rd.get("header", {}).get("contact", {}).get("phone", ""),
                     "email": rd.get("header", {}).get("contact", {}).get("email", ""),
@@ -1213,7 +1136,7 @@ def render_flow_b() -> None:
                 resume_data = run_async(parser.parse(str(temp_path)))
                 st.session_state.resume_data = resume_data
                 st.session_state.resume_id = st.session_state.db.insert_resume(
-                    resume_to_db_payload(resume_data, st.session_state.auth_user_id)
+                    resume_to_db_payload(resume_data, current_user_id())
                 )
                 st.success("简历解析完成。")
         if st.session_state.resume_data:
@@ -1227,9 +1150,9 @@ def render_flow_b() -> None:
                 with st.spinner("正在分析 JD..."):
                     analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
                     jd_result = run_async(analyzer.parse_from_text(jd_text))
-                    jd_payload = jd_to_db_payload(jd_text, jd_result, st.session_state.auth_user_id, source="manual")
-                    jd_id = insert_user_jd(st.session_state.db, st.session_state.auth_user_id, jd_payload)
-                    embed_and_store_jd_chunks(st.session_state.db, jd_id, jd_text, user_id=st.session_state.auth_user_id)
+                    jd_payload = jd_to_db_payload(jd_text, jd_result, current_user_id(), source="manual")
+                    jd_id = insert_user_jd(st.session_state.db, current_user_id(), jd_payload)
+                    embed_and_store_jd_chunks(st.session_state.db, jd_id, jd_text, user_id=current_user_id())
                     st.session_state.jd_result = jd_result
                     st.session_state.jd_id = jd_id
                     st.success("JD 已分析并保存到 JD库。")
@@ -1242,7 +1165,7 @@ def render_flow_b() -> None:
                 pdf_path.write_bytes(uploaded_pdf.getbuffer())
                 with st.spinner("正在解析 PDF JD..."):
                     jd_id = PdfIngestionService(db=st.session_state.db, classifier=Classifier()).ingest(
-                        str(pdf_path), user_id=st.session_state.auth_user_id,
+                        str(pdf_path), user_id=current_user_id(),
                     )
                     jd = st.session_state.db.get_jd(jd_id)
                     st.session_state.jd_id = jd_id
@@ -1257,7 +1180,7 @@ def render_flow_b() -> None:
                     st.success("PDF JD 已入库。")
         elif input_type == "从 JD库选择":
             jd_search = st.text_input("搜索 JD库", placeholder="职位、公司、关键词", key="flow_b_jd_search")
-            total = count_visible_jds(st.session_state.db, st.session_state.auth_user_id, search=jd_search or None)
+            total = count_visible_jds(st.session_state.db, current_user_id(), search=jd_search or None)
             page_size = st.session_state.flow_b_jd_page_size
             max_page = max(1, (total + page_size - 1) // page_size)
             st.session_state.flow_b_jd_page = min(st.session_state.flow_b_jd_page, max_page)
@@ -1274,7 +1197,7 @@ def render_flow_b() -> None:
                 st.caption(f"共 {total} 条 · 第 {st.session_state.flow_b_jd_page}/{max_page} 页")
             rows = list_visible_jds(
                 st.session_state.db,
-                st.session_state.auth_user_id,
+                current_user_id(),
                 search=jd_search or None,
                 limit=page_size,
                 offset=(st.session_state.flow_b_jd_page - 1) * page_size,
@@ -1282,7 +1205,7 @@ def render_flow_b() -> None:
             options = {f"{r.get('title') or '未命名'} @ {r.get('company') or '未知公司'} ({r.get('source')})": r["id"] for r in rows}
             selected = st.selectbox("选择 JD", list(options.keys()) if options else ["JD库暂无内容"])
             if options and st.button("使用这个 JD"):
-                jd = get_visible_jd(st.session_state.db, st.session_state.auth_user_id, options[selected])
+                jd = get_visible_jd(st.session_state.db, current_user_id(), options[selected])
                 st.session_state.jd_id = jd["id"]
                 st.session_state.jd_result = {
                     "title": jd.get("title", ""),
@@ -1300,10 +1223,10 @@ def render_flow_b() -> None:
                     analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
                     jd_result = run_async(analyzer.parse_from_url(jd_url))
                     raw_text = jd_result.get("raw_text", jd_url)
-                    jd_payload = jd_to_db_payload(raw_text, jd_result, st.session_state.auth_user_id, source="url")
+                    jd_payload = jd_to_db_payload(raw_text, jd_result, current_user_id(), source="url")
                     jd_payload["url"] = jd_url
-                    jd_id = insert_user_jd(st.session_state.db, st.session_state.auth_user_id, jd_payload)
-                    embed_and_store_jd_chunks(st.session_state.db, jd_id, raw_text, user_id=st.session_state.auth_user_id)
+                    jd_id = insert_user_jd(st.session_state.db, current_user_id(), jd_payload)
+                    embed_and_store_jd_chunks(st.session_state.db, jd_id, raw_text, user_id=current_user_id())
                     st.session_state.jd_result = jd_result
                     st.session_state.jd_id = jd_id
                     st.success("JD 已分析并保存。")
@@ -1323,7 +1246,7 @@ def render_flow_b() -> None:
                 st.session_state.last_match_score = score
                 if st.session_state.resume_id and st.session_state.jd_id:
                     st.session_state.last_match_id = st.session_state.db.insert_match({
-                        "user_id": st.session_state.auth_user_id,
+                        "user_id": current_user_id(),
                         "resume_id": st.session_state.resume_id,
                         "jd_id": st.session_state.jd_id,
                         "score": score,
@@ -1337,7 +1260,7 @@ def render_flow_b() -> None:
                     opt_ids = []
                     for rec in match_result.get("recommendations", []):
                         opt_ids.append(st.session_state.db.insert_optimization({
-                            "user_id": st.session_state.auth_user_id,
+                            "user_id": current_user_id(),
                             "resume_id": st.session_state.resume_id,
                             "jd_id": st.session_state.jd_id,
                             "optimization_type": rec.get("type", "modify"),
@@ -1388,7 +1311,7 @@ def render_jd_library() -> None:
     st.header("JD库")
     st.caption("这里保存你上传过的 JD，也能看到之前爬取的公共种子 JD。")
 
-    user_id = st.session_state.auth_user_id
+    user_id = current_user_id()
     try:
         changed = ensure_public_seed_jds(st.session_state.db)
         if changed:
@@ -1520,7 +1443,7 @@ def render_jd_library() -> None:
 init_session_state()
 init_app_services()
 
-if not st.session_state.auth_user:
+if st.session_state.app_route == "landing":
     render_landing()
 elif st.session_state.app_route == "flow_a":
     render_flow_a()
