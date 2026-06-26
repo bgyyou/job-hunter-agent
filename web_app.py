@@ -387,6 +387,20 @@ section[data-testid="stMain"] [data-testid="stFileUploader"] {
     border-top: 1px solid rgba(139, 92, 246, 0.18);
     margin: 0.6rem 0 1.5rem 0;
 }
+
+/* ============ BORDER CONTAINER (choice cards) ============ */
+section[data-testid="stMain"] [data-testid="stVerticalBlockBorder"] {
+    background: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 14px !important;
+    padding: 2rem !important;
+    height: 100% !important;
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+section[data-testid="stMain"] [data-testid="stVerticalBlockBorder"]:hover {
+    border-color: rgba(139, 92, 246, 0.55) !important;
+    box-shadow: 0 12px 35px rgba(139, 92, 246, 0.2) !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -436,7 +450,6 @@ def run_async(coro):
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
-        "show_landing": False,
         "auth_user": DEV_USER if BYPASS_AUTH else None,
         "auth_user_id": DEV_USER["id"] if BYPASS_AUTH else None,
         "services_ready": False,
@@ -609,7 +622,10 @@ def render_auth_dialog() -> None:
 
 
 def render_top_nav() -> None:
-    left, spacer, jd_col, home_col, logout_col = st.columns([3, 3, 1, 1, 1])
+    if BYPASS_AUTH:
+        left, spacer, jd_col, home_col = st.columns([3, 6, 1, 1])
+    else:
+        left, spacer, jd_col, home_col, logout_col = st.columns([3, 3, 1, 1, 1])
     with left:
         st.markdown('<div class="topnav-title">JobHunter</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="topnav-account">当前账号：{current_user_label()}</div>', unsafe_allow_html=True)
@@ -621,12 +637,8 @@ def render_top_nav() -> None:
         if st.button("首页", use_container_width=True):
             st.session_state.app_route = "mode_select"
             st.rerun()
-    with logout_col:
-        if BYPASS_AUTH:
-            if st.button("返回落地页", use_container_width=True):
-                st.session_state.show_landing = True
-                st.rerun()
-        else:
+    if not BYPASS_AUTH:
+        with logout_col:
             if st.button("退出", use_container_width=True):
                 st.session_state.auth_user = None
                 st.session_state.auth_user_id = None
@@ -727,30 +739,27 @@ section[data-testid="stMain"] > div > div {
 def render_mode_select() -> None:
     render_top_nav()
     st.markdown("## 你今天想做什么？")
-    st.caption("两条流程完全隔离：从 0 生成不会混进已有简历优化；修改已有简历也不会跳到对话采集。")
 
     col_a, col_b = st.columns(2, gap="large")
     with col_a:
-        st.markdown('<div class="choice-card">', unsafe_allow_html=True)
-        st.markdown("### 从0生成简历")
-        st.write("适合没有现成简历，或想按目标岗位重新组织经历的人。")
-        st.markdown("- 选择行业 / 职能 / 岗位\n- 和 Agent 多轮对话采集经历\n- 基于 JD 库生成岗位化简历")
-        if st.button("开始生成", type="primary", use_container_width=True):
-            reset_flow_a_state()
-            st.session_state.app_route = "flow_a"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("### 从0生成简历")
+            st.write("适合没有现成简历，或想按目标岗位重新组织经历的人。")
+            st.markdown("- 选择行业 / 职能 / 岗位\n- 和 Agent 多轮对话采集经历\n- 基于 JD 库生成岗位化简历")
+            if st.button("开始生成", type="primary", use_container_width=True):
+                reset_flow_a_state()
+                st.session_state.app_route = "flow_a"
+                st.rerun()
 
     with col_b:
-        st.markdown('<div class="choice-card">', unsafe_allow_html=True)
-        st.markdown("### 修改已有简历")
-        st.write("适合已有简历，需要针对某个 JD 做匹配分析和定制改写。")
-        st.markdown("- 上传简历和 JD\n- 分析匹配度与差距\n- 生成优化简历和 Cover Letter")
-        if st.button("开始优化", type="primary", use_container_width=True):
-            reset_flow_b_state()
-            st.session_state.app_route = "flow_b"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("### 修改已有简历")
+            st.write("适合已有简历，需要针对某个 JD 做匹配分析和定制改写。")
+            st.markdown("- 上传简历和 JD\n- 分析匹配度与差距\n- 生成优化简历和 Cover Letter")
+            if st.button("开始优化", type="primary", use_container_width=True):
+                reset_flow_b_state()
+                st.session_state.app_route = "flow_b"
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1442,10 +1451,7 @@ def render_jd_library() -> None:
 init_session_state()
 init_app_services()
 
-if BYPASS_AUTH and st.session_state.get("show_landing"):
-    st.session_state.show_landing = False
-    render_landing()
-elif not st.session_state.auth_user:
+if not st.session_state.auth_user:
     render_landing()
 elif st.session_state.app_route == "flow_a":
     render_flow_a()
