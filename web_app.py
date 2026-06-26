@@ -59,19 +59,324 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1180px; }
-    .hero-title { font-size: 3.3rem; line-height: 1.05; font-weight: 800; letter-spacing: -0.04em; color: #111827; }
-    .hero-subtitle { font-size: 1.15rem; color: #475569; line-height: 1.8; margin: 1rem 0 1.5rem 0; }
-    .muted { color: #64748b; }
-    .product-card { border: 1px solid #e5e7eb; border-radius: 22px; padding: 1.4rem; background: #ffffff; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06); }
-    .soft-card { border: 1px solid #e2e8f0; border-radius: 18px; padding: 1.25rem; background: #f8fafc; }
-    .choice-card { border: 1px solid #e5e7eb; border-radius: 24px; padding: 1.6rem; background: #ffffff; min-height: 260px; }
-    .before-card { border-left: 4px solid #ef4444; padding: 1rem; background: #fef2f2; border-radius: 14px; color: #7f1d1d; }
-    .after-card { border-left: 4px solid #10b981; padding: 1rem; background: #ecfdf5; border-radius: 14px; color: #064e3b; }
-    .step-pill { display:inline-block; padding: .35rem .7rem; border-radius: 999px; background:#eef2ff; color:#3730a3; font-size:.85rem; font-weight:600; margin-right:.4rem; }
-    .public-badge { display:inline-block; padding:.2rem .55rem; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:.78rem; }
-    .private-badge { display:inline-block; padding:.2rem .55rem; border-radius:999px; background:#ecfdf5; color:#047857; font-size:.78rem; }
-    div[data-testid="stSidebar"] { display: none; }
+/* ============ GLOBAL THEME: DEEP PURPLE NEON ============ */
+section[data-testid="stMain"] {
+    background: #0a0a0f !important;
+}
+section[data-testid="stMain"] > div {
+    background: #0a0a0f !important;
+    padding-top: 1.2rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1180px !important;
+}
+
+/* Hide Streamlit chrome (Deploy button, toolbar, header, sidebar toggle) */
+div[data-testid="stSidebar"],
+div[data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"],
+div[data-testid="stToolbar"],
+div[data-testid="stDecoration"],
+div[data-testid="stStatusWidget"] {
+    display: none !important;
+}
+
+/* Text colors */
+section[data-testid="stMain"] p,
+section[data-testid="stMain"] span,
+section[data-testid="stMain"] li,
+section[data-testid="stMain"] label {
+    color: #cbd5e1 !important;
+}
+section[data-testid="stMain"] h1,
+section[data-testid="stMain"] h2,
+section[data-testid="stMain"] h3 {
+    color: #ffffff !important;
+    letter-spacing: -0.02em;
+}
+section[data-testid="stMain"] h4 {
+    color: #c4b5fd !important;
+    letter-spacing: -0.02em;
+}
+section[data-testid="stMain"] h5 {
+    color: #a78bfa !important;
+    letter-spacing: -0.02em;
+}
+section[data-testid="stMain"] [data-testid="stCaptionContainer"],
+section[data-testid="stMain"] .st-emotion-cache-14pd4lc,
+section[data-testid="stMain"] [data-testid="stWidgetLabel"] p {
+    color: #a78bfa !important;
+}
+
+/* ============ CUSTOM CLASSES ============ */
+.choice-card {
+    background: #1a0b2e;
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 14px;
+    padding: 2rem;
+    height: 100%;
+    transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.choice-card:hover {
+    border-color: rgba(139, 92, 246, 0.55);
+    box-shadow: 0 12px 35px rgba(139, 92, 246, 0.2);
+}
+.step-pill {
+    display: inline-block;
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(139, 92, 246, 0.25);
+    color: #c4b5fd;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-right: 0.4rem;
+    border: 1px solid rgba(139, 92, 246, 0.35);
+}
+.public-badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(139, 92, 246, 0.2);
+    color: #c4b5fd;
+    font-size: 0.78rem;
+    border: 1px solid rgba(139, 92, 246, 0.35);
+}
+.private-badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, 0.15);
+    color: #94a3b8;
+    font-size: 0.78rem;
+    border: 1px solid rgba(100, 116, 139, 0.25);
+}
+
+/* ============ BUTTONS ============ */
+section[data-testid="stMain"] button[kind="primary"],
+section[data-testid="stMain"] button[data-testid="stBaseButton-primary"] {
+    background-color: #8b5cf6 !important;
+    border-color: #8b5cf6 !important;
+    color: #ffffff !important;
+    transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+section[data-testid="stMain"] button[kind="primary"]:hover,
+section[data-testid="stMain"] button[data-testid="stBaseButton-primary"]:hover {
+    background-color: #7c3aed !important;
+    border-color: #7c3aed !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4) !important;
+}
+section[data-testid="stMain"] button[kind="secondary"],
+section[data-testid="stMain"] button[data-testid="stBaseButton-secondary"] {
+    background-color: transparent !important;
+    border-color: rgba(139, 92, 246, 0.4) !important;
+    color: #c4b5fd !important;
+    transition: border-color 0.2s ease, color 0.2s ease !important;
+}
+section[data-testid="stMain"] button[kind="secondary"]:hover,
+section[data-testid="stMain"] button[data-testid="stBaseButton-secondary"]:hover {
+    border-color: rgba(139, 92, 246, 0.7) !important;
+    color: #ffffff !important;
+    background-color: rgba(139, 92, 246, 0.1) !important;
+}
+
+/* ============ INPUTS ============ */
+section[data-testid="stMain"] input[type="text"],
+section[data-testid="stMain"] input[type="password"],
+section[data-testid="stMain"] input:not([type]),
+section[data-testid="stMain"] textarea,
+section[data-testid="stMain"] select {
+    background-color: #0f0f17 !important;
+    color: #fafafa !important;
+    border-color: rgba(139, 92, 246, 0.3) !important;
+    border-radius: 8px !important;
+}
+section[data-testid="stMain"] input:focus,
+section[data-testid="stMain"] textarea:focus,
+section[data-testid="stMain"] select:focus {
+    border-color: #8b5cf6 !important;
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2) !important;
+    outline: none !important;
+}
+section[data-testid="stMain"] input::placeholder,
+section[data-testid="stMain"] textarea::placeholder {
+    color: #475569 !important;
+}
+
+/* Selectbox dropdown options (rendered in portal) */
+div[data-testid="stSelectboxDropdown"] {
+    background-color: #1a0b2e !important;
+}
+div[data-testid="stSelectboxDropdown"] option,
+div[data-testid="stSelectboxDropdown"] li {
+    color: #fafafa !important;
+}
+
+/* ============ FORMS ============ */
+section[data-testid="stMain"] [data-testid="stForm"] {
+    background: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 14px !important;
+    padding: 1.5rem !important;
+}
+
+/* ============ EXPANDERS ============ */
+section[data-testid="stMain"] [data-testid="stExpander"] {
+    background: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 12px !important;
+    overflow: hidden;
+}
+section[data-testid="stMain"] [data-testid="stExpander"] summary,
+section[data-testid="stMain"] [data-testid="stExpanderDetails"] {
+    background: transparent !important;
+    color: #c4b5fd !important;
+}
+section[data-testid="stMain"] [data-testid="stExpanderDetails"] p,
+section[data-testid="stMain"] [data-testid="stExpanderDetails"] span,
+section[data-testid="stMain"] [data-testid="stExpanderDetails"] li {
+    color: #cbd5e1 !important;
+}
+
+/* ============ TABS ============ */
+section[data-testid="stMain"] [data-testid="stTabs"] {
+    background: transparent !important;
+}
+section[data-testid="stMain"] [data-testid="stTabList"] button {
+    color: #94a3b8 !important;
+    border-bottom: 2px solid transparent !important;
+}
+section[data-testid="stMain"] [data-testid="stTabList"] button[aria-selected="true"] {
+    color: #ffffff !important;
+    border-bottom-color: #8b5cf6 !important;
+}
+section[data-testid="stMain"] [data-testid="stTabList"] button:hover {
+    color: #c4b5fd !important;
+}
+
+/* ============ ALERTS (dark theme, keep semantic icon) ============ */
+section[data-testid="stMain"] [data-testid="stAlert"] {
+    background-color: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 12px !important;
+    color: #cbd5e1 !important;
+}
+section[data-testid="stMain"] [data-testid="stAlert"] [data-testid="stAlertContent"] p {
+    color: #cbd5e1 !important;
+}
+
+/* ============ SPINNER ============ */
+section[data-testid="stMain"] [data-testid="stSpinner"] p {
+    color: #c4b5fd !important;
+}
+
+/* ============ PROGRESS ============ */
+section[data-testid="stMain"] [data-testid="stProgress"] > div > div {
+    background-color: #8b5cf6 !important;
+}
+
+/* ============ METRIC ============ */
+section[data-testid="stMain"] [data-testid="stMetric"] {
+    background: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 12px !important;
+    padding: 1rem !important;
+}
+section[data-testid="stMain"] [data-testid="stMetric"] label,
+section[data-testid="stMain"] [data-testid="stMetric"] [data-testid="stMetricLabel"] {
+    color: #94a3b8 !important;
+}
+section[data-testid="stMain"] [data-testid="stMetric"] [data-testid="stMetricValue"] {
+    color: #ffffff !important;
+}
+
+/* ============ JSON ============ */
+section[data-testid="stMain"] [data-testid="stJson"] {
+    background: #0f0f17 !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 8px !important;
+    color: #cbd5e1 !important;
+}
+section[data-testid="stMain"] [data-testid="stJson"] .styled-json-container,
+section[data-testid="stMain"] [data-testid="stJson"] span {
+    color: #cbd5e1 !important;
+}
+
+/* ============ DIVIDER ============ */
+section[data-testid="stMain"] hr,
+section[data-testid="stMain"] [data-testid="stDivider"] {
+    border-color: rgba(139, 92, 246, 0.18) !important;
+    background-color: rgba(139, 92, 246, 0.18) !important;
+}
+
+/* ============ CHAT ============ */
+section[data-testid="stMain"] [data-testid="stChatMessage"] {
+    background: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.25) !important;
+    border-radius: 14px !important;
+}
+section[data-testid="stMain"] [data-testid="stChatMessage"] p,
+section[data-testid="stMain"] [data-testid="stChatMessage"] span,
+section[data-testid="stMain"] [data-testid="stChatMessage"] li {
+    color: #cbd5e1 !important;
+}
+section[data-testid="stMain"] [data-testid="stChatInput"] {
+    background: #0f0f17 !important;
+    border-color: rgba(139, 92, 246, 0.3) !important;
+    border-radius: 12px !important;
+}
+section[data-testid="stMain"] [data-testid="stChatInput"] textarea {
+    background-color: #0f0f17 !important;
+    color: #fafafa !important;
+}
+
+/* ============ FILE UPLOADER ============ */
+section[data-testid="stMain"] [data-testid="stFileUploader"] {
+    background: #1a0b2e !important;
+    border: 1px dashed rgba(139, 92, 246, 0.4) !important;
+    border-radius: 12px !important;
+    padding: 1rem !important;
+}
+
+/* ============ DIALOG (for later, prep CSS now) ============ */
+[data-testid="stDialog"] {
+    background: #1a0b2e !important;
+    border: 1px solid rgba(139, 92, 246, 0.4) !important;
+    border-radius: 14px !important;
+}
+[data-testid="stDialog"] h2,
+[data-testid="stDialog"] h3 {
+    color: #ffffff !important;
+}
+[data-testid="stDialog"] p,
+[data-testid="stDialog"] span,
+[data-testid="stDialog"] label {
+    color: #cbd5e1 !important;
+}
+[data-testid="stDialog"] input[type="text"],
+[data-testid="stDialog"] input[type="password"] {
+    background-color: #0f0f17 !important;
+    color: #fafafa !important;
+    border-color: rgba(139, 92, 246, 0.3) !important;
+    border-radius: 8px !important;
+}
+
+/* ============ TOP NAV ============ */
+.topnav-title {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow: 0 0 12px rgba(139, 92, 246, 0.5);
+    letter-spacing: -0.02em;
+}
+.topnav-account {
+    color: #a78bfa;
+    font-size: 0.85rem;
+}
+.topnav-divider {
+    border: none;
+    border-top: 1px solid rgba(139, 92, 246, 0.18);
+    margin: 0.6rem 0 1.5rem 0;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -295,8 +600,8 @@ def render_auth_dialog() -> None:
 def render_top_nav() -> None:
     left, spacer, jd_col, home_col, logout_col = st.columns([3, 3, 1, 1, 1])
     with left:
-        st.markdown("### JobHunter")
-        st.caption(f"当前账号：{current_user_label()}")
+        st.markdown('<div class="topnav-title">JobHunter</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="topnav-account">当前账号：{current_user_label()}</div>', unsafe_allow_html=True)
     with jd_col:
         if st.button("JD库", use_container_width=True):
             st.session_state.app_route = "jd_library"
@@ -311,7 +616,7 @@ def render_top_nav() -> None:
             st.session_state.auth_user_id = None
             st.session_state.app_route = "landing"
             st.rerun()
-    st.divider()
+    st.markdown('<hr class="topnav-divider">', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +666,7 @@ section[data-testid="stMain"] > div > div {
     if st.query_params.get("auth") == "1":
         st.session_state.pending_auth_dialog = True
         st.query_params.pop("auth", None)
+        st.rerun()
         return
 
     landing_path = PROJECT_ROOT / "landing.html"
@@ -441,7 +747,7 @@ def render_flow_a() -> None:
     total_sections = 1 + len(collect_sections)
 
     if not st.session_state.fa_position:
-        st.markdown("### 第 1 步：选择目标岗位")
+        st.markdown('<span class="step-pill">第 1 步</span>选择目标岗位', unsafe_allow_html=True)
         col_i, col_f, col_p = st.columns(3)
         with col_i:
             industries = taxonomy.list_industries()
@@ -468,7 +774,7 @@ def render_flow_a() -> None:
 
     if not st.session_state.fa_basic_form_done:
         st.progress(0.0, text=f"进度 0/{total_sections}")
-        st.markdown("### 第 2 步：填写基础信息")
+        st.markdown('<span class="step-pill">第 2 步</span>填写基础信息', unsafe_allow_html=True)
         st.caption("这些结构化字段不调用 LLM，直接进入简历。")
         if st.button("重新选择岗位"):
             reset_flow_a_state()
@@ -541,7 +847,7 @@ def render_flow_a() -> None:
         section_key = section["key"]
         finished = 1 + len(st.session_state.fa_section_done) + len(st.session_state.fa_section_skipped)
         st.progress(finished / total_sections, text=f"进度 {finished}/{total_sections}")
-        st.markdown(f"### 第 3 步：采集 {section['name']}")
+        st.markdown(f'<span class="step-pill">第 3 步</span>采集 {section["name"]}', unsafe_allow_html=True)
         st.caption(f"目标：{st.session_state.fa_industry} / {st.session_state.fa_position}")
 
         if st.button("重新选择岗位"):
@@ -608,7 +914,7 @@ def render_flow_a() -> None:
         return
 
     st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
-    st.markdown("### 第 4 步：生成简历")
+    st.markdown('<span class="step-pill">第 4 步</span>生成简历', unsafe_allow_html=True)
     if st.session_state.fa_resume_md is None:
         with st.spinner("正在检索 JD 库、派生总结与核心能力、生成简历..."):
             try:
