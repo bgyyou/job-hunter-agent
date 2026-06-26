@@ -3,7 +3,9 @@
 本地运行的 AI 求职闭环：简历解析 / JD 抓取 / 匹配评分 / 优化建议 / 投递追踪 / RAG 检索。
 零云依赖，全部数据存本机。
 
-![主界面](docs/screenshots/02_main_ui.png)
+![模式选择](docs/screenshots/02_mode_select.png)
+
+> 完整产品文档与 9 张页面截图见 [docs/PRD.md](docs/PRD.md)
 
 ---
 
@@ -27,12 +29,11 @@ streamlit run web_app.py
 # 或者 Windows 双击 run_web.bat
 ```
 
-**首次启动**会自动弹出"配置向导"页：
-- 粘贴你自己的 API Key（[Agnes 申请入口](https://apihub.agnes-ai.com/) / [火山方舟](https://www.volcengine.com/product/ark)）
-- 选数据库（默认 SQLite，零配置）
-- 点保存 → 自动写入 `.env` → 进入主程序
-
-![首次配置向导](docs/screenshots/01_setup_wizard.png)
+**首次启动**流程：
+- 访问 `http://localhost:8501/` 看到 Hero 落地页
+- 点"马上开始" → 进入模式选择页（从0生成 / 修改已有）
+- 在 `.env` 配置 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`（[Agnes 申请入口](https://apihub.agnes-ai.com/) / [火山方舟](https://www.volcengine.com/product/ark)）
+- 默认 SQLite 零配置，进阶 PostgreSQL+pgvector 见 `.env.example`
 
 > 我们**不内置任何 demo key**——既防 GitHub 抓取后被滥用，也确保你的额度只属于你。
 
