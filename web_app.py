@@ -436,6 +436,7 @@ def run_async(coro):
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
+        "show_landing": False,
         "auth_user": DEV_USER if BYPASS_AUTH else None,
         "auth_user_id": DEV_USER["id"] if BYPASS_AUTH else None,
         "services_ready": False,
@@ -622,8 +623,8 @@ def render_top_nav() -> None:
             st.rerun()
     with logout_col:
         if BYPASS_AUTH:
-            if st.button("首页", use_container_width=True):
-                st.session_state.app_route = "landing"
+            if st.button("返回落地页", use_container_width=True):
+                st.session_state.show_landing = True
                 st.rerun()
         else:
             if st.button("退出", use_container_width=True):
@@ -1441,7 +1442,10 @@ def render_jd_library() -> None:
 init_session_state()
 init_app_services()
 
-if not st.session_state.auth_user:
+if BYPASS_AUTH and st.session_state.get("show_landing"):
+    st.session_state.show_landing = False
+    render_landing()
+elif not st.session_state.auth_user:
     render_landing()
 elif st.session_state.app_route == "flow_a":
     render_flow_a()
