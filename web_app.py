@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -48,6 +49,15 @@ from tools.scraper.scraper_manager import ScraperManager
 settings.setup_logging()
 
 LLM_COLLECT_SECTION_KEYS = {"experience", "projects"}
+
+# 开发期跳过登录，上线前改 .env BYPASS_AUTH=false 或删除该变量
+BYPASS_AUTH = os.environ.get("BYPASS_AUTH", "true").lower() not in {"false", "0", "no"}
+DEV_USER = {
+    "id": "dev-user",
+    "name": "开发者",
+    "email": "dev@local",
+    "phone": None,
+}
 
 st.set_page_config(
     page_title="JobHunter",
@@ -426,8 +436,8 @@ def run_async(coro):
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
-        "auth_user": None,
-        "auth_user_id": None,
+        "auth_user": DEV_USER if BYPASS_AUTH else None,
+        "auth_user_id": DEV_USER["id"] if BYPASS_AUTH else None,
         "services_ready": False,
         "llm_init_error": None,
         "llm_client": None,
@@ -611,11 +621,16 @@ def render_top_nav() -> None:
             st.session_state.app_route = "mode_select"
             st.rerun()
     with logout_col:
-        if st.button("退出", use_container_width=True):
-            st.session_state.auth_user = None
-            st.session_state.auth_user_id = None
-            st.session_state.app_route = "landing"
-            st.rerun()
+        if BYPASS_AUTH:
+            if st.button("首页", use_container_width=True):
+                st.session_state.app_route = "landing"
+                st.rerun()
+        else:
+            if st.button("退出", use_container_width=True):
+                st.session_state.auth_user = None
+                st.session_state.auth_user_id = None
+                st.session_state.app_route = "landing"
+                st.rerun()
     st.markdown('<hr class="topnav-divider">', unsafe_allow_html=True)
 
 
@@ -664,6 +679,13 @@ section[data-testid="stMain"] > div > div {
         return
 
     if st.query_params.get("auth") == "1":
+        if BYPASS_AUTH:
+            st.session_state.auth_user = DEV_USER
+            st.session_state.auth_user_id = DEV_USER["id"]
+            st.session_state.app_route = "mode_select"
+            st.query_params.pop("auth", None)
+            st.rerun()
+            return
         st.session_state.pending_auth_dialog = True
         st.query_params.pop("auth", None)
         st.rerun()
