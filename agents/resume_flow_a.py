@@ -36,6 +36,7 @@ _SECTION_CHAT_SYSTEM = """你是简历助手，正在采集**{section_name}**这
 3. 该段所有必填项都问到（用户答了/明确跳过）后，在回复末尾加 [SECTION_DONE]
 4. 用户明确说"这段全跳过"时，回复一句确认后输出 [SECTION_DONE,SKIP]
 5. 你最多可以问 {max_rounds} 轮；接近上限时果断收尾
+6. 已采集段里有多个项目/经历时，如果用户已说过角色相同，后续条目不要重复问角色
 
 【已采集的其他段（仅供参考，避免重复问）】
 {collected_summary}
@@ -75,6 +76,52 @@ _DERIVE_SYSTEM = """你是资深简历优化专家。基于已采集的简历数
     "summary": "1-2 句个人总结",
     "core_competencies": ["核心能力 1", "核心能力 2", "..."]
 }}
+
+只返回 JSON，不要其他文字。"""
+
+
+_REWRITE_EXPERIENCE_SYSTEM = """你是资深简历优化专家，正在帮用户把工作经历改写得**与目标岗位更相关**。
+
+【目标岗位上下文】
+行业：{industry}    岗位：{position}
+
+【目标岗位核心要求（来自 JD 库蒸馏）】
+{skeleton_block}
+
+【改写原则】
+1. **事实不变，视角重构**：用户做过的事不能编造，但要挖掘与目标岗位可迁移的能力维度
+2. **突出可迁移技能**：把不相关经历的成果，转译成目标岗位关心的能力证据
+   - 销售/客服 → 客户需求洞察、数据驱动运营、跨文化沟通、客户留存
+   - 行政/运营 → 跨部门协同、流程优化、项目交付、资源协调
+   - 教师/培训 → 知识传递、用户教育、内容设计、影响他人
+3. **量化保留**：用户给的数字（续保率、满意度、客户数）保留，但重新框定为岗位相关指标
+4. **语言贴近岗位**：用目标岗位 JD 的高频词替换原表达，但不要堆砌术语
+5. **避免造假**：不编造用户没提过的职责；不确定的领域写得概括一点
+
+【输入】用户原始经历条目（JSON）。
+【输出】改写后的经历条目（JSON），保持字段结构，只改 description 和 achievements 内容。
+保持 achievements 是 list[str]，description 是 str。
+
+只返回 JSON，不要其他文字。"""
+
+
+_REWRITE_PROJECTS_SYSTEM = """你是资深简历优化专家，正在帮用户把项目经历改写得**与目标岗位更相关**。
+
+【目标岗位上下文】
+行业：{industry}    岗位：{position}
+
+【目标岗位核心要求（来自 JD 库蒸馏）】
+{skeleton_block}
+
+【改写原则】
+1. **保留技术栈和角色**：tech_stack 和 role 原样保留，只改 description 和 achievements
+2. **突出岗位相关能力**：项目里与目标岗位无关的细节弱化，相关维度放大
+3. **量化成果贴近岗位**：把项目成果重新表述成目标岗位关心的指标（效率提升、用户增长、成本节约、质量提升）
+4. **避免堆砌**：不要把 JD 关键词生硬塞进去，要自然融入用户真实做过的事
+
+【输入】用户原始项目条目（JSON）。
+【输出】改写后的项目条目（JSON），保持字段结构。
+保持 achievements 是 list[str]，tech_stack 是 list[str]，description 是 str，role 是 str。
 
 只返回 JSON，不要其他文字。"""
 
@@ -191,20 +238,15 @@ class ResumeFlowA:
     # Step 1: section 状态机对话与提取
     # ----------------------------------------------------------------
 
-    async def chat_section(
+    def _build_chat_messages(
         self,
         section_key: str,
         messages: List[Dict[str, str]],
         collected_so_far: Dict[str, Any],
         industry: str,
         position: str,
-    ) -> Dict[str, Any]:
-        """在单个 section 内多轮对话。LLM 判断段是否问完。
-
-        Returns:
-            {"type": "question"|"section_done"|"section_skipped",
-             "message": str, "rounds_used": int}
-        """
+    ) -> tuple[List[LLMMessage], bool, int]:
+        """构建 chat section 的 LLM messages + force_close flag + rounds_used。"""
         section = _get_section(section_key)
         if not section:
             raise ValueError(f"Unknown section_key: {section_key}")
@@ -215,11 +257,19 @@ class ResumeFlowA:
         max_rounds = section["max_rounds"]
         force_close = rounds_used >= max_rounds
 
-        # 已采集段的摘要，避免 LLM 重复问
         collected_summary_lines = []
         for k, v in (collected_so_far or {}).items():
             if v and k != section_key:
-                preview = json.dumps(v, ensure_ascii=False)[:200]
+                if k == "projects" and isinstance(v, list):
+                    roles = []
+                    for p in v:
+                        r = p.get("role") if isinstance(p, dict) else None
+                        if r:
+                            roles.append(r)
+                    if roles:
+                        collected_summary_lines.append(f"- projects: 已采集 {len(v)} 个项目，角色：{', '.join(roles)}（如果后续项目角色相同，不要重复确认）")
+                        continue
+                preview = json.dumps(v, ensure_ascii=False)[:400]
                 collected_summary_lines.append(f"- {k}: {preview}")
         collected_summary = "\n".join(collected_summary_lines) if collected_summary_lines else "（暂无）"
 
@@ -238,12 +288,12 @@ class ResumeFlowA:
         llm_messages = [LLMMessage(role="system", content=system_text)]
         for m in messages:
             llm_messages.append(LLMMessage(role=m["role"], content=m["content"]))
+        return llm_messages, force_close, rounds_used
 
-        response: LLMResponse = await self.llm_client.analyze(
-            messages=llm_messages, max_tokens=600, temperature=0.6,
-        )
-        content = response.content.strip()
-
+    @staticmethod
+    def _parse_chat_reply(content: str, force_close: bool, rounds_used: int) -> Dict[str, Any]:
+        """把 LLM 完整回复解析成 reply dict。"""
+        content = content.strip()
         if "[SECTION_DONE,SKIP]" in content or "[SECTION_DONE, SKIP]" in content:
             return {
                 "type": "section_skipped",
@@ -257,6 +307,28 @@ class ResumeFlowA:
                 "rounds_used": rounds_used,
             }
         return {"type": "question", "message": content, "rounds_used": rounds_used}
+
+    async def chat_section(
+        self,
+        section_key: str,
+        messages: List[Dict[str, str]],
+        collected_so_far: Dict[str, Any],
+        industry: str,
+        position: str,
+    ) -> Dict[str, Any]:
+        """在单个 section 内多轮对话。LLM 判断段是否问完。
+
+        Returns:
+            {"type": "question"|"section_done"|"section_skipped",
+             "message": str, "rounds_used": int}
+        """
+        llm_messages, force_close, rounds_used = self._build_chat_messages(
+            section_key, messages, collected_so_far, industry, position,
+        )
+        response: LLMResponse = await self.llm_client.analyze(
+            messages=llm_messages, max_tokens=600, temperature=0.6,
+        )
+        return self._parse_chat_reply(response.content, force_close, rounds_used)
 
     async def extract_section(
         self,
@@ -338,6 +410,102 @@ class ResumeFlowA:
             "summary": self._strip_placeholders(parsed.get("summary", "") or ""),
             "core_competencies": self._strip_placeholders(parsed.get("core_competencies", []) or []),
         }
+
+    async def rewrite_experience(
+        self,
+        collected: Dict[str, Any],
+        industry: str,
+        position: str,
+        skeleton_text: str = "",
+    ) -> List[Dict[str, Any]]:
+        """对每段工作经历用 LLM + RAG skeleton 做岗位化改写。
+
+        把不相关经历往目标岗位上靠，保留事实不编造，只改 description 和 achievements。
+        返回改写后的 experience list（原样字段结构）。失败时返回原 list 不阻断流程。
+        """
+        original = collected.get("experience") or []
+        if not original:
+            return []
+
+        skeleton_block = skeleton_text.strip() if skeleton_text else "（无可用岗位要求参考，做通用润色）"
+        rewritten: List[Dict[str, Any]] = []
+        for idx, exp in enumerate(original):
+            try:
+                prompt = f"原始经历条目 #{idx + 1}：\n{json.dumps(exp, ensure_ascii=False, indent=2)}"
+                llm_messages = [
+                    LLMMessage(
+                        role="system",
+                        content=_REWRITE_EXPERIENCE_SYSTEM.format(
+                            industry=industry, position=position, skeleton_block=skeleton_block,
+                        ),
+                    ),
+                    LLMMessage(role="user", content=prompt),
+                ]
+                response: LLMResponse = await self.llm_client.analyze(
+                    messages=llm_messages, max_tokens=800, temperature=0.5,
+                )
+                parsed = self._parse_json_loose(response.content)
+                if isinstance(parsed, dict):
+                    for k in ("title", "company", "duration"):
+                        if k in exp and k not in parsed:
+                            parsed[k] = exp[k]
+                    if "achievements" not in parsed:
+                        parsed["achievements"] = exp.get("achievements", [])
+                    if "description" not in parsed:
+                        parsed["description"] = exp.get("description", "")
+                    rewritten.append(parsed)
+                else:
+                    rewritten.append(exp)
+            except Exception as exc:
+                logger.warning(f"Flow A rewrite_experience[{idx}] failed: {exc}")
+                rewritten.append(exp)
+        return rewritten
+
+    async def rewrite_projects(
+        self,
+        collected: Dict[str, Any],
+        industry: str,
+        position: str,
+        skeleton_text: str = "",
+    ) -> List[Dict[str, Any]]:
+        """对每个项目经历做岗位化改写，保留 tech_stack 和 role，只改 description 和 achievements。"""
+        original = collected.get("projects") or []
+        if not original:
+            return []
+
+        skeleton_block = skeleton_text.strip() if skeleton_text else "（无可用岗位要求参考，做通用润色）"
+        rewritten: List[Dict[str, Any]] = []
+        for idx, proj in enumerate(original):
+            try:
+                prompt = f"原始项目条目 #{idx + 1}：\n{json.dumps(proj, ensure_ascii=False, indent=2)}"
+                llm_messages = [
+                    LLMMessage(
+                        role="system",
+                        content=_REWRITE_PROJECTS_SYSTEM.format(
+                            industry=industry, position=position, skeleton_block=skeleton_block,
+                        ),
+                    ),
+                    LLMMessage(role="user", content=prompt),
+                ]
+                response: LLMResponse = await self.llm_client.analyze(
+                    messages=llm_messages, max_tokens=800, temperature=0.5,
+                )
+                parsed = self._parse_json_loose(response.content)
+                if isinstance(parsed, dict):
+                    for k in ("name", "role", "tech_stack"):
+                        if k in proj and k not in parsed:
+                            parsed[k] = proj[k]
+                    if "achievements" not in parsed:
+                        parsed["achievements"] = proj.get("achievements", [])
+                    if "description" not in parsed:
+                        parsed["description"] = proj.get("description", "")
+                    rewritten.append(parsed)
+                else:
+                    rewritten.append(proj)
+            except Exception as exc:
+                logger.warning(f"Flow A rewrite_projects[{idx}] failed: {exc}")
+                rewritten.append(proj)
+        return rewritten
 
     @staticmethod
     def _empty_section_value(section_key: str) -> Any:

@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import queue
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -40,6 +42,7 @@ from tools import taxonomy
 from tools.generator.cover_letter_generator import CoverLetterGenerator
 from tools.generator.resume_generator import ResumeGenerator
 from tools.generator.resume_optimizer import ResumeOptimizer
+from tools.generator.resume_pdf import html_to_pdf_safe
 from tools.jd_indexer import embed_and_store_jd_chunks
 from tools.llm import OpenAICompatibleClient
 from tools.resume_parser import ResumeParser
@@ -447,9 +450,45 @@ def run_async(coro):
         loop.close()
 
 
+def stream_llm_to_sync(async_gen):
+    """把 async generator 转成 sync generator，用线程跑 async，queue 传 chunk。
+
+    LLM client 的 analyze_stream 是 async generator，但 Streamlit 主线程是同步的。
+    用 daemon 线程跑 async generator，chunk 通过 queue 传到主线程，st.write_stream
+    能逐 chunk 实时渲染。
+    """
+    q: "queue.Queue[Any]" = queue.Queue()
+    SENTINEL = object()
+
+    def runner():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            async def _drain():
+                async for chunk in async_gen:
+                    q.put(chunk)
+            loop.run_until_complete(_drain())
+        except Exception as exc:
+            q.put(exc)
+        finally:
+            q.put(SENTINEL)
+            loop.close()
+
+    threading.Thread(target=runner, daemon=True).start()
+
+    while True:
+        item = q.get()
+        if item is SENTINEL:
+            break
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
+        "show_landing": False,
         "auth_user": DEV_USER if BYPASS_AUTH else None,
         "auth_user_id": DEV_USER["id"] if BYPASS_AUTH else None,
         "services_ready": False,
@@ -480,6 +519,7 @@ def init_session_state() -> None:
         "fa_resume_data": None,
         "fa_resume_md": None,
         "fa_resume_html": None,
+        "fa_resume_pdf": None,
         "fa_skeleton": None,
         "fa_section_index": 0,
         "fa_section_data": {},
@@ -635,7 +675,10 @@ def render_top_nav() -> None:
             st.rerun()
     with home_col:
         if st.button("首页", use_container_width=True):
-            st.session_state.app_route = "mode_select"
+            if BYPASS_AUTH:
+                st.session_state.show_landing = True
+            else:
+                st.session_state.app_route = "mode_select"
             st.rerun()
     if not BYPASS_AUTH:
         with logout_col:
@@ -893,32 +936,39 @@ def render_flow_a() -> None:
 
         needs_assistant_turn = not sec_msgs or sec_msgs[-1]["role"] == "user"
         if needs_assistant_turn:
-            with st.spinner(f"Agent 正在准备 {section['name']} 的问题..."):
-                try:
-                    flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
-                    msgs_for_llm = sec_msgs if sec_msgs else [{"role": "user", "content": f"开始采集{section['name']}吧。"}]
-                    reply = run_async(flow_a.chat_section(
-                        section_key=section_key,
-                        messages=msgs_for_llm,
-                        collected_so_far=st.session_state.fa_section_data,
-                        industry=st.session_state.fa_industry,
-                        position=st.session_state.fa_position,
-                    ))
-                    if not sec_msgs:
-                        sec_msgs.append({"role": "user", "content": f"开始采集{section['name']}吧。"})
-                    sec_msgs.append({"role": "assistant", "content": reply["message"]})
+            try:
+                flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
+                msgs_for_llm = sec_msgs if sec_msgs else [{"role": "user", "content": f"开始采集{section['name']}吧。"}]
+                llm_messages, force_close, rounds_used = flow_a._build_chat_messages(
+                    section_key=section_key,
+                    messages=msgs_for_llm,
+                    collected_so_far=st.session_state.fa_section_data,
+                    industry=st.session_state.fa_industry,
+                    position=st.session_state.fa_position,
+                )
+                async_gen = st.session_state.llm_client.analyze_stream(
+                    messages=llm_messages, max_tokens=600, temperature=0.6,
+                )
+                content_gen = (chunk.content for chunk in stream_llm_to_sync(async_gen) if chunk.content)
+                with st.chat_message("assistant"):
+                    full_text = st.write_stream(content_gen)
 
-                    if reply["type"] == "section_skipped":
-                        st.session_state.fa_section_skipped.append(section_key)
-                        st.session_state.fa_section_index += 1
-                    elif reply["type"] == "section_done":
-                        extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
-                        st.session_state.fa_section_data[section_key] = extracted
-                        st.session_state.fa_section_done.append(section_key)
-                        st.session_state.fa_section_index += 1
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"AI 响应失败：{exc}")
+                reply = ResumeFlowA._parse_chat_reply(full_text, force_close, rounds_used)
+                if not sec_msgs:
+                    sec_msgs.append({"role": "user", "content": f"开始采集{section['name']}吧。"})
+                sec_msgs.append({"role": "assistant", "content": reply["message"]})
+
+                if reply["type"] == "section_skipped":
+                    st.session_state.fa_section_skipped.append(section_key)
+                    st.session_state.fa_section_index += 1
+                elif reply["type"] == "section_done":
+                    extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
+                    st.session_state.fa_section_data[section_key] = extracted
+                    st.session_state.fa_section_done.append(section_key)
+                    st.session_state.fa_section_index += 1
+                st.rerun()
+            except Exception as exc:
+                st.error(f"AI 响应失败：{exc}")
 
         user_input = st.chat_input(f"回复关于「{section['name']}」的问题...")
         if user_input:
@@ -948,16 +998,29 @@ def render_flow_a() -> None:
     st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
     st.markdown('<span class="step-pill">第 4 步</span>生成简历', unsafe_allow_html=True)
     if st.session_state.fa_resume_md is None:
-        with st.spinner("正在检索 JD 库、派生总结与核心能力、生成简历..."):
+        with st.spinner("正在检索 JD 库、改写经历、派生总结与核心能力、生成简历..."):
             try:
                 flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
                 collected = st.session_state.fa_section_data or {}
                 skeleton = run_async(flow_a.build_skeleton(st.session_state.fa_position, st.session_state.fa_industry))
+                skeleton_text = skeleton.get("text", "")
+                rewritten_experience = run_async(flow_a.rewrite_experience(
+                    collected,
+                    industry=st.session_state.fa_industry,
+                    position=st.session_state.fa_position,
+                    skeleton_text=skeleton_text,
+                ))
+                rewritten_projects = run_async(flow_a.rewrite_projects(
+                    collected,
+                    industry=st.session_state.fa_industry,
+                    position=st.session_state.fa_position,
+                    skeleton_text=skeleton_text,
+                ))
                 derived = run_async(flow_a.derive_summary_and_competencies(
                     collected,
                     industry=st.session_state.fa_industry,
                     position=st.session_state.fa_position,
-                    skeleton_text=skeleton.get("text", ""),
+                    skeleton_text=skeleton_text,
                 ))
                 skills_val = collected.get("skills")
                 if isinstance(skills_val, dict):
@@ -970,8 +1033,8 @@ def render_flow_a() -> None:
                     "summary": derived.get("summary", ""),
                     "core_competencies": derived.get("core_competencies", []),
                     "education": collected.get("education", []) or [],
-                    "experience": collected.get("experience", []) or [],
-                    "projects": collected.get("projects", []) or [],
+                    "experience": rewritten_experience or [],
+                    "projects": rewritten_projects or [],
                     "skills": skills_val or [],
                     "languages": languages_val or [],
                 }
@@ -979,7 +1042,10 @@ def render_flow_a() -> None:
                 st.session_state.fa_resume_data = final_data
                 st.session_state.fa_skeleton = skeleton
                 st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
-                st.session_state.fa_resume_html = flow_a.to_html(final_data)
+                html_str = flow_a.to_html(final_data)
+                st.session_state.fa_resume_html = html_str
+                pdf_bytes = html_to_pdf_safe(html_str)
+                st.session_state.fa_resume_pdf = pdf_bytes
                 st.success("简历生成成功！")
             except Exception as exc:
                 st.error(f"生成失败：{exc}")
@@ -988,12 +1054,14 @@ def render_flow_a() -> None:
         st.markdown(st.session_state.fa_resume_md)
         sk = st.session_state.fa_skeleton or {}
         st.caption(f"本轮 RAG 命中 {sk.get('n_chunks', 0)} 条 JD chunk。")
-        dl1, dl2, dl3, dl4 = st.columns(4)
+        dl1, dl2, dl3, dl4, dl5 = st.columns(5)
         with dl1:
-            st.download_button("下载 Markdown", st.session_state.fa_resume_md, file_name=f"{st.session_state.fa_position}_简历.md", mime="text/markdown")
+            st.download_button("下载 PDF", st.session_state.fa_resume_pdf, file_name=f"{st.session_state.fa_position}_简历.pdf", mime="application/pdf", disabled=st.session_state.fa_resume_pdf is None, help="playwright 启动慢，请耐心等待生成完成" if st.session_state.fa_resume_pdf is None else None)
         with dl2:
-            st.download_button("下载 HTML", st.session_state.fa_resume_html, file_name=f"{st.session_state.fa_position}_简历.html", mime="text/html")
+            st.download_button("下载 Markdown", st.session_state.fa_resume_md, file_name=f"{st.session_state.fa_position}_简历.md", mime="text/markdown")
         with dl3:
+            st.download_button("下载 HTML", st.session_state.fa_resume_html, file_name=f"{st.session_state.fa_position}_简历.html", mime="text/html")
+        with dl4:
             if st.button("保存到数据库"):
                 rd = st.session_state.fa_resume_data
                 resume_payload = {
@@ -1451,7 +1519,10 @@ def render_jd_library() -> None:
 init_session_state()
 init_app_services()
 
-if not st.session_state.auth_user:
+if BYPASS_AUTH and st.session_state.get("show_landing"):
+    st.session_state.show_landing = False
+    render_landing()
+elif not st.session_state.auth_user:
     render_landing()
 elif st.session_state.app_route == "flow_a":
     render_flow_a()
