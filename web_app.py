@@ -922,56 +922,32 @@ def render_flow_a() -> None:
     st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
     st.markdown('<span class="step-pill">第 4 步</span>生成简历', unsafe_allow_html=True)
     if st.session_state.fa_resume_md is None:
-        with st.spinner("正在检索 JD 库、改写经历、派生总结与核心能力、生成简历..."):
+        with st.status("正在生成简历...", expanded=True) as status:
             try:
-                flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
-                collected = st.session_state.fa_section_data or {}
-                skeleton = run_async(flow_a.build_skeleton(st.session_state.fa_position, st.session_state.fa_industry))
-                skeleton_text = skeleton.get("text", "")
-                rewritten_experience = run_async(flow_a.rewrite_experience(
-                    collected,
+                status.update(label="1/4 检索 JD 库、改写经历、派生总结（耗时最长）...", state="running")
+                payload = run_async(flow_a.generate_resume_payload(
+                    collected=st.session_state.fa_section_data or {},
                     industry=st.session_state.fa_industry,
                     position=st.session_state.fa_position,
-                    skeleton_text=skeleton_text,
                 ))
-                rewritten_projects = run_async(flow_a.rewrite_projects(
-                    collected,
-                    industry=st.session_state.fa_industry,
-                    position=st.session_state.fa_position,
-                    skeleton_text=skeleton_text,
-                ))
-                derived = run_async(flow_a.derive_summary_and_competencies(
-                    collected,
-                    industry=st.session_state.fa_industry,
-                    position=st.session_state.fa_position,
-                    skeleton_text=skeleton_text,
-                ))
-                skills_val = collected.get("skills")
-                if isinstance(skills_val, dict):
-                    skills_val = skills_val.get("skills", [])
-                languages_val = collected.get("languages")
-                if isinstance(languages_val, dict):
-                    languages_val = languages_val.get("languages", [])
-                raw_resume = {
-                    "header": collected.get("header", {}),
-                    "summary": derived.get("summary", ""),
-                    "core_competencies": derived.get("core_competencies", []),
-                    "education": collected.get("education", []) or [],
-                    "experience": rewritten_experience or [],
-                    "projects": rewritten_projects or [],
-                    "skills": skills_val or [],
-                    "languages": languages_val or [],
-                }
-                final_data = flow_a._normalize_resume_shape(raw_resume)
+
+                status.update(label="2/4 组装简历结构...", state="running")
+                skeleton = payload["skeleton"]
+                final_data = flow_a._normalize_resume_shape(payload["resume"])
                 st.session_state.fa_resume_data = final_data
                 st.session_state.fa_skeleton = skeleton
                 st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
                 html_str = flow_a.to_html(final_data)
                 st.session_state.fa_resume_html = html_str
+
+                status.update(label="3/4 渲染 PDF...", state="running")
                 pdf_bytes = html_to_pdf_safe(html_str)
                 st.session_state.fa_resume_pdf = pdf_bytes
+
+                status.update(label="4/4 完成！", state="complete")
                 st.success("简历生成成功！")
             except Exception as exc:
+                status.update(label="生成失败", state="error")
                 st.error(f"生成失败：{exc}")
 
     if st.session_state.fa_resume_md:

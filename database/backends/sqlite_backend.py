@@ -631,6 +631,68 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
+    # ==================== Skeleton Cache ====================
+
+    def get_skeleton_cache(self, position: str, industry: str,
+                           function: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT skeleton_text, n_chunks, source, industries_covered
+                FROM skeleton_cache
+                WHERE position = ? AND industry = ?
+                  AND (function IS NULL OR function = ?)
+                  AND expires_at > datetime('now')
+                ORDER BY function IS NOT NULL DESC, updated_at DESC
+                LIMIT 1
+                """,
+                (position, industry, function),
+            ).fetchone()
+            if not row:
+                return None
+            result = self._row_to_dict(row)
+            result["industries_covered"] = self._json_deserialize(result.get("industries_covered")) or []
+            return result
+        finally:
+            conn.close()
+
+    def set_skeleton_cache(self, position: str, industry: str,
+                           skeleton: Dict[str, Any],
+                           function: Optional[str] = None,
+                           ttl_hours: int = 24) -> None:
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO skeleton_cache
+                    (position, industry, function, skeleton_text, n_chunks,
+                     source, industries_covered, expires_at, updated_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), datetime('now'))
+                ON CONFLICT(position, industry, function) DO UPDATE SET
+                    skeleton_text = excluded.skeleton_text,
+                    n_chunks = excluded.n_chunks,
+                    source = excluded.source,
+                    industries_covered = excluded.industries_covered,
+                    expires_at = excluded.expires_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    position,
+                    industry,
+                    function,
+                    skeleton.get("text", ""),
+                    skeleton.get("n_chunks", 0),
+                    skeleton.get("source", "rag"),
+                    self._json_serialize(skeleton.get("industries_covered", [])),
+                    f"+{ttl_hours} hours",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     # ==================== Helpers ====================
 
     def _deserialize_all(self, rows, json_fields: list) -> List[Dict]:

@@ -555,3 +555,57 @@ class PostgresBackend(BaseBackend):
             rows = self._fetchall(f"SELECT COUNT(*) as count FROM {table} WHERE deleted_at IS NULL")
             stats[table] = rows[0]["count"] if rows else 0
         return stats
+
+    # ==================== Skeleton Cache ====================
+
+    def get_skeleton_cache(self, position: str, industry: str,
+                           function: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        rows = self._fetchall(
+            """
+            SELECT skeleton_text, n_chunks, source, industries_covered
+            FROM skeleton_cache
+            WHERE position = %s AND industry = %s
+              AND (function IS NULL OR function = %s)
+              AND expires_at > NOW()
+            ORDER BY function IS NOT NULL DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (position, industry, function),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        row["industries_covered"] = self._json_deserialize(row.get("industries_covered")) or []
+        return row
+
+    def set_skeleton_cache(self, position: str, industry: str,
+                           skeleton: Dict[str, Any],
+                           function: Optional[str] = None,
+                           ttl_hours: int = 24) -> None:
+        self._execute(
+            """
+            INSERT INTO skeleton_cache
+                (position, industry, function, skeleton_text, n_chunks,
+                 source, industries_covered, expires_at, updated_at)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, NOW() + INTERVAL '%s hours', NOW())
+            ON CONFLICT (position, industry, function) DO UPDATE SET
+                skeleton_text = EXCLUDED.skeleton_text,
+                n_chunks = EXCLUDED.n_chunks,
+                source = EXCLUDED.source,
+                industries_covered = EXCLUDED.industries_covered,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                position,
+                industry,
+                function,
+                skeleton.get("text", ""),
+                skeleton.get("n_chunks", 0),
+                skeleton.get("source", "rag"),
+                self._json_serialize(skeleton.get("industries_covered", [])),
+                ttl_hours,
+            ),
+        )
+

@@ -182,6 +182,24 @@ class BaseBackend(ABC):
                             limit: int = 100) -> List[Dict]:
         """List recent quality_check rows, newest first; filter by type/target_table."""
 
+    # -------------------- Skeleton Cache --------------------
+
+    @abstractmethod
+    def get_skeleton_cache(self, position: str, industry: str,
+                           function: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Return cached skeleton if not expired; otherwise ``None``.
+
+        The returned dict mirrors ``build_skeleton`` output:
+        ``{"text": str, "source": str, "n_chunks": int, "industries_covered": List[str]}``.
+        """
+
+    @abstractmethod
+    def set_skeleton_cache(self, position: str, industry: str,
+                           skeleton: Dict[str, Any],
+                           function: Optional[str] = None,
+                           ttl_hours: int = 24) -> None:
+        """Upsert a skeleton cache entry with the given TTL."""
+
     # -------------------- Aggregates --------------------
 
     @abstractmethod

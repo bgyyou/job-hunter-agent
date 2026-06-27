@@ -266,3 +266,28 @@ CREATE TABLE IF NOT EXISTS quality_checks (
 CREATE INDEX IF NOT EXISTS idx_qc_check_type ON quality_checks(check_type);
 CREATE INDEX IF NOT EXISTS idx_qc_target ON quality_checks(target_table, target_id);
 CREATE INDEX IF NOT EXISTS idx_qc_user_id ON quality_checks(user_id);
+
+-- ============================================================
+-- Table: skeleton_cache
+-- Caches RAG skeletons for Flow A to avoid rebuilding the same
+-- (position, industry, function) skeleton on every resume generation.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS skeleton_cache (
+    id SERIAL PRIMARY KEY,
+    position TEXT NOT NULL,
+    industry TEXT NOT NULL,
+    function TEXT,
+    skeleton_text TEXT NOT NULL,
+    n_chunks INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'rag',
+    industries_covered JSONB,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(position, industry, function)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skeleton_cache_lookup
+    ON skeleton_cache(position, industry, function);
+CREATE INDEX IF NOT EXISTS idx_skeleton_cache_expires
+    ON skeleton_cache(expires_at);

@@ -9,6 +9,7 @@ Flow A: 0→1 对话式简历生成 Agent
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
@@ -548,20 +549,36 @@ class ResumeFlowA:
     async def build_skeleton(self, position: str, industry: str) -> Dict[str, Any]:
         """RAG 检索该岗位的存量 JD，提取高频要求作为简历骨架。
 
+        对 (position, industry) 做 24h 缓存，热门岗位避免每次生成简历都重建 skeleton。
+
         Returns:
             {"text": str, "source": "rag"|"fallback", "n_chunks": int,
              "industries_covered": List[str]}
             空召回时 source="fallback"，下游 UI 可提示用户该岗位 JD 较少。
         """
+        if self.db:
+            cached = self.db.get_skeleton_cache(position, industry)
+            if cached:
+                logger.info(f"Flow A: skeleton cache hit for {position}/{industry}")
+                return {
+                    "text": cached["skeleton_text"],
+                    "source": cached["source"],
+                    "n_chunks": cached["n_chunks"],
+                    "industries_covered": cached.get("industries_covered", []),
+                }
+
         chunks = self._retrieve_rag_chunks(position, industry, top_k=15)
         if not chunks:
             logger.info(f"Flow A: no RAG chunks for {position}; using fallback skeleton")
-            return {
+            result = {
                 "text": self._fallback_skeleton(position),
                 "source": "fallback",
                 "n_chunks": 0,
                 "industries_covered": [],
             }
+            if self.db:
+                self.db.set_skeleton_cache(position, industry, result)
+            return result
 
         # 只保留 requirement / responsibility 类，过滤其他噪声
         useful = [c for c in chunks if c.get("chunk_type") in ("requirement", "responsibility")]
@@ -590,7 +607,7 @@ class ResumeFlowA:
                 max_tokens=300,
                 temperature=0.3,
             )
-            return {
+            result = {
                 "text": response.content.strip(),
                 "source": "rag",
                 "n_chunks": len(useful),
@@ -598,12 +615,16 @@ class ResumeFlowA:
             }
         except Exception as exc:
             logger.warning(f"Flow A skeleton extraction failed: {exc}")
-            return {
+            result = {
                 "text": self._fallback_skeleton(position),
                 "source": "fallback",
                 "n_chunks": len(useful),
                 "industries_covered": industries,
             }
+
+        if self.db:
+            self.db.set_skeleton_cache(position, industry, result)
+        return result
 
     @staticmethod
     def _fallback_skeleton(position: str) -> str:
@@ -617,6 +638,49 @@ class ResumeFlowA:
             f"- 学习能力强，能快速适应新业务/新工具\n"
             f"- 良好的逻辑表达与文档撰写能力"
         )
+
+    async def generate_resume_payload(
+        self,
+        collected: Dict[str, Any],
+        industry: str,
+        position: str,
+    ) -> Dict[str, Any]:
+        """并行生成简历 payload：先 build skeleton，再并行改写经历/项目/派生总结。
+
+        把 rewrite_experience / rewrite_projects / derive_summary 并行跑，
+        减少 Flow A 第4步整体等待时间。
+        """
+        skeleton = await self.build_skeleton(position, industry)
+        skeleton_text = skeleton.get("text", "")
+
+        exp_task = self.rewrite_experience(collected, industry, position, skeleton_text)
+        proj_task = self.rewrite_projects(collected, industry, position, skeleton_text)
+        derived_task = self.derive_summary_and_competencies(collected, industry, position, skeleton_text)
+
+        rewritten_experience, rewritten_projects, derived = await asyncio.gather(
+            exp_task, proj_task, derived_task,
+        )
+
+        skills_val = collected.get("skills")
+        if isinstance(skills_val, dict):
+            skills_val = skills_val.get("skills", [])
+        languages_val = collected.get("languages")
+        if isinstance(languages_val, dict):
+            languages_val = languages_val.get("languages", [])
+
+        return {
+            "skeleton": skeleton,
+            "resume": {
+                "header": collected.get("header", {}),
+                "summary": derived.get("summary", ""),
+                "core_competencies": derived.get("core_competencies", []) or [],
+                "education": collected.get("education", []) or [],
+                "experience": rewritten_experience or [],
+                "projects": rewritten_projects or [],
+                "skills": skills_val or [],
+                "languages": languages_val or [],
+            },
+        }
 
     def _retrieve_rag_chunks(
         self, position: str, industry: str, top_k: int
