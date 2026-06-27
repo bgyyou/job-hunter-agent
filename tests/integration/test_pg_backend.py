@@ -39,6 +39,12 @@ def test_pg_migration_003_contains_hnsw():
     assert "ef_construction = 64" in sql
 
 
+def test_pg_migration_007_contains_llm_calls():
+    f = Path(__file__).parent.parent.parent / "database" / "migrations_pg" / "007_llm_calls.sql"
+    sql = f.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS llm_calls" in sql
+    assert "idx_llm_calls_created_at" in sql
+    assert "UPDATE schema_version" in sql
 def test_schema_pg_has_hnsw_index():
     f = Path(__file__).parent.parent.parent / "data" / "schema_pg.sql"
     sql = f.read_text(encoding="utf-8")

@@ -202,33 +202,34 @@ class LLMClient(ABC):
             "metadata": metadata or {}
         })
 
-    def _record_quality_check(self, latency_ms: int, tokens: int,
-                              cache_hit: bool, ok: bool, error: Optional[str]) -> None:
-        """v2.1 M5: 把每次 LLM 调用落到 quality_checks 表，便于复盘延迟与命中率。
+    def _record_llm_call(self, latency_ms: int, tokens: int,
+                         cache_hit: bool, ok: bool, error: Optional[str],
+                         operation: str = "analyze") -> None:
+        """v2.1 M5/P1-14: 把每次 LLM 调用落到 llm_calls 表，便于复盘延迟与命中率。
 
-        策略：失败不影响主流程；DB 不可达或表缺失时静默 warning。
+        策略：失败不影响主流程；DB 不可达或表缺失时静默 debug。
         """
         try:
             from database.factory import get_db
             db = get_db()
-            db.insert_quality_check({
-                "check_type": "llm_call",
-                "target_table": "llm_calls",
-                "target_id": None,
-                "score": 100.0 if ok else 0.0,
-                "details": {
-                    "model": self.model,
-                    "latency_ms": latency_ms,
-                    "tokens": tokens,
-                    "cache_hit": cache_hit,
-                    "ok": ok,
-                    "error": error,
-                },
+            db.insert_llm_call({
+                "request_id": None,
+                "model": self.model,
+                "endpoint": getattr(self, "api_url", None),
+                "operation": operation,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": tokens,
+                "latency_ms": latency_ms,
+                "status": "cache_hit" if cache_hit else ("success" if ok else "error"),
+                "error_type": "api_error" if error else None,
+                "error_message": error,
+                "metadata": {"cache_hit": cache_hit},
                 "user_id": "default",
             })
         except Exception as exc:
             # 埋点失败绝不影响业务
-            self.logger.debug(f"quality_check record skipped: {exc}")
+            self.logger.debug(f"llm_calls record skipped: {exc}")
 
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
@@ -370,8 +371,8 @@ class OpenAICompatibleClient(LLMClient):
             )
             cached = self._get_cache(cache_key)
             if cached:
-                # v2.1 M5: 缓存命中也落一条，方便统计命中率
-                self._record_quality_check(
+                # v2.1 P1-14: 缓存命中也落一条，方便统计命中率
+                self._record_llm_call(
                     latency_ms=0, tokens=cached.tokens_used,
                     cache_hit=True, ok=True, error=None,
                 )
@@ -425,8 +426,8 @@ class OpenAICompatibleClient(LLMClient):
             if use_cache:
                 self._set_cache(cache_key, result)
 
-            # v2.1 M5: 落 quality_checks
-            self._record_quality_check(
+            # v2.1 P1-14: 落 llm_calls
+            self._record_llm_call(
                 latency_ms=int((_time.perf_counter() - _t0) * 1000),
                 tokens=result.tokens_used,
                 cache_hit=False,
@@ -438,8 +439,8 @@ class OpenAICompatibleClient(LLMClient):
 
         except Exception as e:
             self.logger.error(f"LLM 调用失败: {e}")
-            # v2.1 M5: 失败也落一条
-            self._record_quality_check(
+            # v2.1 P1-14: 失败也落一条
+            self._record_llm_call(
                 latency_ms=int((_time.perf_counter() - _t0) * 1000),
                 tokens=0,
                 cache_hit=False,

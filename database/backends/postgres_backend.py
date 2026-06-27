@@ -609,3 +609,56 @@ class PostgresBackend(BaseBackend):
             ),
         )
 
+    # ==================== LLM Observability ====================
+
+    def insert_llm_call(self, data: Dict[str, Any]) -> int:
+        rows = self._fetchall(
+            """
+            INSERT INTO llm_calls
+                (request_id, model, endpoint, operation, prompt_tokens,
+                 completion_tokens, total_tokens, latency_ms, status,
+                 error_type, error_message, metadata)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                data.get("request_id"),
+                data.get("model", ""),
+                data.get("endpoint"),
+                data.get("operation", "analyze"),
+                data.get("prompt_tokens", 0),
+                data.get("completion_tokens", 0),
+                data.get("total_tokens", 0),
+                data.get("latency_ms", 0),
+                data.get("status", "success"),
+                data.get("error_type"),
+                data.get("error_message"),
+                self._json_serialize(data.get("metadata", {})),
+            ),
+        )
+        return rows[0]["id"] if rows else 0
+
+    def list_llm_calls(self, model: Optional[str] = None,
+                       operation: Optional[str] = None,
+                       status: Optional[str] = None,
+                       limit: int = 100) -> List[Dict]:
+        conditions = []
+        params = []
+        if model:
+            conditions.append("model = %s")
+            params.append(model)
+        if operation:
+            conditions.append("operation = %s")
+            params.append(operation)
+        if status:
+            conditions.append("status = %s")
+            params.append(status)
+        query = "SELECT * FROM llm_calls"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+        rows = self._fetchall(query, params)
+        return [self._deserialize_list(r, ["metadata"]) for r in rows]
+

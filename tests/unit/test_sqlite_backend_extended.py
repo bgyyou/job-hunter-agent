@@ -182,6 +182,32 @@ def test_quality_check_filter_by_target(tmp_db):
     assert len(rows) == 1
 
 
+# ----- llm calls -----
+
+def test_llm_call_insert_list(tmp_db):
+    lid = tmp_db.insert_llm_call({
+        "model": "agnes-2.0-flash",
+        "operation": "analyze",
+        "total_tokens": 123,
+        "latency_ms": 456,
+        "status": "success",
+        "metadata": {"cache_hit": False},
+    })
+    assert isinstance(lid, int)
+    rows = tmp_db.list_llm_calls()
+    assert len(rows) == 1
+    assert rows[0]["model"] == "agnes-2.0-flash"
+    assert rows[0]["metadata"]["cache_hit"] is False
+
+
+def test_llm_call_filters(tmp_db):
+    tmp_db.insert_llm_call({"model": "m1", "operation": "a", "status": "success"})
+    tmp_db.insert_llm_call({"model": "m1", "operation": "b", "status": "error"})
+    assert len(tmp_db.list_llm_calls(status="success")) == 1
+    assert len(tmp_db.list_llm_calls(operation="b")) == 1
+    assert len(tmp_db.list_llm_calls(model="m1")) == 2
+
+
 # ----- stats -----
 
 def test_get_stats_empty(tmp_db):

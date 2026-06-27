@@ -693,6 +693,71 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
+    # ==================== LLM Observability ====================
+
+    def insert_llm_call(self, data: Dict[str, Any]) -> int:
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO llm_calls
+                    (request_id, model, endpoint, operation, prompt_tokens,
+                     completion_tokens, total_tokens, latency_ms, status,
+                     error_type, error_message, metadata, created_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (
+                    data.get("request_id"),
+                    data.get("model", ""),
+                    data.get("endpoint"),
+                    data.get("operation", "analyze"),
+                    data.get("prompt_tokens", 0),
+                    data.get("completion_tokens", 0),
+                    data.get("total_tokens", 0),
+                    data.get("latency_ms", 0),
+                    data.get("status", "success"),
+                    data.get("error_type"),
+                    data.get("error_message"),
+                    self._json_serialize(data.get("metadata")),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def list_llm_calls(self, model: Optional[str] = None,
+                       operation: Optional[str] = None,
+                       status: Optional[str] = None,
+                       limit: int = 100) -> List[Dict]:
+        conn = self._get_conn()
+        try:
+            where = ["1=1"]
+            params: List[Any] = []
+            if model:
+                where.append("model = ?")
+                params.append(model)
+            if operation:
+                where.append("operation = ?")
+                params.append(operation)
+            if status:
+                where.append("status = ?")
+                params.append(status)
+            params.append(limit)
+            rows = conn.execute(
+                f"""
+                SELECT * FROM llm_calls
+                WHERE {' AND '.join(where)}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            return self._deserialize_all(rows, json_fields=["metadata"])
+        finally:
+            conn.close()
+
     # ==================== Helpers ====================
 
     def _deserialize_all(self, rows, json_fields: list) -> List[Dict]:

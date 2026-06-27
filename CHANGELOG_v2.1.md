@@ -1124,3 +1124,35 @@ pytest tests/ -q  # 140 passed
 - 不硬删除历史 JD，只软删除高置信公共爬取垃圾数据。
 - 不接真实微信、短信、邮箱验证码。
 - 不引入新的前端框架或构建链。
+
+
+---
+
+## [P1-14] LLM 可观测性埋点 —— 专用 `llm_calls` 表（2026-06-28）
+
+### 动机
+之前 M5 的 quality_checks 埋点把 LLM 调用混在通用质量检查表里，字段语义不匹配（`score` 只是成功/失败的占位），也没法按 model / operation / status 直接过滤。P1-14 把 LLM 调用抽成独立表，作为后续审计日志（P1-16）与成本面板的数据源。
+
+### 改动清单
+
+| 优先级 | 改动 | 影响文件 |
+|---|---|---|
+| **P1-14** | SQLite schema 新增 `llm_calls` 表（含 model / endpoint / operation / token / latency / status / error / metadata） | `data/schema.sql` |
+| **P1-14** | PostgreSQL schema 同步新增 `llm_calls` 表 + 索引 | `data/schema_pg.sql` |
+| **P1-14** | SQLite 迁移 `database/migrations/007_llm_calls.sql`（幂等，老库自动升级） | `database/migrations/007_llm_calls.sql` |
+| **P1-14** | PostgreSQL 迁移 `database/migrations_pg/007_llm_calls.sql` | `database/migrations_pg/007_llm_calls.sql` |
+| **P1-14** | `BaseBackend` 增加 `insert_llm_call` / `list_llm_calls` 抽象方法 | `database/backends/__init__.py` |
+| **P1-14** | `SqliteBackend` 实现 `insert_llm_call` / `list_llm_calls`；`list_llm_calls` 支持 model / operation / status 过滤 | `database/backends/sqlite_backend.py` |
+| **P1-14** | `PostgresBackend` 实现 `insert_llm_call` / `list_llm_calls` | `database/backends/postgres_backend.py` |
+| **P1-14** | `OpenAICompatibleClient.analyze` 埋点从 `quality_checks` 切到 `llm_calls`：成功 / 失败 / 缓存命中三条路径都写；status 分别为 `success` / `error` / `cache_hit` | `tools/llm.py` |
+| **P1-14** | 测试迁移：`test_llm_quality_checks.py` 改为验证 `llm_calls`；新增过滤条件单测；`test_llm_client.py` patch 目标改为 `_record_llm_call` | `tests/unit/test_llm_quality_checks.py`、`tests/unit/test_llm_client.py` |
+| **P1-14** | SqliteBackend 单测补 `insert_llm_call` / `list_llm_calls` round-trip 与过滤 | `tests/unit/test_sqlite_backend_extended.py` |
+| **P1-14** | PG 迁移文件存在性校验新增 `007_llm_calls.sql` 检查 | `tests/integration/test_pg_backend.py` |
+
+### 验证
+- `pytest tests/ -q` → **144 passed in 28.62s**（零回归）
+- `python -m py_compile tools/llm.py database/backends/postgres_backend.py database/backends/sqlite_backend.py` 全过
+
+### 显式不做
+- 不删除已有的 `quality_checks` 表与非 LLM 埋点，只把 LLM 调用从该表迁出；`quality_checks` 继续留给业务侧数据质量检查。
+- 本次不实现 `llm_calls` 的 dashboard / UI 查询接口，先把数据落稳。

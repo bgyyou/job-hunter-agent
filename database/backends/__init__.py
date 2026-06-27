@@ -200,6 +200,27 @@ class BaseBackend(ABC):
                            ttl_hours: int = 24) -> None:
         """Upsert a skeleton cache entry with the given TTL."""
 
+    # -------------------- LLM Observability --------------------
+
+    @abstractmethod
+    def insert_llm_call(self, data: Dict[str, Any]) -> int:
+        """Append one LLM invocation observability record.
+
+        Required: ``model``, ``operation``. Optional: ``request_id``,
+        ``endpoint``, ``prompt_tokens``, ``completion_tokens``, ``total_tokens``,
+        ``latency_ms``, ``status`` (``'success'``/``'error'``/``'cache_hit'``),
+        ``error_type``, ``error_message``, ``metadata`` (Dict).
+
+        Returns the autoincrement integer id.
+        """
+
+    @abstractmethod
+    def list_llm_calls(self, model: Optional[str] = None,
+                       operation: Optional[str] = None,
+                       status: Optional[str] = None,
+                       limit: int = 100) -> List[Dict]:
+        """List recent LLM call records, newest first; filter by model/operation/status."""
+
     # -------------------- Aggregates --------------------
 
     @abstractmethod

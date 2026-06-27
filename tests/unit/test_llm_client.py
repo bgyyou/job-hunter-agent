@@ -217,8 +217,8 @@ def test_analyze_returns_cached_without_calling_api(tmp_path, monkeypatch):
     async def boom(*a, **kw):
         raise AssertionError("api should not be called")
     monkeypatch.setattr(c, "_call_api", boom)
-    # quality_check 写入需要 db；patch 掉避免污染
-    monkeypatch.setattr(c, "_record_quality_check", lambda **kw: None)
+    # llm_calls 写入需要 db；patch 掉避免污染
+    monkeypatch.setattr(c, "_record_llm_call", lambda **kw: None)
 
     out = asyncio.run(c.analyze([LLMMessage(role="user", content="x")], use_cache=True))
     assert out.content == "from cache"

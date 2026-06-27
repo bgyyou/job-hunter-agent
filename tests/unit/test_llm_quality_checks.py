@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Tests for OpenAICompatibleClient quality_checks instrumentation.
+"""Tests for OpenAICompatibleClient llm_calls instrumentation.
 
-埋点目标：每次 LLM 调用（成功 / 失败 / 缓存命中）落一条 quality_checks
-记录 latency_ms / tokens / cache_hit / ok / error，便于复盘延迟分布与命中率。
+埋点目标：每次 LLM 调用（成功 / 失败 / 缓存命中）落一条 llm_calls
+记录 latency_ms / tokens / status / cache_hit / error，便于复盘延迟分布与命中率。
 """
 from __future__ import annotations
 
@@ -30,47 +30,46 @@ def _make_client(tmp_path):
     )
 
 
-def test_record_quality_check_writes_to_db(tmp_db, monkeypatch, tmp_path):
-    """直接测 _record_quality_check：mock get_db，确认正确字段被传入。"""
+def test_record_llm_call_writes_to_db(tmp_db, monkeypatch, tmp_path):
+    """直接测 _record_llm_call：mock get_db，确认正确字段被传入。"""
     client = _make_client(tmp_path)
 
     # 把模块级 get_db patch 成返回 tmp_db
     import database.factory as factory_mod
     monkeypatch.setattr(factory_mod, "get_db", lambda: tmp_db)
 
-    client._record_quality_check(
+    client._record_llm_call(
         latency_ms=137, tokens=256, cache_hit=False, ok=True, error=None,
     )
 
-    rows = tmp_db.list_quality_checks(check_type="llm_call")
+    rows = tmp_db.list_llm_calls()
     assert len(rows) == 1
     row = rows[0]
-    assert row["check_type"] == "llm_call"
-    assert row["target_table"] == "llm_calls"
-    assert row["score"] == 100.0
-    assert row["details"]["latency_ms"] == 137
-    assert row["details"]["tokens"] == 256
-    assert row["details"]["cache_hit"] is False
-    assert row["details"]["ok"] is True
+    assert row["model"] == "agnes-2.0-flash"
+    assert row["operation"] == "analyze"
+    assert row["status"] == "success"
+    assert row["total_tokens"] == 256
+    assert row["latency_ms"] == 137
+    assert row["metadata"]["cache_hit"] is False
 
 
-def test_record_quality_check_records_failure(tmp_db, monkeypatch, tmp_path):
-    """失败路径：score=0、ok=False、error 入库。"""
+def test_record_llm_call_records_failure(tmp_db, monkeypatch, tmp_path):
+    """失败路径：status=error、error_message 入库。"""
     client = _make_client(tmp_path)
     import database.factory as factory_mod
     monkeypatch.setattr(factory_mod, "get_db", lambda: tmp_db)
 
-    client._record_quality_check(
+    client._record_llm_call(
         latency_ms=2000, tokens=0, cache_hit=False, ok=False, error="timeout",
     )
 
-    row = tmp_db.list_quality_checks(check_type="llm_call")[0]
-    assert row["score"] == 0.0
-    assert row["details"]["ok"] is False
-    assert row["details"]["error"] == "timeout"
+    row = tmp_db.list_llm_calls()[0]
+    assert row["status"] == "error"
+    assert row["error_type"] == "api_error"
+    assert row["error_message"] == "timeout"
 
 
-def test_record_quality_check_swallows_db_errors(tmp_path, monkeypatch):
+def test_record_llm_call_swallows_db_errors(tmp_path, monkeypatch):
     """埋点失败绝不影响业务：模拟 get_db 抛异常，确认不向上传播。"""
     client = _make_client(tmp_path)
 
@@ -81,11 +80,11 @@ def test_record_quality_check_swallows_db_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(factory_mod, "get_db", boom)
 
     # 不应该 raise
-    client._record_quality_check(latency_ms=10, tokens=1, cache_hit=False, ok=True, error=None)
+    client._record_llm_call(latency_ms=10, tokens=1, cache_hit=False, ok=True, error=None)
 
 
-def test_analyze_records_quality_check_on_success(tmp_db, monkeypatch, tmp_path):
-    """端到端：mock _call_api，调 analyze，验证 quality_checks 写入。"""
+def test_analyze_records_llm_call_on_success(tmp_db, monkeypatch, tmp_path):
+    """端到端：mock _call_api，调 analyze，验证 llm_calls 写入。"""
     client = _make_client(tmp_path)
     import database.factory as factory_mod
     monkeypatch.setattr(factory_mod, "get_db", lambda: tmp_db)
@@ -104,16 +103,15 @@ def test_analyze_records_quality_check_on_success(tmp_db, monkeypatch, tmp_path)
         use_cache=False,
     ))
 
-    rows = tmp_db.list_quality_checks(check_type="llm_call")
+    rows = tmp_db.list_llm_calls()
     assert len(rows) == 1
-    assert rows[0]["details"]["tokens"] == 99
-    assert rows[0]["details"]["cache_hit"] is False
-    assert rows[0]["details"]["ok"] is True
-    assert rows[0]["details"]["latency_ms"] >= 0
+    assert rows[0]["total_tokens"] == 99
+    assert rows[0]["status"] == "success"
+    assert rows[0]["latency_ms"] >= 0
 
 
-def test_analyze_records_quality_check_on_cache_hit(tmp_db, monkeypatch, tmp_path):
-    """缓存命中也要落一条，cache_hit=True、latency_ms=0。"""
+def test_analyze_records_llm_call_on_cache_hit(tmp_db, monkeypatch, tmp_path):
+    """缓存命中也要落一条，status=cache_hit、latency_ms=0。"""
     client = _make_client(tmp_path)
     import database.factory as factory_mod
     monkeypatch.setattr(factory_mod, "get_db", lambda: tmp_db)
@@ -126,14 +124,14 @@ def test_analyze_records_quality_check_on_cache_hit(tmp_db, monkeypatch, tmp_pat
         use_cache=True,
     ))
 
-    rows = tmp_db.list_quality_checks(check_type="llm_call")
+    rows = tmp_db.list_llm_calls()
     assert len(rows) == 1
-    assert rows[0]["details"]["cache_hit"] is True
-    assert rows[0]["details"]["latency_ms"] == 0
-    assert rows[0]["details"]["tokens"] == 11
+    assert rows[0]["status"] == "cache_hit"
+    assert rows[0]["latency_ms"] == 0
+    assert rows[0]["total_tokens"] == 11
 
 
-def test_analyze_records_quality_check_on_failure(tmp_db, monkeypatch, tmp_path):
+def test_analyze_records_llm_call_on_failure(tmp_db, monkeypatch, tmp_path):
     """API 抛错 → 落失败记录 → 异常向上传播。"""
     client = _make_client(tmp_path)
     import database.factory as factory_mod
@@ -150,7 +148,23 @@ def test_analyze_records_quality_check_on_failure(tmp_db, monkeypatch, tmp_path)
             use_cache=False,
         ))
 
-    rows = tmp_db.list_quality_checks(check_type="llm_call")
+    rows = tmp_db.list_llm_calls()
     assert len(rows) == 1
-    assert rows[0]["details"]["ok"] is False
-    assert "connection refused" in rows[0]["details"]["error"]
+    assert rows[0]["status"] == "error"
+    assert "connection refused" in rows[0]["error_message"]
+
+
+def test_list_llm_calls_filters(tmp_db, monkeypatch, tmp_path):
+    """list_llm_calls 支持按 model / operation / status 过滤。"""
+    client = _make_client(tmp_path)
+    import database.factory as factory_mod
+    monkeypatch.setattr(factory_mod, "get_db", lambda: tmp_db)
+
+    client._record_llm_call(latency_ms=10, tokens=1, cache_hit=False, ok=True, error=None, operation="a")
+    client._record_llm_call(latency_ms=10, tokens=1, cache_hit=False, ok=False, error="x", operation="b")
+
+    assert len(tmp_db.list_llm_calls()) == 2
+    assert len(tmp_db.list_llm_calls(status="success")) == 1
+    assert len(tmp_db.list_llm_calls(operation="b")) == 1
+    assert len(tmp_db.list_llm_calls(model="agnes-2.0-flash")) == 2
+    assert len(tmp_db.list_llm_calls(model="missing")) == 0
