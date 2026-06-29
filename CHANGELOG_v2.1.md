@@ -1156,3 +1156,84 @@ pytest tests/ -q  # 140 passed
 ### 显式不做
 - 不删除已有的 `quality_checks` 表与非 LLM 埋点，只把 LLM 调用从该表迁出；`quality_checks` 继续留给业务侧数据质量检查。
 - 本次不实现 `llm_calls` 的 dashboard / UI 查询接口，先把数据落稳。
+
+
+---
+
+## [P1-16] 用户关键操作审计日志（2026-06-29）
+
+### 动机
+P1-14 把 LLM 调用埋点抽成专用表后，用户关键操作（登录 / 简历 / JD / match / 优化）还散落在各业务调用点没有审计轨迹。P1-16 落 `audit_logs` 表 + `services/audit_service.log_action` 薄 helper，作为后续合规审计与运营分析的数据源。
+
+### Schema 设计
+```sql
+CREATE TABLE audit_logs (
+    id          SERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT 'default',
+    action      TEXT NOT NULL,            -- e.g. 'user.login.success' / 'resume.create'
+    target_table TEXT,                    -- e.g. 'resumes' / 'jds'
+    target_id   TEXT,
+    status      TEXT NOT NULL DEFAULT 'success',  -- success / failure
+    error_message TEXT,
+    details     JSONB,                    -- 任意补充上下文
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+字段刻意没记 IP / UA：Streamlit 服务端拿不到客户端真实 IP（前端代理后才可见），记假数据不如不记，等接 nginx / cloudflare 时再加 `client_ip`。
+
+### action 命名约定
+`<domain>.<verb>`：
+- `user.register` / `user.login.success` / `user.login.failure`
+- `resume.create`
+- `jd.create` / `jd.delete`
+- `match.create`
+- `optimization.create`
+
+### 改动清单
+
+| 优先级 | 改动 | 影响文件 |
+|---|---|---|
+| **P1-16** | SQLite schema 新增 `audit_logs` 表 | `data/schema.sql` |
+| **P1-16** | PostgreSQL schema 同步新增 `audit_logs` 表 | `data/schema_pg.sql` |
+| **P1-16** | SQLite 迁移 `database/migrations/008_audit_logs.sql`（幂等，老库自动升级） | `database/migrations/008_audit_logs.sql` |
+| **P1-16** | PostgreSQL 迁移 `database/migrations_pg/008_audit_logs.sql` | `database/migrations_pg/008_audit_logs.sql` |
+| **P1-16** | `BaseBackend` 增加 `insert_audit_log` / `list_audit_logs` 抽象方法 | `database/backends/__init__.py` |
+| **P1-16** | `SqliteBackend` 实现 `insert_audit_log` / `list_audit_logs`；过滤参数 user_id / action / target_table | `database/backends/sqlite_backend.py` |
+| **P1-16** | `PostgresBackend` 实现 `insert_audit_log` / `list_audit_logs` | `database/backends/postgres_backend.py` |
+| **P1-16** | 新增 `services/audit_service.py`：`log_action(db, user_id, action, ...)` 薄 helper，内部 try/except 静默吞异常，绝不影响业务 | `services/audit_service.py` |
+| **P1-16** | `AuthService.register_user` 后埋 `user.register`；`login_user` 成功埋 `user.login.success`，失败分两种（用户不存在 / 密码错误）埋 `user.login.failure` | `services/auth_service.py` |
+| **P1-16** | `web_app.py` 8 处关键操作埋点：Flow A 保存简历、Flow B 上传简历、Flow B 粘贴/PDF/URL JD、Flow B 匹配 + 优化建议批量、JD库 添加、JD库 删除 | `web_app.py` |
+| **P1-16** | SqliteBackend 单测补 `insert_audit_log` / `list_audit_logs` round-trip、过滤、failure status | `tests/unit/test_sqlite_backend_extended.py` |
+| **P1-16** | 新增 `tests/unit/test_audit_service.py`：helper 写库、failure status、静默吞异常、最小参数、user 过滤 | `tests/unit/test_audit_service.py` |
+| **P1-16** | AuthService 单测补 4 条：register / login.success / login.failure（错密码）/ login.failure（用户不存在）| `tests/unit/test_auth_service.py` |
+| **P1-16** | PG 迁移文件存在性校验新增 `008_audit_logs.sql` 检查 | `tests/integration/test_pg_backend.py` |
+
+### 埋点接入位置
+| 位置 | action | details |
+|---|---|---|
+| `auth_service.register_user` 末尾 | `user.register` | `{email, phone, name}` |
+| `auth_service.login_user` 用户不存在分支 | `user.login.failure` | `error_message='user_not_found'` |
+| `auth_service.login_user` 密码错误分支 | `user.login.failure` | `error_message='bad_password'` |
+| `auth_service.login_user` 成功分支 | `user.login.success` | `{identifier}` |
+| `web_app.py` Flow A 保存简历 | `resume.create` | `{flow:'a', position}` |
+| `web_app.py` Flow B 上传简历 | `resume.create` | `{flow:'b', source:文件名}` |
+| `web_app.py` Flow B 粘贴 JD | `jd.create` | `{flow:'b', source:'manual'}` |
+| `web_app.py` Flow B PDF JD | `jd.create` | `{flow:'b', source:'pdf', file:文件名}` |
+| `web_app.py` Flow B URL JD | `jd.create` | `{flow:'b', source:'url', url}` |
+| `web_app.py` Flow B 匹配 | `match.create` | `{score, resume_id, jd_id}` |
+| `web_app.py` Flow B 优化建议批量 | `optimization.create` | `{count, match_id}` |
+| `web_app.py` JD库 添加 | `jd.create` | `{flow:'jd_library', source:'manual'}` |
+| `web_app.py` JD库 删除 | `jd.delete` | — |
+
+### 验证
+- `pytest tests/ -q` → **157 passed in 27.51s**（144 → 157，+13 新用例，零回归）
+- `python -m py_compile` web_app / auth_service / audit_service / 两 backend 全过
+
+### 显式不做
+- **不记 IP / UA**：Streamlit 服务端拿不到客户端真实 IP，等接 nginx / cloudflare 时再加 `client_ip` 字段
+- **不实现 audit_logs 的 dashboard / UI 查询接口**：先把数据落稳，UI 留待后续
+- **不埋 `update_match_applied` / `update_optimization_adopted`**：UI 未接这两个调用路径（M2 留的接口），等 UI 接上时同步埋
+- **不埋 `soft_delete_resume`**：UI 没有"删除简历"入口
+- **不做 audit_log 失败重试**：业务调用方明确控制埋什么，helper 静默吞异常即可
+

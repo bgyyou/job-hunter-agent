@@ -14,6 +14,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from services.audit_service import log_action
+
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_RE = re.compile(r"^\+?\d{6,20}$")
@@ -71,7 +73,16 @@ class AuthService:
             conn.commit()
         finally:
             conn.close()
-        return self.get_user(user_id)
+        user = self.get_user(user_id)
+        log_action(
+            self.db,
+            user_id=user_id,
+            action="user.register",
+            target_table="users",
+            target_id=user_id,
+            details={"email": email_norm, "phone": phone_norm, "name": (name or "").strip()[:80]},
+        )
+        return user
 
     def login_user(
         self,
@@ -82,10 +93,36 @@ class AuthService:
         ident = (identifier or "").strip()
         user = self.get_user_by_email(self._normalize_email(ident)) if "@" in ident else self.get_user_by_phone(self._normalize_phone(ident))
         if not user:
+            log_action(
+                self.db,
+                user_id="default",
+                action="user.login.failure",
+                status="failure",
+                error_message="user_not_found",
+                details={"identifier": ident[:80]},
+            )
             raise AuthError("账号或密码不正确")
         stored = self._get_user_secret(user["id"])
         if not stored or not self._verify_password(password, stored["password_salt"], stored["password_hash"]):
+            log_action(
+                self.db,
+                user_id=user["id"],
+                action="user.login.failure",
+                target_table="users",
+                target_id=user["id"],
+                status="failure",
+                error_message="bad_password",
+                details={"identifier": ident[:80]},
+            )
             raise AuthError("账号或密码不正确")
+        log_action(
+            self.db,
+            user_id=user["id"],
+            action="user.login.success",
+            target_table="users",
+            target_id=user["id"],
+            details={"identifier": ident[:80]},
+        )
         return user
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:

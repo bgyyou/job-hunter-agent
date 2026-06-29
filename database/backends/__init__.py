@@ -221,6 +221,27 @@ class BaseBackend(ABC):
                        limit: int = 100) -> List[Dict]:
         """List recent LLM call records, newest first; filter by model/operation/status."""
 
+    # -------------------- Audit Logs --------------------
+
+    @abstractmethod
+    def insert_audit_log(self, data: Dict) -> int:
+        """Append one user action audit event (login / resume CRUD / JD upload / etc.).
+
+        Required: ``action`` (e.g. ``'user.login.success'``). Optional: ``user_id``
+        (default ``'default'``), ``target_table``, ``target_id``, ``status``
+        (``'success'``/``'failure'``, default ``'success'``), ``error_message``,
+        ``details`` (Dict, JSON-serialized).
+
+        Returns the autoincrement integer id.
+        """
+
+    @abstractmethod
+    def list_audit_logs(self, user_id: Optional[str] = None,
+                        action: Optional[str] = None,
+                        target_table: Optional[str] = None,
+                        limit: int = 100) -> List[Dict]:
+        """List recent audit logs, newest first; filter by user / action / target_table."""
+
     # -------------------- Aggregates --------------------
 
     @abstractmethod

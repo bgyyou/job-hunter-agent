@@ -45,6 +45,14 @@ def test_pg_migration_007_contains_llm_calls():
     assert "CREATE TABLE IF NOT EXISTS llm_calls" in sql
     assert "idx_llm_calls_created_at" in sql
     assert "UPDATE schema_version" in sql
+
+
+def test_pg_migration_008_contains_audit_logs():
+    f = Path(__file__).parent.parent.parent / "database" / "migrations_pg" / "008_audit_logs.sql"
+    sql = f.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS audit_logs" in sql
+    assert "idx_audit_action" in sql
+    assert "UPDATE schema_version" in sql
 def test_schema_pg_has_hnsw_index():
     f = Path(__file__).parent.parent.parent / "data" / "schema_pg.sql"
     sql = f.read_text(encoding="utf-8")

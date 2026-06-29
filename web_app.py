@@ -25,6 +25,7 @@ from agents.resume_flow_a import ResumeFlowA, SECTIONS
 from config.settings import settings
 from database.backends.sqlite_backend import SqliteBackend
 from database.classifier import Classifier
+from services.audit_service import log_action
 from services.jd_library_service import (
     JdLibraryError,
     cleanup_garbage_public_jds,
@@ -976,6 +977,14 @@ def render_flow_a() -> None:
                     "target_roles": [st.session_state.fa_position],
                 }
                 resume_id = st.session_state.db.insert_resume(resume_payload)
+                log_action(
+                    st.session_state.db,
+                    user_id=current_user_id(),
+                    action="resume.create",
+                    target_table="resumes",
+                    target_id=resume_id,
+                    details={"flow": "a", "position": st.session_state.fa_position},
+                )
                 st.success(f"已保存，resume_id={resume_id[:12]}...")
         with dl4:
             if st.button("重新开始"):
@@ -1114,6 +1123,14 @@ def render_flow_b() -> None:
                 st.session_state.resume_id = st.session_state.db.insert_resume(
                     resume_to_db_payload(resume_data, current_user_id())
                 )
+                log_action(
+                    st.session_state.db,
+                    user_id=current_user_id(),
+                    action="resume.create",
+                    target_table="resumes",
+                    target_id=st.session_state.resume_id,
+                    details={"flow": "b", "source": uploaded_resume.name},
+                )
                 st.success("简历解析完成。")
         if st.session_state.resume_data:
             st.json(st.session_state.resume_data, expanded=False)
@@ -1129,6 +1146,14 @@ def render_flow_b() -> None:
                     jd_payload = jd_to_db_payload(jd_text, jd_result, current_user_id(), source="manual")
                     jd_id = insert_user_jd(st.session_state.db, current_user_id(), jd_payload)
                     embed_and_store_jd_chunks(st.session_state.db, jd_id, jd_text, user_id=current_user_id())
+                    log_action(
+                        st.session_state.db,
+                        user_id=current_user_id(),
+                        action="jd.create",
+                        target_table="jds",
+                        target_id=jd_id,
+                        details={"flow": "b", "source": "manual"},
+                    )
                     st.session_state.jd_result = jd_result
                     st.session_state.jd_id = jd_id
                     st.success("JD 已分析并保存到 JD库。")
@@ -1142,6 +1167,14 @@ def render_flow_b() -> None:
                 with st.spinner("正在解析 PDF JD..."):
                     jd_id = PdfIngestionService(db=st.session_state.db, classifier=Classifier()).ingest(
                         str(pdf_path), user_id=current_user_id(),
+                    )
+                    log_action(
+                        st.session_state.db,
+                        user_id=current_user_id(),
+                        action="jd.create",
+                        target_table="jds",
+                        target_id=jd_id,
+                        details={"flow": "b", "source": "pdf", "file": uploaded_pdf.name},
                     )
                     jd = st.session_state.db.get_jd(jd_id)
                     st.session_state.jd_id = jd_id
@@ -1203,6 +1236,14 @@ def render_flow_b() -> None:
                     jd_payload["url"] = jd_url
                     jd_id = insert_user_jd(st.session_state.db, current_user_id(), jd_payload)
                     embed_and_store_jd_chunks(st.session_state.db, jd_id, raw_text, user_id=current_user_id())
+                    log_action(
+                        st.session_state.db,
+                        user_id=current_user_id(),
+                        action="jd.create",
+                        target_table="jds",
+                        target_id=jd_id,
+                        details={"flow": "b", "source": "url", "url": jd_url[:200]},
+                    )
                     st.session_state.jd_result = jd_result
                     st.session_state.jd_id = jd_id
                     st.success("JD 已分析并保存。")
@@ -1233,6 +1274,14 @@ def render_flow_b() -> None:
                         "recommendations": match_result.get("recommendations", []),
                         "skill_mapping": match_result.get("skill_mapping", []),
                     })
+                    log_action(
+                        st.session_state.db,
+                        user_id=current_user_id(),
+                        action="match.create",
+                        target_table="match_history",
+                        target_id=st.session_state.last_match_id,
+                        details={"score": score, "resume_id": st.session_state.resume_id, "jd_id": st.session_state.jd_id},
+                    )
                     opt_ids = []
                     for rec in match_result.get("recommendations", []):
                         opt_ids.append(st.session_state.db.insert_optimization({
@@ -1245,6 +1294,15 @@ def render_flow_b() -> None:
                             "suggested_content": rec.get("suggestion", ""),
                             "reason": rec.get("reason", ""),
                         }))
+                    if opt_ids:
+                        log_action(
+                            st.session_state.db,
+                            user_id=current_user_id(),
+                            action="optimization.create",
+                            target_table="optimizations",
+                            target_id=opt_ids[0],
+                            details={"count": len(opt_ids), "match_id": st.session_state.last_match_id},
+                        )
                     st.session_state.last_opt_ids = opt_ids
                 st.success("匹配分析完成。")
         if st.session_state.match_result:
@@ -1306,6 +1364,14 @@ def render_jd_library() -> None:
                 jd_payload = jd_to_db_payload(jd_text, jd_result, user_id, source="manual")
                 jd_id = insert_user_jd(st.session_state.db, user_id, jd_payload)
                 embed_and_store_jd_chunks(st.session_state.db, jd_id, jd_text, user_id=user_id)
+                log_action(
+                    st.session_state.db,
+                    user_id=user_id,
+                    action="jd.create",
+                    target_table="jds",
+                    target_id=jd_id,
+                    details={"flow": "jd_library", "source": "manual"},
+                )
                 st.success("已保存到 JD库。")
 
     col_s, col_f = st.columns([2, 1])
@@ -1405,6 +1471,13 @@ def render_jd_library() -> None:
                 if owned and st.button("删除", key=f"delete_jd_{jd['id']}"):
                     try:
                         delete_user_jd(st.session_state.db, user_id, jd["id"])
+                        log_action(
+                            st.session_state.db,
+                            user_id=user_id,
+                            action="jd.delete",
+                            target_table="jds",
+                            target_id=jd["id"],
+                        )
                         st.success("已删除。")
                         st.rerun()
                     except JdLibraryError as exc:

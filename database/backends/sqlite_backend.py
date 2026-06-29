@@ -758,6 +758,65 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
+    # ==================== Audit Logs ====================
+
+    def insert_audit_log(self, data: Dict) -> int:
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO audit_logs
+                    (user_id, action, target_table, target_id, status,
+                     error_message, details)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data.get("user_id", "default"),
+                    data["action"],
+                    data.get("target_table"),
+                    data.get("target_id"),
+                    data.get("status", "success"),
+                    data.get("error_message"),
+                    self._json_serialize(data.get("details")),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def list_audit_logs(self, user_id: Optional[str] = None,
+                        action: Optional[str] = None,
+                        target_table: Optional[str] = None,
+                        limit: int = 100) -> List[Dict]:
+        conn = self._get_conn()
+        try:
+            where = ["1=1"]
+            params: List[Any] = []
+            if user_id:
+                where.append("user_id = ?")
+                params.append(user_id)
+            if action:
+                where.append("action = ?")
+                params.append(action)
+            if target_table:
+                where.append("target_table = ?")
+                params.append(target_table)
+            params.append(limit)
+            rows = conn.execute(
+                f"""
+                SELECT * FROM audit_logs
+                WHERE {' AND '.join(where)}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+            return self._deserialize_all(rows, json_fields=["details"])
+        finally:
+            conn.close()
+
     # ==================== Helpers ====================
 
     def _deserialize_all(self, rows, json_fields: list) -> List[Dict]:

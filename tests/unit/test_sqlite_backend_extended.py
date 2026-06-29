@@ -208,6 +208,49 @@ def test_llm_call_filters(tmp_db):
     assert len(tmp_db.list_llm_calls(model="m1")) == 2
 
 
+# ----- audit logs -----
+
+def test_audit_log_insert_list(tmp_db):
+    aid = tmp_db.insert_audit_log({
+        "user_id": "u1",
+        "action": "resume.create",
+        "target_table": "resumes",
+        "target_id": "r1",
+        "details": {"flow": "a"},
+    })
+    assert isinstance(aid, int)
+    rows = tmp_db.list_audit_logs()
+    assert len(rows) == 1
+    assert rows[0]["action"] == "resume.create"
+    assert rows[0]["user_id"] == "u1"
+    assert rows[0]["status"] == "success"
+    assert rows[0]["details"]["flow"] == "a"
+
+
+def test_audit_log_filters(tmp_db):
+    tmp_db.insert_audit_log({"user_id": "u1", "action": "a1", "target_table": "t1"})
+    tmp_db.insert_audit_log({"user_id": "u2", "action": "a2", "target_table": "t2"})
+    tmp_db.insert_audit_log({"user_id": "u1", "action": "a3", "target_table": "t2"})
+    assert len(tmp_db.list_audit_logs()) == 3
+    assert len(tmp_db.list_audit_logs(user_id="u1")) == 2
+    assert len(tmp_db.list_audit_logs(action="a2")) == 1
+    assert len(tmp_db.list_audit_logs(target_table="t2")) == 2
+
+
+def test_audit_log_failure_status(tmp_db):
+    tmp_db.insert_audit_log({
+        "user_id": "u1",
+        "action": "user.login.failure",
+        "status": "failure",
+        "error_message": "bad_password",
+        "details": {"identifier": "test@example.com"},
+    })
+    row = tmp_db.list_audit_logs()[0]
+    assert row["status"] == "failure"
+    assert row["error_message"] == "bad_password"
+    assert row["details"]["identifier"] == "test@example.com"
+
+
 # ----- stats -----
 
 def test_get_stats_empty(tmp_db):

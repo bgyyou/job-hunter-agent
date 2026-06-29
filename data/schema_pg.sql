@@ -317,3 +317,24 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at DESC
 CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_status ON llm_calls(status);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_operation ON llm_calls(operation);
+
+-- ============================================================
+-- Table: audit_logs
+-- v2.1 P1-16: 用户关键操作审计日志
+-- ============================================================
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    action TEXT NOT NULL,
+    target_table TEXT,
+    target_id TEXT,
+    status TEXT NOT NULL DEFAULT 'success',
+    error_message TEXT,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_logs(target_table, target_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at DESC);

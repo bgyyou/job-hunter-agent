@@ -662,3 +662,50 @@ class PostgresBackend(BaseBackend):
         rows = self._fetchall(query, params)
         return [self._deserialize_list(r, ["metadata"]) for r in rows]
 
+    # ==================== Audit Logs ====================
+
+    def insert_audit_log(self, data: Dict) -> int:
+        rows = self._fetchall(
+            """
+            INSERT INTO audit_logs
+                (user_id, action, target_table, target_id, status,
+                 error_message, details)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                data.get("user_id", "default"),
+                data["action"],
+                data.get("target_table"),
+                data.get("target_id"),
+                data.get("status", "success"),
+                data.get("error_message"),
+                self._json_serialize(data.get("details")),
+            ),
+        )
+        return rows[0]["id"] if rows else 0
+
+    def list_audit_logs(self, user_id: Optional[str] = None,
+                        action: Optional[str] = None,
+                        target_table: Optional[str] = None,
+                        limit: int = 100) -> List[Dict]:
+        conditions = []
+        params = []
+        if user_id:
+            conditions.append("user_id = %s")
+            params.append(user_id)
+        if action:
+            conditions.append("action = %s")
+            params.append(action)
+        if target_table:
+            conditions.append("target_table = %s")
+            params.append(target_table)
+        query = "SELECT * FROM audit_logs"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+        rows = self._fetchall(query, params)
+        return [self._deserialize_list(r, ["details"]) for r in rows]
+
