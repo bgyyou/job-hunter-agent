@@ -1237,3 +1237,36 @@ CREATE TABLE audit_logs (
 - **不埋 `soft_delete_resume`**：UI 没有"删除简历"入口
 - **不做 audit_log 失败重试**：业务调用方明确控制埋什么，helper 静默吞异常即可
 
+---
+
+## [N10] 三个并行任务：51job 落地 + 猎聘节流 + 「我的简历」页面（2026-07-02）
+
+### 动机
+猎聘/51job 两个平台的反爬强度差异大、不能用同一套节奏；简历多了之后需要版本管理。这是把"数据放量"和"用户态管理"两条线一起推一格。
+
+### 改动清单
+
+| 优先级 | 改动 | 影响文件 |
+|---|---|---|
+| N10 | 51job 爬虫落地（UI 搜索 + sensorsdata 拿 jobId + 30 关键词放量跑出 392 JD） | `tools/scraper/fiftyonejob_scraper.py`、`scripts/collectors/batch_51job.py` |
+| N10 | 猎聘 `LiepinScraper.search_jobs / parse_job` 加正态分布请求间隔（5–10s 均值 7.5s） | `tools/scraper/liepin_scraper.py` |
+| N10 | 猎聘登录检测加固（DOM 元素 + 文字双重 + 失败时提示重登） | `tools/scraper/liepin_scraper.py` |
+| N10 | 下线 web_app UI 里的「数据爬取」入口（爬虫走 scripts/collectors 后台） | `web_app.py` |
+| N10 | 简历 schema 加版本树字段（`parent_resume_id` / `version` / `version_label` / `is_primary`） | `database/backends/sqlite_backend.py`（inline migration） |
+| N10 | 新建 `services/resume_library_service.py`：版本树聚合 + 主简历切换事务 + 克隆 + 鉴权校验 | `services/resume_library_service.py` |
+| N10 | 新建 web_app `render_resume_library`：扁平列表 + 版本树 expander + 设为主/克隆/删除 + 空态引导 | `web_app.py` |
+| N10 | 9 个 resume_library_service 单元测试 | `tests/unit/test_resume_library_service.py` |
+| N10 | 猎聘登录助手改轮询（去掉 input()）+ 持久化上下文显式带 `channel="msedge"` | `scripts/collectors/login_liepin.py`、`tools/scraper/playwright_scraper.py` |
+
+### 验证
+- `pytest tests/ -q` → **166 passed in 27.39s**（157 → 166，+9 新增 resume_library 用例，零回归）
+- 51job 30 关键词放量：跑出 392 JD，insert 0 失败；DB baseline 515 → 922
+- 猎聘 30 关键词放量：触发验证码墙（关键词 2 起多个 robot/验证码 warning），重启浏览器无效（cookie 标记），_extract_jobs_from_page 返 0 → 本轮仅入库 16 条（AI 产品经理 7 + 算法 9）
+- web_app `render_resume_library` 路由 + UI 在 BYPASS 模式下渲染正常，分流 "默认用户" + 自定义用户两种场景
+
+### 显式不做
+- **不做猎聘反爬升级到验证码破解**：触发 cookie 标记后没有白名单，要靠用户手动降低频率 / 切 IP，超出 v2.1 范围
+- **不做简历版本树的 diff / 合并 UI**：先落到能 set primary + clone + 删除就够用，diff 留给后续 match/recommendation 流程消费版本时再上
+- **不在 schema 里加 `archived_at` / `is_archived`**：软删除按 `deleted_at IS NULL` 一条规则走，不引入第二套"归档"语义，避免双轨
+- **不做 PG backend 的简历版本树方法同步**：版本树是 SQLite-only feature（N10 不涉及 PG）；等需求出现再 PR 同步
+
