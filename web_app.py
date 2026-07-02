@@ -47,7 +47,6 @@ from tools.jd_indexer import embed_and_store_jd_chunks
 from tools.llm import OpenAICompatibleClient
 from tools.resume_parser import ResumeParser
 from tools.scraper.jd_analyzer_enhanced import JDAnalyzerEnhanced
-from tools.scraper.scraper_manager import ScraperManager
 
 settings.setup_logging()
 
@@ -486,7 +485,6 @@ def init_session_state() -> None:
         "llm_init_error": None,
         "llm_client": None,
         "agent": None,
-        "scraper_manager": None,
         "db": None,
         "resume_data": None,
         "resume_id": None,
@@ -555,7 +553,6 @@ def init_app_services() -> None:
         )
         st.session_state.llm_client = llm_client
         st.session_state.agent = CoordinatorAgent(llm_client=llm_client)
-        st.session_state.scraper_manager = ScraperManager(llm_client=llm_client)
         st.session_state.services_ready = True
         st.session_state.llm_init_error = None
     except Exception as exc:

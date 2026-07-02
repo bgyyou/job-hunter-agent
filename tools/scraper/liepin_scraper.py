@@ -79,25 +79,91 @@ class LiepinScraper(BaseScraper):
     async def check_login(self) -> bool:
         """检测当前 profile 是否仍处于登录态。
 
-        猎聘 2026 改版后：登录后右上角会有「个人中心 / 消息」入口。
-        未登录时这两个文字不会出现，会显示「登录 / 注册」按钮。
+        改进版 v2.1 N10：使用 DOM 元素检测而非纯文本匹配，更稳定。
+        - 登录态：右上角有「个人中心 / 我的简历 / 退出」入口
+        - 未登录：显示「登录 / 注册」按钮
         """
         await self._init_playwright()
         try:
             await self.playwright_scraper.human_navigate(f"{self.base_url}/")
-            await self.playwright_scraper.human_read_page(min_seconds=1.0, max_seconds=2.0)
+            await self.playwright_scraper.human_read_page(min_seconds=1.5, max_seconds=3.0)
             page = self.playwright_scraper.page
-            # 用文字判定，最稳。登录后页面上出现「个人中心」或「我的简历」字样。
-            body_text = await page.evaluate("() => document.body.innerText")
-            ok = ("个人中心" in body_text) or ("我的简历" in body_text) or ("退出" in body_text)
-            if not ok:
-                logger.warning(
-                    "[liepin] 登录态失效：首页文本里没有「个人中心/我的简历/退出」。"
-                    "请跑 `python scripts/collectors/login_liepin.py` 重新登录。"
+
+            # 方法1：DOM 元素检测（主方案，比文字更稳定）
+            logged_in = await self._is_logged_in_via_dom(page)
+
+            # 方法2：文字备用检测（双重保险）
+            if not logged_in:
+                body_text = await page.evaluate("() => document.body.innerText")
+                logged_in = (
+                    "个人中心" in body_text
+                    or "我的简历" in body_text
+                    or "退出" in body_text
                 )
-            return ok
+
+            if not logged_in:
+                # 再检查：是否有「登录/注册」按钮（确认是未登录）
+                login_text_found = await self._page_has_text(page, "登录/注册") or \
+                                   await self._page_has_text(page, "登录")
+                if login_text_found:
+                    logger.warning(
+                        "[liepin] 登录态失效：检测到「登录/注册」按钮。"
+                        "请跑 `python scripts/collectors/login_liepin.py` 重新登录。"
+                    )
+                else:
+                    logger.warning(
+                        "[liepin] 登录态不明：未检测到个人中心也未检测到登录按钮，"
+                        "可能是页面加载不完整。"
+                    )
+
+            return logged_in
         except Exception as e:
             logger.exception(f"[liepin] check_login 失败: {e}")
+            return False
+
+    async def _is_logged_in_via_dom(self, page) -> bool:
+        """DOM 元素检测是否已登录。"""
+        # 登录后会出现：个人中心链接、退出按钮、用户头像区域
+        logged_in_selectors = [
+            # 链接型
+            "a[href*='usercenter']",
+            "a[href*='personal-center']",
+            "a[href*='myresume']",
+            "a[href*='resume']",
+            # 按钮型
+            "button:has-text('退出')",
+            "[class*='logout']",
+            "[class*='exit']",
+            # 头像/用户名区域
+            "[class*='avatar']",
+            "[class*='user-name']",
+            "[class*='username']",
+            "[class*='user-info']",
+            # 新版2026
+            "[class*='header-user']",
+            "[class*='user-panel']",
+            "[class*='lp-header']",
+        ]
+
+        for sel in logged_in_selectors:
+            try:
+                el = await page.query_selector(sel)
+                if el:
+                    # 元素存在，检查是否可见（display:none 等）
+                    is_visible = await el.is_visible()
+                    if is_visible:
+                        return True
+            except Exception:
+                continue
+
+        return False
+
+    async def _page_has_text(self, page, text: str) -> bool:
+        """检查页面是否包含指定文字。"""
+        try:
+            body_text = await page.evaluate("() => document.body.innerText")
+            return text in body_text
+        except Exception:
             return False
 
     # ------------------------------------------------------------------
