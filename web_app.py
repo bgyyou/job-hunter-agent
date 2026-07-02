@@ -37,6 +37,13 @@ from services.jd_library_service import (
     list_sources,
     list_visible_jds,
 )
+from services.resume_library_service import (
+    ResumeLibraryError,
+    clone_resume,
+    get_primary_resume,
+    list_resume_versions,
+    set_primary_resume,
+)
 from services.pdf_ingestion_service import PdfIngestionService
 from tools import taxonomy
 from tools.generator.cover_letter_generator import CoverLetterGenerator
@@ -609,9 +616,13 @@ def reset_flow_b_state() -> None:
 
 
 def render_top_nav() -> None:
-    left, spacer, jd_col, home_col = st.columns([3, 6, 1, 1])
+    left, spacer, resume_col, jd_col, home_col = st.columns([3, 5, 1, 1, 1])
     with left:
         st.markdown('<div class="topnav-title">JobHunter</div>', unsafe_allow_html=True)
+    with resume_col:
+        if st.button("我的简历", key="nav_resume", use_container_width=True):
+            st.session_state.app_route = "resume_library"
+            st.rerun()
     with jd_col:
         if st.button("JD库", use_container_width=True):
             st.session_state.app_route = "jd_library"
@@ -1337,6 +1348,146 @@ def render_flow_b() -> None:
 # ---------------------------------------------------------------------------
 
 
+def render_resume_library() -> None:
+    """「我的简历」页面：版本树管理 + 主简历切换 + 克隆新版本。"""
+    from services.resume_library_service import list_resumes_flat
+
+    render_top_nav()
+    st.header("我的简历")
+    st.caption("管理你所有简历版本。切换「主简历」后，求职匹配 / 优化都会默认用它。")
+
+    db = st.session_state.db
+    if db is None:
+        st.error("数据库未初始化。")
+        return
+
+    # 优先显示 current_user_id() 的简历；如果为空，回退到 default（dev 期数据）
+    primary_user = current_user_id()
+    flat = list_resumes_flat(db, primary_user)
+    fallback_user = None
+    if not flat:
+        flat = db.list_resumes("default")
+        fallback_user = "default"
+
+    if not flat:
+        st.info("还没有任何简历。先去首页用 Flow A 生成一份，或在 Flow B 里上传 PDF。")
+        return
+
+    if fallback_user:
+        st.warning(
+            f"当前账号 `{primary_user}` 下无简历，临时显示 user_id=`{fallback_user}` 的历史简历。"
+        )
+        effective_user = fallback_user
+    else:
+        effective_user = primary_user
+
+    # 在 session_state 里记当前 effective_user，on_change callback 用得到
+    st.session_state._resume_lib_effective_user = effective_user
+
+    primary = get_primary_resume(db, effective_user)
+    if primary:
+        st.success(
+            f"**当前主简历**：v{primary.get('version') or 1} · {primary.get('name') or '(未命名)'} · "
+            f"{_short_time(primary.get('updated_at'))}"
+        )
+    else:
+        st.info("还没有设置主简历——在下面版本行点「设为主简历」。")
+
+    trees = list_resume_versions(db, effective_user)
+    for tree in trees:
+        with st.expander(
+            f"📁 {tree['root_label']} · 共 {len(tree['versions'])} 个版本",
+            expanded=(tree["root_id"] == (primary["id"] if primary else None)),
+        ):
+            _render_version_tree(db, effective_user, tree)
+
+
+def _render_version_tree(db, user_id: str, tree: Dict[str, Any]) -> None:
+    """渲染单个版本树（含克隆 / 切换主 / 删除操作）。"""
+    for v in tree["versions"]:
+        is_primary = bool(v.get("is_primary"))
+        label = v.get("version_label") or ""
+        name = v.get("name") or "(未命名)"
+        summary = (v.get("summary") or "").strip()
+        cols = st.columns([1, 4, 2])
+        with cols[0]:
+            star = "⭐ " if is_primary else ""
+            st.markdown(f"**{star}v{v.get('version') or 1}**")
+            st.caption(_short_time(v.get("updated_at")))
+        with cols[1]:
+            st.markdown(f"**{name}**" + (f" · _{label}_" if label else ""))
+            if summary:
+                st.caption(summary[:140] + ("…" if len(summary) > 140 else ""))
+            skills = v.get("skills") or []
+            if skills and isinstance(skills, list):
+                tags = " · ".join(f"`{s}`" for s in skills[:6] if s)
+                if tags:
+                    st.caption(f"技能：{tags}")
+        with cols[2]:
+            act_cols = st.columns(3)
+            with act_cols[0]:
+                if not is_primary and st.button("设为主", key=f"prim_{v['id']}", use_container_width=True):
+                    try:
+                        set_primary_resume(db, user_id, v["id"])
+                        log_action(
+                            db, user_id=user_id, action="resume.set_primary",
+                            target_table="resumes", target_id=v["id"],
+                        )
+                        st.rerun()
+                    except ResumeLibraryError as exc:
+                        st.error(str(exc))
+            with act_cols[1]:
+                if st.button("克隆", key=f"clone_{v['id']}", use_container_width=True):
+                    st.session_state[f"_show_clone_{v['id']}"] = True
+            with act_cols[2]:
+                if st.button("删除", key=f"del_{v['id']}", use_container_width=True):
+                    db.soft_delete_resume(v["id"])
+                    log_action(
+                        db, user_id=user_id, action="resume.soft_delete",
+                        target_table="resumes", target_id=v["id"],
+                    )
+                    st.rerun()
+
+        # 克隆表单（按需展开）
+        if st.session_state.get(f"_show_clone_{v['id']}"):
+            with st.form(key=f"clone_form_{v['id']}"):
+                st.markdown(f"基于 **v{v.get('version') or 1} · {name}** 创建新版本")
+                new_label = st.text_input(
+                    "版本标签（可选）",
+                    placeholder="例如：针对字节跳动 JD 优化",
+                    key=f"clone_label_{v['id']}",
+                )
+                new_name = st.text_input(
+                    "新版本姓名（留空则与父版本相同）",
+                    value=name,
+                    key=f"clone_name_{v['id']}",
+                )
+                submitted = st.form_submit_button("创建新版本")
+                cancel = st.form_submit_button("取消")
+                if submitted:
+                    overrides = {"name": new_name} if new_name != name else {}
+                    if new_label:
+                        overrides["version_label"] = new_label
+                    new_id = clone_resume(db, v["id"], user_id, overrides=overrides)
+                    log_action(
+                        db, user_id=user_id, action="resume.clone",
+                        target_table="resumes", target_id=new_id,
+                        details={"source_id": v["id"]},
+                    )
+                    st.session_state[f"_show_clone_{v['id']}"] = False
+                    st.success(f"已创建新版本，id={new_id[:12]}…")
+                    st.rerun()
+                if cancel:
+                    st.session_state[f"_show_clone_{v['id']}"] = False
+                    st.rerun()
+
+
+def _short_time(iso: Optional[str]) -> str:
+    if not iso:
+        return ""
+    return iso.replace("T", " ")[:16]
+
+
 def render_jd_library() -> None:
     render_top_nav()
     st.header("JD库")
@@ -1497,6 +1648,8 @@ elif st.session_state.app_route == "flow_b":
     render_flow_b()
 elif st.session_state.app_route == "jd_library":
     render_jd_library()
+elif st.session_state.app_route == "resume_library":
+    render_resume_library()
 else:
     st.session_state.app_route = "mode_select"
     render_mode_select()

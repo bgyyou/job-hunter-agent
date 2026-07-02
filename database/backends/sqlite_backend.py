@@ -75,6 +75,27 @@ class SqliteBackend(BaseBackend):
             conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0")
             logger.info("migration: added knowledge_chunks.legacy column")
 
+        # v2.1 N10: resumes 版本树 + 主简历字段
+        resume_cols = {r[1] for r in conn.execute("PRAGMA table_info(resumes)").fetchall()}
+        if "parent_resume_id" not in resume_cols:
+            conn.execute("ALTER TABLE resumes ADD COLUMN parent_resume_id TEXT")
+            logger.info("migration: added resumes.parent_resume_id column")
+        if "version" not in resume_cols:
+            conn.execute("ALTER TABLE resumes ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+            logger.info("migration: added resumes.version column")
+        if "version_label" not in resume_cols:
+            conn.execute("ALTER TABLE resumes ADD COLUMN version_label TEXT")
+            logger.info("migration: added resumes.version_label column")
+        if "is_primary" not in resume_cols:
+            conn.execute("ALTER TABLE resumes ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0")
+            logger.info("migration: added resumes.is_primary column")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resumes_parent ON resumes(parent_resume_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resumes_primary ON resumes(user_id, is_primary)"
+        )
+
         # 编号迁移文件：database/migrations/NNN_description.sql
         mig_dir = Path(__file__).parent.parent.parent / "database" / "migrations"
         if not mig_dir.exists():
@@ -168,6 +189,74 @@ class SqliteBackend(BaseBackend):
         try:
             conn.execute("UPDATE resumes SET deleted_at = ? WHERE id = ?", (datetime.now().isoformat(), resume_id))
             conn.commit()
+        finally:
+            conn.close()
+
+    def set_primary_resume(self, user_id: str, resume_id: str) -> None:
+        """把 resume_id 设为该 user 的主简历（同时取消其他主简历）。"""
+        conn = self._get_conn()
+        try:
+            now = datetime.now().isoformat()
+            conn.execute(
+                "UPDATE resumes SET is_primary = 0, updated_at = ? WHERE user_id = ?",
+                (now, user_id),
+            )
+            conn.execute(
+                "UPDATE resumes SET is_primary = 1, updated_at = ? WHERE id = ? AND user_id = ?",
+                (now, resume_id, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def clone_resume_as_version(
+        self,
+        source_resume_id: str,
+        new_data: Optional[Dict] = None,
+    ) -> str:
+        """基于 source_resume_id 复制一份新简历，version = 父版本 + 1, parent_resume_id 指向父。"""
+        conn = self._get_conn()
+        try:
+            src = conn.execute(
+                "SELECT * FROM resumes WHERE id = ? AND deleted_at IS NULL",
+                (source_resume_id,),
+            ).fetchone()
+            if not src:
+                raise ValueError(f"source resume not found: {source_resume_id}")
+            src_d = dict(src)
+            new_id = str(uuid.uuid4())
+            now = datetime.now().isoformat()
+            merge = new_data or {}
+            conn.execute(
+                """INSERT INTO resumes
+                   (id, user_id, name, phone, email, summary, skills,
+                    experience_years, domains, target_roles, preferred_locations,
+                    education, projects, parent_resume_id, version,
+                    version_label, is_primary, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                (
+                    new_id,
+                    src_d["user_id"],
+                    merge.get("name", src_d["name"]),
+                    merge.get("phone", src_d["phone"]),
+                    merge.get("email", src_d["email"]),
+                    merge.get("summary", src_d["summary"]),
+                    self._json_serialize(merge.get("skills", self._json_deserialize(src_d["skills"]))),
+                    merge.get("experience_years", src_d["experience_years"]),
+                    self._json_serialize(merge.get("domains", self._json_deserialize(src_d["domains"]))),
+                    self._json_serialize(merge.get("target_roles", self._json_deserialize(src_d["target_roles"]))),
+                    self._json_serialize(merge.get("preferred_locations", self._json_deserialize(src_d["preferred_locations"]))),
+                    self._json_serialize(merge.get("education", self._json_deserialize(src_d["education"]))),
+                    self._json_serialize(merge.get("projects", self._json_deserialize(src_d["projects"]))),
+                    source_resume_id,
+                    (src_d["version"] or 1) + 1,
+                    merge.get("version_label"),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return new_id
         finally:
             conn.close()
 

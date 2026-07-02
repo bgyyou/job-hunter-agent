@@ -9,7 +9,10 @@ v2.1 M6.B.3.2: 复用 human_playwright_scraper 的浏览器自动化基类，
 """
 from __future__ import annotations
 
+import asyncio
+import random
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +33,8 @@ class LiepinScraper(BaseScraper):
         headless: bool = False,
         human_speed: float = 0.5,
         user_data_dir: Optional[str] = "data/browser_profiles/liepin",
+        request_interval_min: float = 5.0,
+        request_interval_max: float = 10.0,
     ):
         super().__init__(
             platform_name="liepin",
@@ -39,7 +44,23 @@ class LiepinScraper(BaseScraper):
         self.headless = headless
         self.human_speed = human_speed
         self.user_data_dir = user_data_dir
+        self.request_interval_min = request_interval_min
+        self.request_interval_max = request_interval_max
+        self._last_request_time = 0.0
         self.anti_bot = AntiBotDetector()
+
+    # ------------------------------------------------------------------
+    # 防封：请求间隔（正态分布）— 猎聘反爬比 51job 更严，间隔更大
+    # ------------------------------------------------------------------
+
+    def _wait_interval(self) -> None:
+        mean = (self.request_interval_min + self.request_interval_max) / 2
+        std = (self.request_interval_max - self.request_interval_min) / 6
+        delay = max(self.request_interval_min, min(self.request_interval_max, random.gauss(mean, std)))
+        elapsed = time.time() - self._last_request_time
+        sleep_time = max(0.1, delay - elapsed)
+        time.sleep(sleep_time)
+        self._last_request_time = time.time()
 
     async def __aenter__(self):
         await self._init_playwright()
@@ -187,6 +208,7 @@ class LiepinScraper(BaseScraper):
             limit: 最多返回多少条
         """
         await self._init_playwright()
+        self._wait_interval()
 
         # 猎聘搜索 URL 形如 https://www.liepin.com/zhaopin/?key=AI产品经理&city=深圳&curPage=0
         params = [f"key={keyword}"]
@@ -256,6 +278,7 @@ class LiepinScraper(BaseScraper):
 
     async def parse_job(self, job_url: str) -> Dict[str, Any]:
         await self._init_playwright()
+        self._wait_interval()
         try:
             await self.playwright_scraper.human_navigate(job_url)
             await self.playwright_scraper.human_read_page(min_seconds=2.0, max_seconds=4.0)
