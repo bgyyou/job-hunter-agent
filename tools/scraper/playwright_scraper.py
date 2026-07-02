@@ -110,7 +110,6 @@ class PlaywrightScraper(ABC):
             user_data_path = Path(self.user_data_dir)
             user_data_path.mkdir(parents=True, exist_ok=True)
 
-            # Edge 持久化不需要 channel
             launch_opts = {
                 "headless": self.headless,
                 "args": launch_options["args"],
@@ -119,6 +118,9 @@ class PlaywrightScraper(ABC):
                 "timezone_id": "Asia/Shanghai",
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
             }
+            # 持久化路径必须显式带 channel，否则 Playwright 走 chromium 二进制（看起来像 Chrome）
+            if self.browser_type == "msedge":
+                launch_opts["channel"] = "msedge"
 
             self.context = await browser_launcher.launch_persistent_context(
                 str(user_data_path),
