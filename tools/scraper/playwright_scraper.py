@@ -228,16 +228,28 @@ class PlaywrightScraper(ABC):
         self.logger.info(f"关闭 {self.platform_name} 爬虫...")
 
         if self.page:
-            await self.page.close()
+            try:
+                await self.page.close()
+            except Exception as exc:
+                self.logger.debug(f"page.close 异常（不影响数据）: {exc}")
 
         if self.context:
-            await self.context.close()
+            try:
+                await self.context.close()
+            except Exception as exc:
+                self.logger.debug(f"context.close 异常: {exc}")
 
         if self.browser:
-            await self.browser.close()
+            try:
+                await self.browser.close()
+            except Exception as exc:
+                self.logger.debug(f"browser.close 异常: {exc}")
 
         if self.playwright:
-            await self.playwright.stop()
+            try:
+                await self.playwright.stop()
+            except Exception as exc:
+                self.logger.debug(f"playwright.stop 异常: {exc}")
 
         self.logger.info(f"{self.platform_name} 爬虫已关闭")
 
