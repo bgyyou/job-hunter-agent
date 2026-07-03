@@ -84,7 +84,10 @@ class FiftyOneJobScraper(BaseScraper):
 
     async def _close_playwright(self) -> None:
         if self._playwright:
-            await self._playwright.close()
+            try:
+                await self._playwright.close()
+            except Exception as exc:
+                logger.debug(f"[51job] Playwright close 异常（不影响数据）: {exc}")
             self._playwright = None
 
     # ------------------------------------------------------------------
