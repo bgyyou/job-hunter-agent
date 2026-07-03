@@ -1008,6 +1008,9 @@ def render_flow_a() -> None:
 def resume_to_db_payload(resume_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     header = resume_data.get("header", {})
     contact = header.get("contact", {})
+    experience = resume_data.get("experience", [])
+    # experience_years：从 experience 列表长度估算（保守，每个条目算 1 年）
+    experience_years = max(len(experience), 0)
     return {
         "user_id": user_id,
         "name": header.get("name", resume_data.get("name", "")),
@@ -1017,6 +1020,8 @@ def resume_to_db_payload(resume_data: Dict[str, Any], user_id: str) -> Dict[str,
         "skills": resume_data.get("skills", []),
         "education": resume_data.get("education", []),
         "projects": resume_data.get("projects", []),
+        "experience": experience,
+        "experience_years": experience_years,
     }
 
 
