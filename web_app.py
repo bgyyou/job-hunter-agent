@@ -1025,6 +1025,32 @@ def resume_to_db_payload(resume_data: Dict[str, Any], user_id: str) -> Dict[str,
     }
 
 
+def _db_resume_to_resume_data(row: Dict[str, Any]) -> Dict[str, Any]:
+    """把 DB 里存的 resume 行转回 ResumeParser 输出的 resume_data 格式。
+
+    ResumeOptimizer / ResumeGenerator 读的是 header/experience/projects/
+    skills/education/summary 这些字段。
+    """
+    header = {
+        "name": row.get("name", ""),
+        "summary": row.get("summary", ""),
+        "contact": {
+            "phone": row.get("phone", ""),
+            "email": row.get("email", ""),
+        },
+    }
+    return {
+        "header": header,
+        "summary": row.get("summary", ""),
+        "experience": row.get("experience", []),
+        "projects": row.get("projects", []),
+        "skills": row.get("skills", []),
+        "education": row.get("education", []),
+        "languages": [],
+        "core_competencies": [],
+    }
+
+
 def jd_to_db_payload(jd_text: str, jd_result: Dict[str, Any], user_id: str, source: str = "manual") -> Dict[str, Any]:
     clf = Classifier()
     tags = clf.classify(jd_result.get("title", ""), jd_text)
@@ -1147,6 +1173,23 @@ def render_flow_b() -> None:
                 st.success("简历解析完成。")
         if st.session_state.resume_data:
             st.json(st.session_state.resume_data, expanded=False)
+
+        with st.expander("从简历库选择"):
+            from services.resume_library_service import list_resumes_flat
+            saved = list_resumes_flat(st.session_state.db, current_user_id())
+            if not saved:
+                st.info("简历库为空，请先上传并保存简历。")
+            else:
+                opts = {f"{r['name']}（v{r.get('version',1)}·{r.get('updated_at','')[:10]}）": r["id"] for r in saved}
+                selected_label = st.selectbox("选择简历版本", list(opts.keys()), key="fb_lib_resume_sel")
+                if selected_label and st.button("加载到当前会话", key="fb_load_lib_resume"):
+                    rid = opts[selected_label]
+                    row = st.session_state.db.get_resume(rid)
+                    if row:
+                        st.session_state.resume_data = _db_resume_to_resume_data(row)
+                        st.session_state.resume_id = rid
+                        st.rerun()
+                st.caption("注意：从库加载会覆盖当前会话中的简历内容。")
 
     with st.expander("2. 上传 / 选择目标 JD", expanded=st.session_state.resume_data is not None and st.session_state.jd_result is None):
         input_type = st.radio("JD 来源", ["粘贴 JD", "上传 PDF", "从 JD库选择", "职位 URL"], horizontal=True, key="fb_jd_input_type_radio")
