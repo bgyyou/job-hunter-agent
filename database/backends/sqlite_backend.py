@@ -89,6 +89,9 @@ class SqliteBackend(BaseBackend):
         if "is_primary" not in resume_cols:
             conn.execute("ALTER TABLE resumes ADD COLUMN is_primary INTEGER NOT NULL DEFAULT 0")
             logger.info("migration: added resumes.is_primary column")
+        if "experience" not in resume_cols:
+            conn.execute("ALTER TABLE resumes ADD COLUMN experience TEXT DEFAULT '[]'")
+            logger.info("migration: added resumes.experience column")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_resumes_parent ON resumes(parent_resume_id)"
         )
@@ -144,13 +147,14 @@ class SqliteBackend(BaseBackend):
             conn.execute(
                 """INSERT OR REPLACE INTO resumes
                    (id, user_id, name, phone, email, summary, skills,
-                    experience_years, domains, target_roles, preferred_locations,
+                    experience_years, experience, domains, target_roles, preferred_locations,
                     education, projects, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (resume_id, data.get("user_id", "default"), data.get("name", ""),
                  data.get("phone"), data.get("email"), data.get("summary"),
                  self._json_serialize(data.get("skills", [])),
                  data.get("experience_years", 0),
+                 self._json_serialize(data.get("experience", [])),
                  self._json_serialize(data.get("domains", [])),
                  self._json_serialize(data.get("target_roles", [])),
                  self._json_serialize(data.get("preferred_locations", [])),
@@ -169,7 +173,7 @@ class SqliteBackend(BaseBackend):
             if not row:
                 return None
             d = self._row_to_dict(row)
-            for field in ["skills", "domains", "target_roles", "preferred_locations", "education", "projects"]:
+            for field in ["skills", "experience", "domains", "target_roles", "preferred_locations", "education", "projects"]:
                 d[field] = self._json_deserialize(d[field])
             return d
         finally:
@@ -180,7 +184,7 @@ class SqliteBackend(BaseBackend):
         try:
             rows = conn.execute(
                 "SELECT * FROM resumes WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC", (user_id,)).fetchall()
-            return self._deserialize_all(rows, ["skills", "domains", "target_roles", "preferred_locations", "education", "projects"])
+            return self._deserialize_all(rows, ["skills", "experience", "domains", "target_roles", "preferred_locations", "education", "projects"])
         finally:
             conn.close()
 
