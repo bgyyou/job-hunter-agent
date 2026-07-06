@@ -60,6 +60,12 @@ bash tools/githooks/install.sh
 | 📈 投递历史 | 已匹配 JD 时间线 + 用户反馈（接受/已读/拒绝） |
 | 💬 AI 求职助手 | 侧栏浮窗对话，自动注入当前简历/JD/匹配分作为上下文（M6.A.3） |
 
+### 演示视频
+
+<video src="docs/screenshots/Jobhunter.mp4" controls width="100%"></video>
+
+> 87 秒看完整套流程：选岗位 → 采集经历 → RAG 检索 → 生成简历 → 优化已有简历 → Cover Letter。
+
 ---
 
 ## 数据架构
