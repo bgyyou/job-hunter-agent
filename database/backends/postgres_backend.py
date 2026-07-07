@@ -253,6 +253,14 @@ class PostgresBackend(BaseBackend):
             (now, jd_id),
         )
 
+    def update_jd_quality_score(self, jd_id: str, score: Optional[float],
+                                checked_at: Optional[str] = None) -> None:
+        """v2.1 M11: 写入 jds.quality_score + quality_checked_at。score=None 清缓存。"""
+        self._execute(
+            "UPDATE jds SET quality_score = %s, quality_checked_at = %s WHERE id = %s",
+            (score, checked_at, jd_id),
+        )
+
     # ==================== Match History ====================
 
     def insert_match(self, data: Dict) -> str:

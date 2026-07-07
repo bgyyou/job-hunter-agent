@@ -99,6 +99,19 @@ class SqliteBackend(BaseBackend):
             "CREATE INDEX IF NOT EXISTS idx_resumes_primary ON resumes(user_id, is_primary)"
         )
 
+        # v2.1 M11: jds 质量分缓存列（quality_score / quality_checked_at）
+        jds_cols_v11 = {r[1] for r in conn.execute("PRAGMA table_info(jds)").fetchall()}
+        if "quality_score" not in jds_cols_v11:
+            conn.execute("ALTER TABLE jds ADD COLUMN quality_score REAL")
+            logger.info("migration: added jds.quality_score column")
+        if "quality_checked_at" not in jds_cols_v11:
+            conn.execute("ALTER TABLE jds ADD COLUMN quality_checked_at TEXT")
+            logger.info("migration: added jds.quality_checked_at column")
+        # quality_score 上的索引（不能放在 schema.sql 否则旧 DB 启动先报"无此列"）
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jds_quality_score ON jds(quality_score)"
+        )
+
         # 编号迁移文件：database/migrations/NNN_description.sql
         mig_dir = Path(__file__).parent.parent.parent / "database" / "migrations"
         if not mig_dir.exists():
@@ -376,6 +389,19 @@ class SqliteBackend(BaseBackend):
             conn.execute(
                 "UPDATE knowledge_chunks SET deleted_at = ? WHERE jd_id = ? AND deleted_at IS NULL",
                 (now, jd_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_jd_quality_score(self, jd_id: str, score: Optional[float],
+                                checked_at: Optional[str] = None) -> None:
+        """v2.1 M11: 写入 jds.quality_score + quality_checked_at。score=None 清缓存。"""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE jds SET quality_score = ?, quality_checked_at = ? WHERE id = ?",
+                (score, checked_at, jd_id),
             )
             conn.commit()
         finally:

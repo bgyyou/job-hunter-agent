@@ -96,6 +96,19 @@ class BaseBackend(ABC):
     def soft_delete_jd(self, jd_id: str) -> None:
         """Mark a JD as deleted. Cascades nothing; chunks/matches preserved."""
 
+    @abstractmethod
+    def update_jd_quality_score(self, jd_id: str, score: float,
+                                checked_at: str) -> None:
+        """Upsert ``jds.quality_score`` + ``quality_checked_at`` cache fields. v2.1 M11.
+
+        Used by the JD quality scoring pipeline (see
+        ``services.jd_quality_service.compute_jd_quality``) to persist the
+        composite score after scoring. ``score`` is in [0, 1]; ``checked_at``
+        is an ISO-8601 timestamp string.
+
+        Idempotent: safe to call repeatedly. ``None`` should clear the cache.
+        """
+
     # -------------------- Matches --------------------
 
     @abstractmethod
