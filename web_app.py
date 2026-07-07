@@ -163,6 +163,78 @@ section[data-testid="stMain"] [data-testid="stWidgetLabel"] p {
     border: 1px solid rgba(100, 116, 139, 0.25);
 }
 
+/* ============ JD META CHIPS (PR2 / M11) ============ */
+.jd-meta-chip {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    margin-right: 0.3rem;
+    margin-bottom: 0.25rem;
+    background: rgba(139, 92, 246, 0.10);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.25);
+}
+.jd-meta-chip-platform {
+    background: rgba(56, 189, 248, 0.10);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.30);
+}
+.jd-meta-chip-salary {
+    background: rgba(250, 204, 21, 0.10);
+    color: #fbbf24;
+    border: 1px solid rgba(250, 204, 21, 0.30);
+}
+.jd-meta-chip-location {
+    background: rgba(16, 185, 129, 0.10);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.30);
+}
+.jd-meta-chip-tag {
+    background: rgba(244, 114, 182, 0.08);
+    color: #f472b6;
+    border: 1px solid rgba(244, 114, 182, 0.25);
+}
+.jd-quality-chip {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    letter-spacing: 0.05em;
+}
+.jd-quality-4 {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.45);
+}
+.jd-quality-3 {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.40);
+}
+.jd-quality-2 {
+    background: rgba(250, 204, 21, 0.15);
+    color: #facc15;
+    border-color: rgba(250, 204, 21, 0.40);
+}
+.jd-quality-1 {
+    background: rgba(148, 163, 184, 0.18);
+    color: #94a3b8;
+    border-color: rgba(148, 163, 184, 0.40);
+}
+.jd-quality-na {
+    background: rgba(148, 163, 184, 0.10);
+    color: #64748b;
+    border-color: rgba(148, 163, 184, 0.30);
+}
+.jd-summary-row {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin: 0.4rem 0 0.2rem 0;
+}
+
 /* ============ BUTTONS ============ */
 section[data-testid="stMain"] button[kind="primary"],
 section[data-testid="stMain"] button[data-testid="stBaseButton-primary"] {
@@ -751,6 +823,8 @@ def render_flow_a() -> None:
     if not require_services():
         return
 
+    flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
+
     collect_sections = [s for s in SECTIONS if not s.get("derived") and s["key"] in LLM_COLLECT_SECTION_KEYS]
     total_sections = 1 + len(collect_sections)
 
@@ -870,7 +944,6 @@ def render_flow_a() -> None:
         needs_assistant_turn = not sec_msgs or sec_msgs[-1]["role"] == "user"
         if needs_assistant_turn:
             try:
-                flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
                 msgs_for_llm = sec_msgs if sec_msgs else [{"role": "user", "content": f"开始采集{section['name']}吧。"}]
                 llm_messages, force_close, rounds_used = flow_a._build_chat_messages(
                     section_key=section_key,
@@ -917,7 +990,6 @@ def render_flow_a() -> None:
         with b2:
             if st.button("完成本节，进入下一节"):
                 try:
-                    flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
                     if sec_msgs:
                         extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
                         st.session_state.fa_section_data[section_key] = extracted
@@ -1140,7 +1212,6 @@ def render_flow_b() -> None:
     if not require_services():
         return
 
-    render_generation_toolbar()
     st.divider()
 
     step1, step2, step3 = st.columns(3)
@@ -1377,6 +1448,7 @@ def render_flow_b() -> None:
                 for rec in match["recommendations"]:
                     st.markdown(f"- **{rec.get('section', '')}**：{rec.get('reason') or rec.get('suggestion', '')}")
 
+    render_generation_toolbar()
     st.divider()
     st.session_state.flow_b_company_name = st.text_input("目标公司名（用于 Cover Letter）", value=st.session_state.flow_b_company_name or (st.session_state.jd_result or {}).get("company", ""))
     if st.session_state.optimized_resume:
@@ -1530,6 +1602,137 @@ def _render_version_tree(db, user_id: str, tree: Dict[str, Any]) -> None:
                     st.rerun()
 
 
+# ---------------------------------------------------------------------------
+# JD library metadata helpers (M11 / PR2)
+# ---------------------------------------------------------------------------
+
+_PLATFORM_LABEL = {
+    "51job": "51job",
+    "jobsdb": "JobsDB",
+    "liepin": "猎聘",
+    "boss": "Boss",
+    "zhilian": "智联",
+}
+_SOURCE_TO_PLATFORM = {
+    "51job_batch": "51job",
+    "jobsdb_batch": "jobsdb",
+    "liepin_batch": "liepin",
+    "smart_collector": "liepin",
+    "crawler": "liepin",
+    "jd_crawler": "liepin",
+    "manual": "manual",
+    "pdf": "manual",
+    "url": "manual",
+}
+
+
+def _jd_platform_label(jd: Dict) -> str:
+    """从 platform 字段或 source 反推中文平台名。"""
+    plat = jd.get("platform") or _SOURCE_TO_PLATFORM.get(jd.get("source", ""), "")
+    return _PLATFORM_LABEL.get(plat, "其他")
+
+
+def _jd_freshness_label(jd: Dict) -> str:
+    """crawled_at → "5 天前 / 3 个月前"，没有就空。"""
+    from datetime import datetime, timezone
+
+    ts = jd.get("crawled_at")
+    if not ts:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return ""
+    now = datetime.now(timezone.utc)
+    days = max(0, int((now - dt).days))
+    if days < 1:
+        return "今天"
+    if days < 30:
+        return f"{days} 天前"
+    if days < 365:
+        return f"{days // 30} 个月前"
+    return f"{days // 365} 年前"
+
+
+def _jd_salary_chip(jd: Dict) -> str:
+    sal = (jd.get("salary_str") or "").strip()
+    if sal:
+        return f'<span class="jd-meta-chip jd-meta-chip-salary">💰 {sal}</span>'
+    smin = jd.get("salary_min")
+    smax = jd.get("salary_max")
+    if smin or smax:
+        if smin and smax:
+            text = f"{smin // 1000}K-{smax // 1000}K"
+        elif smin:
+            text = f"≥{smin // 1000}K"
+        else:
+            text = f"≤{smax // 1000}K"
+        return f'<span class="jd-meta-chip jd-meta-chip-salary">💰 {text}</span>'
+    return ""
+
+
+def _render_jd_meta_row(jd: Dict, quality_score: Optional[float]) -> str:
+    chips: List[str] = []
+
+    platform_label = _jd_platform_label(jd)
+    if platform_label and platform_label != "其他":
+        chips.append(f'<span class="jd-meta-chip jd-meta-chip-platform">{platform_label}</span>')
+
+    fresh = _jd_freshness_label(jd)
+    if fresh:
+        chips.append(f'<span class="jd-meta-chip">🕐 {fresh}</span>')
+
+    loc = (jd.get("location") or "").strip()
+    if loc:
+        chips.append(f'<span class="jd-meta-chip jd-meta-chip-location">📍 {loc}</span>')
+
+    sal = _jd_salary_chip(jd)
+    if sal:
+        chips.append(sal)
+
+    for tag_key in ("industry_tag", "function_tag", "position_tag"):
+        tag_val = (jd.get(tag_key) or "").strip()
+        if tag_val:
+            chips.append(f'<span class="jd-meta-chip jd-meta-chip-tag">{tag_val}</span>')
+
+    parsed = jd.get("parsed_sections") or {}
+    n_req = len(parsed.get("requirements") or []) if isinstance(parsed, dict) else 0
+    if n_req > 0:
+        chips.append(f'<span class="jd-meta-chip">📋 涵盖 {n_req} 项要求</span>')
+
+    from services.jd_quality_service import quality_label
+    if quality_score is not None:
+        label = quality_label(quality_score)
+        cls_map = {"★★★★": "jd-quality-4", "★★★": "jd-quality-3", "★★": "jd-quality-2", "★": "jd-quality-1"}
+        score_cls = cls_map.get(label, "jd-quality-na")
+        text = f"数据质量 {label}"
+        if quality_score is not None:
+            text = f"数据质量 {label} · {quality_score:.2f}"
+        chips.append(f'<span class="jd-quality-chip {score_cls}">{text}</span>')
+    else:
+        chips.append('<span class="jd-quality-chip jd-quality-na">数据质量 未评分</span>')
+
+    return " ".join(chips) if chips else ""
+
+
+def _lazy_score_jd(db: Any, jd: Dict) -> Optional[float]:
+    """若 jd 没有 quality_score，立即计算并写回。返回 score 或 None。"""
+    if jd.get("quality_score") is not None:
+        return jd["quality_score"]
+    try:
+        from services.jd_quality_service import compute_jd_quality
+        from datetime import datetime, timezone
+
+        result = compute_jd_quality(jd)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        db.update_jd_quality_score(jd["id"], result["composite"], now_iso)
+        return result["composite"]
+    except Exception:
+        return None
+
+
 def _short_time(iso: Optional[str]) -> str:
     if not iso:
         return ""
@@ -1645,9 +1848,22 @@ def render_jd_library() -> None:
     for jd in rows:
         owned = jd.get("user_id") == user_id
         badge = '<span class="private-badge">我的 JD</span>' if owned else '<span class="public-badge">公共 JD</span>'
-        with st.expander(f"{jd.get('title') or '未命名'} @ {jd.get('company') or '未知公司'}"):
+        q_score = jd.get("quality_score")
+        if q_score is None:
+            q_score = _lazy_score_jd(st.session_state.db, jd)
+        meta_html = _render_jd_meta_row(jd, q_score)
+        expander_label = (
+            f"{jd.get('title') or '未命名'} @ {jd.get('company') or '未知公司'}"
+        )
+        with st.expander(expander_label):
             st.markdown(badge, unsafe_allow_html=True)
-            st.caption(f"来源：{jd.get('source')} · 岗位标签：{jd.get('position_tag') or '未分类'}")
+            if meta_html:
+                st.markdown(meta_html, unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="jd-summary-row">来源：{jd.get("source", "")} · '
+                f'岗位标签：{jd.get("position_tag") or "未分类"}</div>',
+                unsafe_allow_html=True,
+            )
             st.write((jd.get("raw_text") or "")[:1200])
             c1, c2 = st.columns(2)
             with c1:
