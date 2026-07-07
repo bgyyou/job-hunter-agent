@@ -26,7 +26,9 @@ playwright install msedge   # 仅在你打算用浏览器爬虫时需要
 
 ```bash
 streamlit run web_app.py
-# 或者 Windows 双击 run_web.bat
+# Windows 三选一：
+#   双击 run_web.bat           # 老式 .bat，会弹 CMD 窗口
+#   双击 dist/JobHunter.exe    # ★ 推荐：pyinstaller 打包，自动开浏览器、关闭即停服务
 ```
 
 **首次启动**流程：
@@ -36,6 +38,21 @@ streamlit run web_app.py
 - 默认 SQLite 零配置，进阶 PostgreSQL+pgvector 见 `.env.example`
 
 > 我们**不内置任何 demo key**——既防 GitHub 抓取后被滥用，也确保你的额度只属于你。
+
+### 重建 exe（可选）
+
+```bash
+scripts/build_launcher.bat     # 重装 pyinstaller 并构建 dist/JobHunter.exe
+```
+
+或手工：
+
+```bash
+pip install pyinstaller
+pyinstaller --onefile --name JobHunter --distpath dist scripts/jobhunter_launcher.py
+```
+
+> `scripts/jobhunter_launcher.py` 是 160 行的 Python 脚本：子进程跑 streamlit → 轮询 60s 等就绪 → `webbrowser.open` 自动开浏览器 → 关闭 launcher 即停服务。打包后约 8.6MB。
 
 ### 3. （可选）启用 pre-commit 钩子
 
