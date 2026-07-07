@@ -235,6 +235,44 @@ section[data-testid="stMain"] [data-testid="stWidgetLabel"] p {
     margin: 0.4rem 0 0.2rem 0;
 }
 
+/* ============ TOP NAV LIVE METRIC PANEL (PR4) ============ */
+.topnav-metric {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.3rem 0.6rem;
+    border-radius: 8px;
+    background: rgba(139, 92, 246, 0.06);
+    border: 1px solid rgba(139, 92, 246, 0.18);
+    min-width: 70px;
+}
+.topnav-metric-num {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #c4b5fd;
+    line-height: 1.1;
+}
+.topnav-metric-label {
+    font-size: 0.68rem;
+    color: #94a3b8;
+    margin-top: 0.1rem;
+}
+
+/* ============ LANDING LIVE BAND (PR4) ============ */
+.landing-live-band {
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(139, 92, 246, 0.25);
+}
+.landing-live-band-title {
+    font-size: 1rem;
+    color: #c4b5fd;
+    text-align: center;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.5rem;
+}
+
 /* ============ BUTTONS ============ */
 section[data-testid="stMain"] button[kind="primary"],
 section[data-testid="stMain"] button[data-testid="stBaseButton-primary"] {
@@ -703,12 +741,113 @@ def render_top_nav() -> None:
         if st.button("首页", use_container_width=True):
             st.session_state.app_route = "landing"
             st.rerun()
+    # PR4 (M11): 数据活水面 — 仅在非 landing 路由，避免和 hero 重复
+    if st.session_state.get("app_route") and st.session_state.app_route != "landing":
+        _render_topnav_live_panel()
     st.markdown('<hr class="topnav-divider">', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
 # Landing / mode select
 # ---------------------------------------------------------------------------
+
+
+def _render_topnav_live_panel() -> None:
+    """4 个紧凑数字：全库 / 本周新增 / 行业 / 平台。每次刷新算一次（亚秒，cached 60s）。"""
+    db = st.session_state.get("db")
+    if not db:
+        return
+    try:
+        snap = _compute_live_data_snapshot()
+    except Exception:
+        snap = {"total": 0, "new_week": 0, "industries": 0, "platforms": 0}
+
+    c1, c2, c3, c4 = st.columns(4)
+    metrics = [
+        ("全库 JD", snap["total"], "所有未被删除的 JD"),
+        ("本周新增", f"+{snap['new_week']}", "近 7 天新增的 JD"),
+        ("行业覆盖", snap["industries"], "已分类的行业去重数"),
+        ("来源平台", snap["platforms"], "JD 的 platform 字段去重数"),
+    ]
+    for col, (label, num, tip) in zip([c1, c2, c3, c4], metrics):
+        with col:
+            st.markdown(
+                f'<div class="topnav-metric" title="{tip}">'
+                f'<div class="topnav-metric-num">{num}</div>'
+                f'<div class="topnav-metric-label">{label}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _compute_live_data_snapshot(_db_marker: str = "default") -> Dict[str, int]:
+    """活水面板数据源：cache 60s，避免每次 streamlit rerun 都跑 SQL。
+
+    _db_marker 仅用于让 cache_data 在不同 db 间切换（测试 / 不同环境）。
+    生产路径固定为 'default' → get_db()。"""
+    from database.factory import get_db
+    db = get_db()
+    return _live_snapshot_from_db(db)
+
+
+def _live_snapshot_from_db(db: Any) -> Dict[str, int]:
+    """纯函数：从 db 拉 4 个数字。测试时直接传 tmp_db；上层 cache 包了它。"""
+    conn = db._get_conn()
+    try:
+        total = int(conn.execute(
+            "SELECT COUNT(*) FROM jds WHERE deleted_at IS NULL"
+        ).fetchone()[0])
+        new_week = int(conn.execute(
+            "SELECT COUNT(*) FROM jds WHERE deleted_at IS NULL "
+            "AND crawled_at >= datetime('now', '-7 days')"
+        ).fetchone()[0])
+        industries = int(conn.execute(
+            "SELECT COUNT(DISTINCT industry_tag) FROM jds "
+            "WHERE deleted_at IS NULL AND industry_tag IS NOT NULL"
+        ).fetchone()[0])
+        platforms = int(conn.execute(
+            "SELECT COUNT(DISTINCT platform) FROM jds "
+            "WHERE deleted_at IS NULL AND platform IS NOT NULL"
+        ).fetchone()[0])
+        return {
+            "total": total,
+            "new_week": new_week,
+            "industries": industries,
+            "platforms": platforms,
+        }
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _render_landing_live_band() -> None:
+    """Landing 末尾追加活水数据带，让新用户感受"数据是活的"。"""
+    db = st.session_state.get("db")
+    if not db:
+        return
+    try:
+        snap = _compute_live_data_snapshot()
+    except Exception:
+        snap = {"total": 0, "new_week": 0, "industries": 0, "platforms": 0}
+
+    st.markdown(
+        '<div class="landing-live-band">'
+        '<div class="landing-live-band-title">实时数据底子（来自 JD 库）</div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    metrics = [
+        ("真实 JD 数量", f"{snap['total']:,}", "未被软删除"),
+        ("本周新增", f"+{snap['new_week']}", "近 7 天 crawled_at"),
+        ("覆盖行业", f"{snap['industries']}", "已分类行业去重"),
+        ("来源平台", f"{snap['platforms']}", "51job / JobsDB / Liepin 等"),
+    ]
+    for col, (label, num, help_text) in zip([c1, c2, c3, c4], metrics):
+        with col:
+            st.metric(label=label, value=num, help=help_text)
 
 
 def render_landing() -> None:
@@ -782,6 +921,8 @@ section[data-testid="stMain"] > div > div {
 """
 
     st.html("<style>" + style + "\n" + hide_chrome + "</style>" + body)
+    # PR4 (M11): landing hero 之下追加活水数据带（live numbers）
+    _render_landing_live_band()
 
 
 def render_mode_select() -> None:
