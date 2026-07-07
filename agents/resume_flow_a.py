@@ -371,6 +371,59 @@ class ResumeFlowA:
             return self._empty_section_value(section_key)
         return self._strip_placeholders(parsed)
 
+    async def extract_from_paste(
+        self,
+        section_key: str,
+        raw_text: str,
+    ) -> Any:
+        """PR5 (M12): 用户粘贴完整文本 → 一次性结构化抽取。
+
+        对比原 chat_section + extract_section 的 16 轮聊天（experience+projects），
+        这里只调一次 LLM；约束用 SECTIONS[section].schema，输出回填到 fa_section_data。
+        """
+        section = _get_section(section_key)
+        if not section:
+            raise ValueError(f"unknown section {section_key}")
+        if section.get("derived"):
+            return self._empty_section_value(section_key)
+
+        text = (raw_text or "").strip()
+        if not text:
+            return self._empty_section_value(section_key)
+
+        schema = section.get("schema") or "{}"
+        system_text = (
+            f"你是简历信息抽取助手。用户粘贴了一整段与「{section['name']}」相关的内容，"
+            f"请严格按下述 JSON schema 输出（数组或 dict 视 schema 而定）：\n"
+            f"{schema}\n\n"
+            f"若用户粘贴的是空段或明确说没有，请输出空结构（数组 → []，dict → {{}}）。"
+        )
+        llm_messages = [
+            LLMMessage(role="system", content=system_text),
+            LLMMessage(
+                role="user",
+                content=(
+                    f"用户粘贴的原始内容（请按 schema 抽取）：\n\n"
+                    f"```\n{text[:6000]}\n```"
+                ),
+            ),
+        ]
+        try:
+            parsed = self._parse_json_loose(
+                (
+                    await self.llm_client.analyze(
+                        messages=llm_messages, max_tokens=1200, temperature=0.2,
+                    )
+                ).content
+            )
+        except Exception as exc:
+            logger.warning(f"Flow A extract_from_paste({section_key}) failed: {exc}")
+            return self._empty_section_value(section_key)
+
+        if parsed is None:
+            return self._empty_section_value(section_key)
+        return self._strip_placeholders(parsed)
+
     async def derive_summary_and_competencies(
         self,
         collected: Dict[str, Any],

@@ -273,6 +273,17 @@ section[data-testid="stMain"] [data-testid="stWidgetLabel"] p {
     margin-bottom: 0.5rem;
 }
 
+/* ============ FLOW A PASTE PANEL HELP (PR5) ============ */
+.step-help {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    background: rgba(139, 92, 246, 0.06);
+    border-left: 3px solid rgba(139, 92, 246, 0.45);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 0.6rem;
+}
+
 /* ============ BUTTONS ============ */
 section[data-testid="stMain"] button[kind="primary"],
 section[data-testid="stMain"] button[data-testid="stBaseButton-primary"] {
@@ -761,7 +772,6 @@ def _render_topnav_live_panel() -> None:
         snap = _compute_live_data_snapshot()
     except Exception:
         snap = {"total": 0, "new_week": 0, "industries": 0, "platforms": 0}
-
     c1, c2, c3, c4 = st.columns(4)
     metrics = [
         ("全库 JD", snap["total"], "所有未被删除的 JD"),
@@ -1076,6 +1086,19 @@ def render_flow_a() -> None:
         if st.button("重新选择岗位"):
             reset_flow_a_state()
             st.rerun()
+
+        # PR5 (M12): 模式切换 — 粘贴通道 / 逐段对话 二选一
+        extract_mode = st.radio(
+            "采集方式",
+            ["🪄 粘贴完整文本（推荐，10 秒）", "💬 逐段对话"],
+            horizontal=True,
+            key="fa_extract_mode_radio",
+        )
+        is_paste_mode = "粘贴" in extract_mode
+
+        if is_paste_mode:
+            _render_flow_a_paste_panel(flow_a)
+            return
 
         sec_msgs = st.session_state.fa_section_messages.setdefault(section_key, [])
         for msg in sec_msgs:
@@ -1884,6 +1907,109 @@ _PLATFORM_LABEL_FA = {
     "zhilian": "智联",
     "other": "其他",
 }
+
+
+# PR5 (M12): Flow A 粘贴抽取通道（推荐路径）
+def _render_flow_a_paste_panel(flow_a) -> None:
+    """粘贴完整文本 → 一次性结构化抽取 → 可编辑 → 确认。
+
+    一次展示 experience + projects 两块。点击"一键解析"后两个 section
+    都跑 LLM 一次性抽取（而非逐段聊天），结果用 st.data_editor 让用户
+    微调，最后"确认 → 跳过对话采集"标记两 section done 并跳 Step 4。"""
+    st.markdown(
+        '<div class="step-help">粘贴你现有简历里的工作经历 / 项目经历，'
+        'AI 会一次性抽出，10 秒左右出结果。也可以下拉切换到「逐段对话」。</div>',
+        unsafe_allow_html=True,
+    )
+
+    exp_text = st.text_area(
+        "粘贴工作经历（一段一段，AI 会自动拆条）",
+        value=st.session_state.get("fa_paste_experience", ""),
+        key="fa_paste_experience_input",
+        height=220,
+        placeholder="例：\n2022-2024 ACME AI 产品经理\n- 主导 XX 项目，...",
+    )
+    proj_text = st.text_area(
+        "粘贴项目经历（同上）",
+        value=st.session_state.get("fa_paste_projects", ""),
+        key="fa_paste_projects_input",
+        height=160,
+        placeholder="例：\n智能客服系统 / 角色：PM / 技术栈：... / 成果：...",
+    )
+
+    c_parse, c_skip, _ = st.columns([1, 1, 4])
+    with c_parse:
+        parse_clicked = st.button(
+            "✨ 一键解析（10 秒）",
+            type="primary",
+            disabled=not (exp_text.strip() or proj_text.strip()),
+        )
+    with c_skip:
+        if st.button("跳过本节，直接生成"):
+            st.session_state.fa_section_skipped.extend(["experience", "projects"])
+            st.session_state.fa_section_index = 999
+            st.rerun()
+
+    if parse_clicked:
+        try:
+            experience = run_async(flow_a.extract_from_paste("experience", exp_text)) if exp_text.strip() else []
+            projects = run_async(flow_a.extract_from_paste("projects", proj_text)) if proj_text.strip() else []
+            st.session_state["fa_paste_parsed_experience"] = experience
+            st.session_state["fa_paste_parsed_projects"] = projects
+            st.success("解析完成，可微调后确认。")
+        except Exception as exc:
+            st.error(f"解析失败：{exc}")
+
+    parsed_exp = st.session_state.get("fa_paste_parsed_experience")
+    parsed_proj = st.session_state.get("fa_paste_parsed_projects")
+    if parsed_exp is not None or parsed_proj is not None:
+        st.markdown("#### 解析结果（可编辑）")
+        if parsed_exp is not None:
+            st.caption(f"工作经历：抽到 {len(parsed_exp)} 条")
+            edited_exp = st.data_editor(
+                parsed_exp,
+                key="fa_paste_edit_experience",
+                num_rows="dynamic",
+                use_container_width=True,
+            )
+        else:
+            edited_exp = parsed_exp
+
+        if parsed_proj is not None:
+            st.caption(f"项目经历：抽到 {len(parsed_proj)} 条")
+            edited_proj = st.data_editor(
+                parsed_proj,
+                key="fa_paste_edit_projects",
+                num_rows="dynamic",
+                use_container_width=True,
+            )
+        else:
+            edited_proj = parsed_proj
+
+        c_confirm, c_back, _ = st.columns([1, 1, 4])
+        with c_confirm:
+            if st.button("✅ 确认 → 跳过对话采集", type="primary"):
+                if edited_exp is not None:
+                    st.session_state.fa_section_data["experience"] = (
+                        edited_exp if isinstance(edited_exp, list) else [edited_exp]
+                    )
+                    st.session_state.fa_section_done.append("experience")
+                elif exp_text.strip():
+                    st.session_state.fa_section_done.append("experience")
+                if edited_proj is not None:
+                    st.session_state.fa_section_data["projects"] = (
+                        edited_proj if isinstance(edited_proj, list) else [edited_proj]
+                    )
+                    st.session_state.fa_section_done.append("projects")
+                elif proj_text.strip():
+                    st.session_state.fa_section_done.append("projects")
+                st.session_state.fa_section_index = 999
+                st.success("已应用粘贴结果，进入简历生成阶段。")
+                st.rerun()
+        with c_back:
+            if st.button("↩ 返回逐段对话"):
+                st.session_state["fa_extract_mode"] = "chat"
+                st.rerun()
 
 
 def _render_flow_a_provenance_panel(skeleton: Dict) -> None:
