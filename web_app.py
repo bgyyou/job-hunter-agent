@@ -1034,7 +1034,8 @@ def render_flow_a() -> None:
     if st.session_state.fa_resume_md:
         st.markdown(st.session_state.fa_resume_md)
         sk = st.session_state.fa_skeleton or {}
-        st.caption(f"本轮 RAG 命中 {sk.get('n_chunks', 0)} 条 JD chunk。")
+        # PR3 (M11): 改写依据 + 来源面板
+        _render_flow_a_provenance_panel(sk)
         dl1, dl2, dl3, dl4, dl5 = st.columns(5)
         with dl1:
             st.download_button("下载 PDF", st.session_state.fa_resume_pdf, file_name=f"{st.session_state.fa_position}_简历.pdf", mime="application/pdf", disabled=st.session_state.fa_resume_pdf is None, help="playwright 启动慢，请耐心等待生成完成" if st.session_state.fa_resume_pdf is None else None)
@@ -1731,6 +1732,73 @@ def _lazy_score_jd(db: Any, jd: Dict) -> Optional[float]:
         return result["composite"]
     except Exception:
         return None
+
+
+# PR3 (M11): Flow A 收尾"改写依据"面板。基于 build_skeleton 输出的 source_breakdown。
+_PLATFORM_LABEL_FA = {
+    "51job": "51job",
+    "jobsdb": "JobsDB",
+    "liepin": "猎聘",
+    "boss": "Boss",
+    "zhilian": "智联",
+    "other": "其他",
+}
+
+
+def _render_flow_a_provenance_panel(skeleton: Dict) -> None:
+    """渲染 Flow A 末尾的"基于哪些 JD 改写"面板。
+
+    skeleton 是 build_skeleton() 的输出。空 / fallback 时显示醒目警告。"""
+    source = skeleton.get("source", "fallback")
+    n_chunks = int(skeleton.get("n_chunks", 0) or 0)
+    breakdown = skeleton.get("source_breakdown") or {}
+
+    chips = []
+    if n_chunks > 0:
+        chips.append(f"改写基于 <b>{n_chunks}</b> 条 JD chunk")
+    n_companies = int(breakdown.get("n_companies") or 0)
+    if n_companies > 0:
+        chips.append(f"覆盖 <b>{n_companies}</b> 家公司")
+    plat_counts = breakdown.get("platform_counts") or {}
+    if plat_counts:
+        plat_chips = []
+        for plat, cnt in sorted(plat_counts.items(), key=lambda kv: -kv[1])[:5]:
+            label = _PLATFORM_LABEL_FA.get(plat, plat)
+            plat_chips.append(f'<span class="jd-meta-chip jd-meta-chip-platform">{label}({cnt})</span>')
+        chips.append("来源：" + " ".join(plat_chips))
+
+    if chips:
+        # 来源 line 嵌入 platform chips，其余用普通 caption 风格
+        head = chips[0]
+        rest = " · ".join(chips[1:])
+        if plat_counts:
+            # rest 中最后一项是 "来源：...chips..."
+            head_and_rest = " · ".join(chips[:-1]) + " · " + chips[-1]
+            st.markdown(head_and_rest, unsafe_allow_html=True)
+        else:
+            st.caption(" · ".join(chips))
+    else:
+        st.caption("本轮未做 RAG 改写。")
+
+    if source == "fallback":
+        st.warning(
+            "本岗位在 JD 库内未命中高质量样本，已回退通用模板。"
+            "建议你换一个更具体的岗位关键词，或先到 JD 库挑几条相关 JD 后再生成。"
+        )
+
+    top_chunks: List[Dict] = breakdown.get("top_chunks") or []
+    if top_chunks:
+        with st.expander(f"查看改写依据 (Top {len(top_chunks)})"):
+            for i, c in enumerate(top_chunks, 1):
+                plat = _PLATFORM_LABEL_FA.get(c.get("platform") or "", "其他")
+                text = (c.get("chunk_text") or "")[:160].replace("\n", " ").strip()
+                sim = c.get("similarity") or 0.0
+                st.markdown(
+                    f"**{i}.** <span class='jd-meta-chip jd-meta-chip-platform'>{plat}</span> "
+                    f"`相似度 {sim:.2f}`<br/>"
+                    f"<span style='color:#94a3b8;font-size:0.85rem'>{text}…</span>",
+                    unsafe_allow_html=True,
+                )
 
 
 def _short_time(iso: Optional[str]) -> str:
