@@ -638,6 +638,7 @@ def init_session_state() -> None:
         "fa_resume_html": None,
         "fa_resume_pdf": None,
         "fa_skeleton": None,
+        "fa_pdf_status": None,  # PR6: None / "pending" / "ready" / "failed"
         "fa_section_index": 0,
         "fa_section_data": {},
         "fa_section_messages": {},
@@ -1185,9 +1186,9 @@ def render_flow_a() -> None:
                 html_str = flow_a.to_html(final_data)
                 st.session_state.fa_resume_html = html_str
 
-                status.update(label="3/4 渲染 PDF...", state="running")
-                pdf_bytes = html_to_pdf_safe(html_str)
-                st.session_state.fa_resume_pdf = pdf_bytes
+                status.update(label="3/4 启动 PDF 后台渲染（不阻塞预览）...", state="running")
+                # PR6 (M12): PDF 改后台线程，先让用户看到 MD/HTML
+                _kick_off_background_pdf(html_str)
 
                 status.update(label="4/4 完成！", state="complete")
                 st.success("简历生成成功！")
@@ -1196,13 +1197,29 @@ def render_flow_a() -> None:
                 st.error(f"生成失败：{exc}")
 
     if st.session_state.fa_resume_md:
+        # PR6 (M12): 先把后台线程结果同步进 session_state，让 rerun 后按钮 enable
+        _poll_pdf_status()
         st.markdown(st.session_state.fa_resume_md)
         sk = st.session_state.fa_skeleton or {}
         # PR3 (M11): 改写依据 + 来源面板
         _render_flow_a_provenance_panel(sk)
         dl1, dl2, dl3, dl4, dl5 = st.columns(5)
+        pdf_status = st.session_state.get("fa_pdf_status", "ready")
+        pdf_disabled = pdf_status != "ready"
+        pdf_help = None
+        if pdf_status == "pending":
+            pdf_help = "PDF 生成中（2-5 秒）…"
+        elif pdf_status == "failed":
+            pdf_help = f"PDF 生成失败：{st.session_state.get('fa_pdf_error')}"
         with dl1:
-            st.download_button("下载 PDF", st.session_state.fa_resume_pdf, file_name=f"{st.session_state.fa_position}_简历.pdf", mime="application/pdf", disabled=st.session_state.fa_resume_pdf is None, help="playwright 启动慢，请耐心等待生成完成" if st.session_state.fa_resume_pdf is None else None)
+            st.download_button(
+                "下载 PDF" if pdf_status == "ready" else "PDF 生成中…",
+                st.session_state.fa_resume_pdf,
+                file_name=f"{st.session_state.fa_position}_简历.pdf",
+                mime="application/pdf",
+                disabled=pdf_disabled,
+                help=pdf_help,
+            )
         with dl2:
             st.download_button("下载 Markdown", st.session_state.fa_resume_md, file_name=f"{st.session_state.fa_position}_简历.md", mime="text/markdown")
         with dl3:
@@ -1896,6 +1913,62 @@ def _lazy_score_jd(db: Any, jd: Dict) -> Optional[float]:
         return result["composite"]
     except Exception:
         return None
+
+
+# PR6 (M12): PDF 异步生成 — 后台线程先出 MD/HTML，PDF 在跑就 disabled 按钮
+def _kick_off_background_pdf(html_str: str) -> None:
+    """后台线程启动 PDF 生成；状态写到 session_state。
+
+    fa_pdf_status 取值：
+      "pending" — 后台线程跑中或尚未开始
+      "ready"   — PDF 准备好，bytes 在 fa_resume_pdf
+      "failed"  — 出错，err 在 fa_pdf_error
+    """
+    if st.session_state.get("fa_pdf_status") in (None, "ready"):
+        # ready 表示已生成；None 表示尚未启动
+        if st.session_state.get("fa_pdf_status") == "ready":
+            return
+        st.session_state.fa_pdf_status = "pending"
+        st.session_state.fa_pdf_error = None
+
+        import threading
+
+        def _worker():
+            try:
+                from tools.generator.resume_pdf import html_to_pdf_safe
+                pdf_bytes = html_to_pdf_safe(html_str)
+                # 写到 thread-local dict，UI 通过 _poll_pdf_status 读
+                _PDF_RESULT["bytes"] = pdf_bytes
+                _PDF_RESULT["status"] = "ready"
+            except Exception as exc:  # pragma: no cover
+                _PDF_RESULT["error"] = str(exc)
+                _PDF_RESULT["status"] = "failed"
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+
+# 模块级容器，存后台线程结果（避免 st.session_state 在 worker 里写主线程状态）
+_PDF_RESULT: Dict[str, Any] = {}
+
+
+def _poll_pdf_status() -> None:
+    """每次 rerun 同步一次后台结果到 session_state。轻量级。"""
+    if st.session_state.get("fa_pdf_status") != "pending":
+        return
+    s = _PDF_RESULT.get("status")
+    if s == "ready":
+        st.session_state.fa_resume_pdf = _PDF_RESULT.get("bytes")
+        st.session_state.fa_pdf_status = "ready"
+    elif s == "failed":
+        st.session_state.fa_pdf_error = _PDF_RESULT.get("error")
+        st.session_state.fa_pdf_status = "failed"
+    else:
+        # 后台还没好，1.5s 后自动 rerun 检查一次
+        import time
+
+        time.sleep(1.5)
+        st.rerun()
 
 
 # PR3 (M11): Flow A 收尾"改写依据"面板。基于 build_skeleton 输出的 source_breakdown。

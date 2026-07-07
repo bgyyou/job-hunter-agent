@@ -227,6 +227,9 @@ def _get_section(key: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+_BATCH_MAX_INPUT_CHARS = 4000
+
+
 class ResumeFlowA:
     """0→1 对话式简历生成"""
 
@@ -476,12 +479,72 @@ class ResumeFlowA:
 
         把不相关经历往目标岗位上靠，保留事实不编造，只改 description 和 achievements。
         返回改写后的 experience list（原样字段结构）。失败时返回原 list 不阻断流程。
-        """
+
+        PR6 (M12): 尝试单次批量调用喂整列表，超长（>4000 字符）回退到逐条；
+        输出 list 长度不匹配时按条 fallback。"""
         original = collected.get("experience") or []
         if not original:
             return []
 
         skeleton_block = skeleton_text.strip() if skeleton_text else "（无可用岗位要求参考，做通用润色）"
+        total_chars = sum(len(json.dumps(exp, ensure_ascii=False)) for exp in original)
+
+        if total_chars <= _BATCH_MAX_INPUT_CHARS and len(original) > 1:
+            rewritten, fully_populated = await self._rewrite_experience_batch(
+                original, industry, position, skeleton_block,
+            )
+            if fully_populated:
+                return rewritten
+            logger.warning("Flow A rewrite_experience batch partial, falling back per-entry")
+
+        return await self._rewrite_experience_per_entry(
+            original, industry, position, skeleton_block,
+        )
+
+    async def _rewrite_experience_batch(
+        self, original, industry, position, skeleton_block,
+    ) -> Optional[List[Dict[str, Any]]]:
+        try:
+            prompt = (
+                f"以下 {len(original)} 条工作经历（JSON list），请按 schema 输出改写后的 JSON array，"
+                f"顺序与输入一致，每条 dict 包含 title/company/duration/description/achievements 字段。\n"
+                f"输入：\n{json.dumps(original, ensure_ascii=False, indent=2)}"
+            )
+            llm_messages = [
+                LLMMessage(
+                    role="system",
+                    content=_REWRITE_EXPERIENCE_SYSTEM.format(
+                        industry=industry, position=position, skeleton_block=skeleton_block,
+                    ),
+                ),
+                LLMMessage(role="user", content=prompt),
+            ]
+            response: LLMResponse = await self.llm_client.analyze(
+                messages=llm_messages, max_tokens=2400, temperature=0.5,
+            )
+            parsed = self._parse_json_loose(response.content)
+            if not isinstance(parsed, list):
+                return [], False
+            fully = len(parsed) >= len(original)
+            rewritten = []
+            for i, src in enumerate(original):
+                item = parsed[i] if i < len(parsed) and isinstance(parsed[i], dict) else src
+                for k in ("title", "company", "duration"):
+                    if k in src and k not in item:
+                        item[k] = src[k]
+                if "achievements" not in item:
+                    item["achievements"] = src.get("achievements", [])
+                if "description" not in item:
+                    item["description"] = src.get("description", "")
+                rewritten.append(item)
+            return rewritten, fully
+        except Exception as exc:
+            logger.warning(f"Flow A rewrite_experience batch failed: {exc}")
+            return [], False
+
+    async def _rewrite_experience_per_entry(
+        self, original, industry, position, skeleton_block,
+    ) -> List[Dict[str, Any]]:
         rewritten: List[Dict[str, Any]] = []
         for idx, exp in enumerate(original):
             try:
@@ -522,12 +585,72 @@ class ResumeFlowA:
         position: str,
         skeleton_text: str = "",
     ) -> List[Dict[str, Any]]:
-        """对每个项目经历做岗位化改写，保留 tech_stack 和 role，只改 description 和 achievements。"""
+        """对每个项目经历做岗位化改写，保留 tech_stack 和 role，只改 description 和 achievements。
+
+        PR6: 同 rewrite_experience 的批量 / 单条 fallback 策略。"""
         original = collected.get("projects") or []
         if not original:
             return []
 
         skeleton_block = skeleton_text.strip() if skeleton_text else "（无可用岗位要求参考，做通用润色）"
+        total_chars = sum(len(json.dumps(p, ensure_ascii=False)) for p in original)
+
+        if total_chars <= _BATCH_MAX_INPUT_CHARS and len(original) > 1:
+            rewritten, fully_populated = await self._rewrite_projects_batch(
+                original, industry, position, skeleton_block,
+            )
+            if fully_populated:
+                return rewritten
+            logger.warning("Flow A rewrite_projects batch partial, falling back per-entry")
+
+        return await self._rewrite_projects_per_entry(
+            original, industry, position, skeleton_block,
+        )
+
+    async def _rewrite_projects_batch(
+        self, original, industry, position, skeleton_block,
+    ) -> Optional[List[Dict[str, Any]]]:
+        try:
+            prompt = (
+                f"以下 {len(original)} 条项目经历（JSON list），请按 schema 输出改写后的 JSON array，"
+                f"顺序与输入一致，每条 dict 包含 name/role/tech_stack/description/achievements 字段。\n"
+                f"输入：\n{json.dumps(original, ensure_ascii=False, indent=2)}"
+            )
+            llm_messages = [
+                LLMMessage(
+                    role="system",
+                    content=_REWRITE_PROJECTS_SYSTEM.format(
+                        industry=industry, position=position, skeleton_block=skeleton_block,
+                    ),
+                ),
+                LLMMessage(role="user", content=prompt),
+            ]
+            response: LLMResponse = await self.llm_client.analyze(
+                messages=llm_messages, max_tokens=2400, temperature=0.5,
+            )
+            parsed = self._parse_json_loose(response.content)
+            if not isinstance(parsed, list):
+                return [], False
+            fully = len(parsed) >= len(original)
+            rewritten = []
+            for i, src in enumerate(original):
+                item = parsed[i] if i < len(parsed) and isinstance(parsed[i], dict) else src
+                for k in ("name", "role", "tech_stack"):
+                    if k in src and k not in item:
+                        item[k] = src[k]
+                if "achievements" not in item:
+                    item["achievements"] = src.get("achievements", [])
+                if "description" not in item:
+                    item["description"] = src.get("description", "")
+                rewritten.append(item)
+            return rewritten, fully
+        except Exception as exc:
+            logger.warning(f"Flow A rewrite_projects batch failed: {exc}")
+            return [], False
+
+    async def _rewrite_projects_per_entry(
+        self, original, industry, position, skeleton_block,
+    ) -> List[Dict[str, Any]]:
         rewritten: List[Dict[str, Any]] = []
         for idx, proj in enumerate(original):
             try:
