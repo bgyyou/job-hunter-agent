@@ -553,7 +553,8 @@ class ResumeFlowA:
 
         Returns:
             {"text": str, "source": "rag"|"fallback", "n_chunks": int,
-             "industries_covered": List[str]}
+             "industries_covered": List[str],
+             "source_breakdown": {platform_counts, n_companies, top_jd_ids, top_chunks}}
             空召回时 source="fallback"，下游 UI 可提示用户该岗位 JD 较少。
         """
         if self.db:
@@ -565,6 +566,7 @@ class ResumeFlowA:
                     "source": cached["source"],
                     "n_chunks": cached["n_chunks"],
                     "industries_covered": cached.get("industries_covered", []),
+                    "source_breakdown": self._build_source_breakdown([]),
                 }
 
         chunks = self._retrieve_rag_chunks(position, industry, top_k=15)
@@ -575,6 +577,7 @@ class ResumeFlowA:
                 "source": "fallback",
                 "n_chunks": 0,
                 "industries_covered": [],
+                "source_breakdown": self._build_source_breakdown([]),
             }
             if self.db:
                 self.db.set_skeleton_cache(position, industry, result)
@@ -590,6 +593,8 @@ class ResumeFlowA:
             for c in useful
             if (c.get("metadata", {}) or {}).get("jd_industry_tag")
         })
+
+        source_breakdown = self._build_source_breakdown(useful)
 
         combined = "\n---\n".join((c.get("chunk_text") or "")[:300] for c in useful[:10])
         prompt = (
@@ -612,6 +617,7 @@ class ResumeFlowA:
                 "source": "rag",
                 "n_chunks": len(useful),
                 "industries_covered": industries,
+                "source_breakdown": source_breakdown,
             }
         except Exception as exc:
             logger.warning(f"Flow A skeleton extraction failed: {exc}")
@@ -620,11 +626,41 @@ class ResumeFlowA:
                 "source": "fallback",
                 "n_chunks": len(useful),
                 "industries_covered": industries,
+                "source_breakdown": source_breakdown,
             }
 
         if self.db:
             self.db.set_skeleton_cache(position, industry, result)
         return result
+
+    @staticmethod
+    def _build_source_breakdown(chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """从 chunk 列表聚合平台分布 / 公司数 / top-JDs，供 UI 展示"基于哪些 JD 改写"。"""
+        platform_counts: Dict[str, int] = {}
+        jd_ids = []
+        for c in chunks:
+            plat = (c.get("metadata", {}) or {}).get("jd_platform") or "other"
+            platform_counts[plat] = platform_counts.get(plat, 0) + 1
+            jid = c.get("jd_id")
+            if jid:
+                jd_ids.append(jid)
+        unique_jds = list({jid: 1 for jid in jd_ids}.keys())  # 去重保序
+        # 按 similarity 降序取前 5 个 chunk（已查过的话）；原 chunks 已是相似度排序
+        top_chunks = chunks[:5]
+        return {
+            "platform_counts": platform_counts,
+            "n_companies": len(unique_jds),
+            "top_jd_ids": unique_jds[:5],
+            "top_chunks": [
+                {
+                    "jd_id": c.get("jd_id"),
+                    "chunk_text": (c.get("chunk_text") or "")[:200],
+                    "similarity": c.get("similarity", 0.0),
+                    "platform": (c.get("metadata", {}) or {}).get("jd_platform", ""),
+                }
+                for c in top_chunks
+            ],
+        }
 
     @staticmethod
     def _fallback_skeleton(position: str) -> str:
