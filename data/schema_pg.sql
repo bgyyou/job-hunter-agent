@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS jds (
     position_tag TEXT,
     auto_classified INTEGER NOT NULL DEFAULT 1,
     is_public INTEGER NOT NULL DEFAULT 0 CHECK (is_public IN (0, 1)),
+    quality_score REAL,
+    quality_checked_at TEXT,
     crawled_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -98,6 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_jds_position ON jds(position_tag);
 CREATE INDEX IF NOT EXISTS idx_jds_company ON jds(company);
 CREATE INDEX IF NOT EXISTS idx_jds_crawled_at ON jds(crawled_at);
 CREATE INDEX IF NOT EXISTS idx_jds_is_public ON jds(is_public);
+CREATE INDEX IF NOT EXISTS idx_jds_quality_score ON jds(quality_score);
 CREATE INDEX IF NOT EXISTS idx_jds_deleted ON jds(deleted_at);
 -- Trigram index for fuzzy title/company search
 CREATE INDEX IF NOT EXISTS idx_jds_title_trgm ON jds USING gin (title gin_trgm_ops);

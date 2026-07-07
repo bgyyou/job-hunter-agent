@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS jds (
     position_tag TEXT,
     auto_classified INTEGER NOT NULL DEFAULT 1,
     is_public INTEGER NOT NULL DEFAULT 0 CHECK (is_public IN (0, 1)),
+    quality_score REAL,
+    quality_checked_at TEXT,
     crawled_at TEXT NOT NULL DEFAULT (datetime('now')),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
