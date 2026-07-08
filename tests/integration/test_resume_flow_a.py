@@ -143,6 +143,18 @@ def test_normalize_strips_llm_placeholders():
     assert result["education"][0]["major"] == "计算机"
 
 
+def test_parse_chat_reply_force_close_does_not_auto_complete():
+    """Root fix: 轮次上限只能提示收尾，不能绕过本地 validator 直接推进。"""
+    reply = ResumeFlowA._parse_chat_reply(
+        "我还需要再确认一个成果数据。",
+        force_close=True,
+        rounds_used=8,
+    )
+
+    assert reply["type"] == "question"
+    assert "成果" in reply["message"]
+
+
 # ---------- Section 状态机：新接线测试 ----------
 
 def test_chat_section_collects_personal_info():

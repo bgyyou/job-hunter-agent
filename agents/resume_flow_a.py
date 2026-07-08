@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
 
@@ -287,7 +287,7 @@ class ResumeFlowA:
             position=position,
         )
         if force_close:
-            system_text += "\n\n【强制收尾】已达本段轮次上限，直接输出 [SECTION_DONE]。"
+            system_text += "\n\n【接近上限】本段轮次已较多，请优先围绕缺失信息收敛；只有用户信息足够或明确不补充时才输出 [SECTION_DONE]。"
 
         llm_messages = [LLMMessage(role="system", content=system_text)]
         for m in messages:
@@ -304,7 +304,7 @@ class ResumeFlowA:
                 "message": content.replace("[SECTION_DONE,SKIP]", "").replace("[SECTION_DONE, SKIP]", "").strip(),
                 "rounds_used": rounds_used,
             }
-        if "[SECTION_DONE]" in content or force_close:
+        if "[SECTION_DONE]" in content:
             return {
                 "type": "section_done",
                 "message": content.replace("[SECTION_DONE]", "").strip(),
@@ -433,11 +433,15 @@ class ResumeFlowA:
         industry: str,
         position: str,
         skeleton_text: str = "",
+        stream_callback: Optional[Callable[[str, str], None]] = None,
     ) -> Dict[str, Any]:
         """采集完所有 section 后，LLM 派生 summary 和 core_competencies。
 
         skeleton_text: 由 build_skeleton 蒸馏出的岗位核心要求文本。传了就让 LLM
         派生 summary / 核心能力时朝岗位要求靠拢；空字符串则降级为纯用户数据派生。
+
+        stream_callback (可选): 签名 (delta, accumulated) — 提供时走流式，
+        UI 层可实时显示"派生中..."。最终完整文本仍按 JSON 解析填回 summary/competencies 字段。
         """
         skeleton_block = skeleton_text.strip() if skeleton_text else "（无可用岗位要求参考，请基于用户数据派生通用性更强的核心能力）"
         prompt = (
@@ -453,14 +457,33 @@ class ResumeFlowA:
             ),
             LLMMessage(role="user", content=prompt),
         ]
-        try:
-            response: LLMResponse = await self.llm_client.analyze(
-                messages=llm_messages, max_tokens=600, temperature=0.4,
-            )
-            parsed = self._parse_json(response.content)
-        except Exception as exc:
-            logger.warning(f"Flow A derive_summary failed: {exc}")
-            parsed = None
+
+        parsed: Optional[Dict[str, Any]] = None
+        if stream_callback is not None:
+            full = ""
+            try:
+                async for chunk in self.llm_client.analyze_stream(
+                    messages=llm_messages, max_tokens=600, temperature=0.4,
+                ):
+                    if chunk.content:
+                        full += chunk.content
+                        try:
+                            stream_callback(chunk.content, full)
+                        except Exception as cb_exc:
+                            logger.debug(f"derive stream_callback swallowed: {cb_exc}")
+                parsed = self._parse_json(full)
+            except Exception as exc:
+                logger.warning(f"Flow A derive_summary streaming failed: {exc}")
+                parsed = None
+        else:
+            try:
+                response: LLMResponse = await self.llm_client.analyze(
+                    messages=llm_messages, max_tokens=600, temperature=0.4,
+                )
+                parsed = self._parse_json(response.content)
+            except Exception as exc:
+                logger.warning(f"Flow A derive_summary failed: {exc}")
+                parsed = None
 
         parsed = parsed or {}
         return {
@@ -722,10 +745,22 @@ class ResumeFlowA:
     # Step 2: RAG 骨架 — 从存量 JD 中提取该岗位的高频要求
     # ----------------------------------------------------------------
 
-    async def build_skeleton(self, position: str, industry: str) -> Dict[str, Any]:
+    async def build_skeleton(
+        self,
+        position: str,
+        industry: str,
+        stream_callback: Optional[Callable[[str, str], None]] = None,
+    ) -> Dict[str, Any]:
         """RAG 检索该岗位的存量 JD，提取高频要求作为简历骨架。
 
         对 (position, industry) 做 24h 缓存，热门岗位避免每次生成简历都重建 skeleton。
+
+        Args:
+            position: 目标岗位
+            industry: 目标行业
+            stream_callback: 可选回调，签名 (delta: str, accumulated: str)。
+                提供时改用 analyze_stream 逐 chunk 推，UI 端做 st.write_stream。
+                不提供时维持原有 analyze 全文返回的语义（行为兼容）。
 
         Returns:
             {"text": str, "source": "rag"|"fallback", "n_chunks": int,
@@ -779,31 +814,57 @@ class ResumeFlowA:
             f"提炼出 5-8 条最核心、最通用的能力要求（每条 10-20 字）。\n\n"
             f"{combined}\n\n请用列表格式返回，每行一条要求。"
         )
-        try:
-            response: LLMResponse = await self.llm_client.analyze(
-                messages=[
-                    LLMMessage(role="system", content="你是招聘需求分析专家。"),
-                    LLMMessage(role="user", content=prompt),
-                ],
-                max_tokens=300,
-                temperature=0.3,
-            )
-            result = {
-                "text": response.content.strip(),
-                "source": "rag",
-                "n_chunks": len(useful),
-                "industries_covered": industries,
-                "source_breakdown": source_breakdown,
-            }
-        except Exception as exc:
-            logger.warning(f"Flow A skeleton extraction failed: {exc}")
-            result = {
-                "text": self._fallback_skeleton(position),
-                "source": "fallback",
-                "n_chunks": len(useful),
-                "industries_covered": industries,
-                "source_breakdown": source_breakdown,
-            }
+
+        messages = [
+            LLMMessage(role="system", content="你是招聘需求分析专家。"),
+            LLMMessage(role="user", content=prompt),
+        ]
+
+        text = ""
+        if stream_callback is not None:
+            # v2.1 P2-1 阶段一：流式路径 — UI 层实时看到字
+            full = ""
+            try:
+                async for chunk in self.llm_client.analyze_stream(
+                    messages=messages, max_tokens=300, temperature=0.3,
+                ):
+                    if chunk.content:
+                        full += chunk.content
+                        try:
+                            stream_callback(chunk.content, full)
+                        except Exception as cb_exc:
+                            logger.debug(f"skeleton stream_callback swallowed: {cb_exc}")
+                text = full.strip()
+                if not text:
+                    raise ValueError("empty stream output")
+            except Exception as exc:
+                logger.warning(f"Flow A skeleton streaming failed, falling back: {exc}")
+                text = self._fallback_skeleton(position)
+        else:
+            # 兼容路径：原 analyze（单测和外部调用者走这里）
+            try:
+                response: LLMResponse = await self.llm_client.analyze(
+                    messages=messages, max_tokens=300, temperature=0.3,
+                )
+                text = response.content.strip()
+            except Exception as exc:
+                logger.warning(f"Flow A skeleton extraction failed: {exc}")
+                text = self._fallback_skeleton(position)
+
+        if not text:
+            text = self._fallback_skeleton(position)
+
+        result = {
+            "text": text,
+            "source": (
+                "rag"
+                if text and text != self._fallback_skeleton(position)
+                else "fallback"
+            ),
+            "n_chunks": len(useful),
+            "industries_covered": industries,
+            "source_breakdown": source_breakdown,
+        }
 
         if self.db:
             self.db.set_skeleton_cache(position, industry, result)
@@ -856,18 +917,45 @@ class ResumeFlowA:
         collected: Dict[str, Any],
         industry: str,
         position: str,
+        skeleton_callback: Optional[Callable[[str, str], None]] = None,
+        derive_callback: Optional[Callable[[str, str], None]] = None,
+        rewrite_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """并行生成简历 payload：先 build skeleton，再并行改写经历/项目/派生总结。
 
         把 rewrite_experience / rewrite_projects / derive_summary 并行跑，
         减少 Flow A 第4步整体等待时间。
+
+        流式回调（v2.1 P2-1 阶段一）：
+        - skeleton_callback(delta, accumulated): skeleton 生成过程中每个 chunk
+        - derive_callback(delta, accumulated): 派生 summary/competencies 过程中
+        - rewrite_callback(stage, payload): stage ∈ "experience"|"projects"，整段
+          重写完成时回调一次（rewrite 输出是 JSON，中途流式意义不大）
         """
-        skeleton = await self.build_skeleton(position, industry)
+        skeleton = await self.build_skeleton(position, industry, stream_callback=skeleton_callback)
         skeleton_text = skeleton.get("text", "")
 
-        exp_task = self.rewrite_experience(collected, industry, position, skeleton_text)
-        proj_task = self.rewrite_projects(collected, industry, position, skeleton_text)
-        derived_task = self.derive_summary_and_competencies(collected, industry, position, skeleton_text)
+        async def _track_rewrite(name: str, coro):
+            r = await coro
+            if rewrite_callback is not None:
+                try:
+                    rewrite_callback(name, {"count": len(r or [])})
+                except Exception as cb_exc:
+                    logger.debug(f"rewrite_callback swallowed: {cb_exc}")
+            return r
+
+        exp_task = _track_rewrite(
+            "experience",
+            self.rewrite_experience(collected, industry, position, skeleton_text),
+        )
+        proj_task = _track_rewrite(
+            "projects",
+            self.rewrite_projects(collected, industry, position, skeleton_text),
+        )
+        derived_task = self.derive_summary_and_competencies(
+            collected, industry, position, skeleton_text,
+            stream_callback=derive_callback,
+        )
 
         rewritten_experience, rewritten_projects, derived = await asyncio.gather(
             exp_task, proj_task, derived_task,
@@ -893,6 +981,110 @@ class ResumeFlowA:
                 "languages": languages_val or [],
             },
         }
+
+    async def generate_resume_payload_resumable(
+        self,
+        collected: Dict[str, Any],
+        industry: str,
+        position: str,
+        generation_state: Optional[Dict[str, Any]] = None,
+        state_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        skeleton_callback: Optional[Callable[[str, str], None]] = None,
+        derive_callback: Optional[Callable[[str, str], None]] = None,
+        rewrite_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Generate Flow A payload with stage checkpoints.
+
+        Unlike ``generate_resume_payload`` this path is intentionally sequential:
+        each stage writes its result into ``generation_state`` before the next
+        stage starts. If the browser refreshes or a later stage fails, callers can
+        pass the saved state back in and skip stages already marked ``done``.
+        """
+        state: Dict[str, Any] = dict(generation_state or {})
+
+        def _emit() -> None:
+            if state_callback is not None:
+                try:
+                    state_callback(state)
+                except Exception as cb_exc:
+                    logger.debug(f"generation state_callback swallowed: {cb_exc}")
+
+        def _stage_result(name: str) -> Any:
+            item = state.get(name) or {}
+            if item.get("status") == "done" and "result" in item:
+                return item["result"]
+            return None
+
+        async def _run_stage(name: str, coro_factory):
+            cached = _stage_result(name)
+            if cached is not None:
+                return cached
+            state[name] = {"status": "running"}
+            _emit()
+            try:
+                result = await coro_factory()
+                state[name] = {"status": "done", "result": result}
+                _emit()
+                return result
+            except Exception as exc:
+                state[name] = {"status": "failed", "error": str(exc)}
+                _emit()
+                raise
+
+        skeleton = await _run_stage(
+            "skeleton",
+            lambda: self.build_skeleton(position, industry, stream_callback=skeleton_callback),
+        )
+        skeleton_text = (skeleton or {}).get("text", "")
+
+        rewritten_experience = await _run_stage(
+            "rewrite_experience",
+            lambda: self.rewrite_experience(collected, industry, position, skeleton_text),
+        )
+        if rewrite_callback is not None:
+            try:
+                rewrite_callback("experience", {"count": len(rewritten_experience or [])})
+            except Exception as cb_exc:
+                logger.debug(f"rewrite_callback swallowed: {cb_exc}")
+
+        rewritten_projects = await _run_stage(
+            "rewrite_projects",
+            lambda: self.rewrite_projects(collected, industry, position, skeleton_text),
+        )
+        if rewrite_callback is not None:
+            try:
+                rewrite_callback("projects", {"count": len(rewritten_projects or [])})
+            except Exception as cb_exc:
+                logger.debug(f"rewrite_callback swallowed: {cb_exc}")
+
+        derived = await _run_stage(
+            "derive",
+            lambda: self.derive_summary_and_competencies(
+                collected, industry, position, skeleton_text,
+                stream_callback=derive_callback,
+            ),
+        )
+
+        skills_val = collected.get("skills")
+        if isinstance(skills_val, dict):
+            skills_val = skills_val.get("skills", [])
+        languages_val = collected.get("languages")
+        if isinstance(languages_val, dict):
+            languages_val = languages_val.get("languages", [])
+
+        resume = {
+            "header": collected.get("header", {}),
+            "summary": (derived or {}).get("summary", ""),
+            "core_competencies": (derived or {}).get("core_competencies", []) or [],
+            "education": collected.get("education", []) or [],
+            "experience": rewritten_experience or [],
+            "projects": rewritten_projects or [],
+            "skills": skills_val or [],
+            "languages": languages_val or [],
+        }
+        state["assemble"] = {"status": "done", "result": {"resume_ready": True}}
+        _emit()
+        return {"skeleton": skeleton, "resume": resume, "generation_state": state}
 
     def _retrieve_rag_chunks(
         self, position: str, industry: str, top_k: int

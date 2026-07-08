@@ -39,6 +39,10 @@ ENV/
 .env.*
 !.env.example
 
+# Internal Beta LLM Key（明文，内测用；不进 git）
+internal_keys.json
+data/internal_keys.json
+
 # 日志
 logs/
 *.log
@@ -98,6 +102,10 @@ Thumbs.db
 *.tmp
 *.bak
 *.swp
+
+# 临时调试脚本（下划线开头，不入仓）
+data/_*.py
+data/_*.md
 
 # Claude Code 本地状态
 .claude/

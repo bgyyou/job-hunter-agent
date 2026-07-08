@@ -39,6 +39,20 @@ streamlit run web_app.py
 
 > 我们**不内置任何 demo key**——既防 GitHub 抓取后被滥用，也确保你的额度只属于你。
 
+### Internal Beta（跳过 .env / wizard）
+
+小范围内测时，把企业 LLM Key 放到 `.exe` 同目录或项目根的 `internal_keys.json`（不进 git），用户**双击 `.exe` 即可用，不需要配 `.env` 也不用走 setup wizard**。
+
+```json
+{
+  "api_key": "PUT-YOUR-REAL-KEY-HERE",
+  "base_url": "https://apihub.agnes-ai.com/v1",
+  "model": "agnes-2.0-flash"
+}
+```
+
+模板：`config/internal_keys.example.json`。
+
 ### 重建 exe（可选）
 
 ```bash
@@ -62,7 +76,7 @@ pyinstaller --onefile --name JobHunter --distpath dist scripts/jobhunter_launche
 bash tools/githooks/install.sh
 ```
 
-钩子会拦截任何含 `sk-XXX` 形式硬编码 key 或 `.env` 真文件的提交。
+钩子会拦截任何疑似硬编码 API key 或 `.env` 真文件的提交。
 
 ---
 

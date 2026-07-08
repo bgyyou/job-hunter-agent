@@ -150,6 +150,22 @@ def main() -> int:
 
     project_root = get_project_root(web_app)
 
+    # v2.1 P2-1 阶段一：internal beta 模式（双击 .exe 直接用）
+    # 把 internal_keys.json 里的 key 注入子进程 env，让 streamlit 起来就能调 LLM。
+    subproc_env = os.environ.copy()
+    try:
+        sys.path.insert(0, str(project_root))
+        from config.internal_keys import apply_internal_keys
+        applied, src = apply_internal_keys()
+        if applied:
+            print(f"[0/3] Internal beta mode: LLM key loaded from {src}")
+            # 把已注入的 env var 复制给 streamlit 子进程
+            for k in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"):
+                if os.environ.get(k):
+                    subproc_env[k] = os.environ[k]
+    except Exception as exc:
+        print(f"[WARN] internal_keys helper load failed: {exc}")
+
     # 调用 streamlit。
     # - 未 frozen: 用 sys.executable (含 venv 那个 python)
     # - frozen: 退回 PATH 上的 python/py，因为 sys.executable 是 .exe 自己
@@ -170,6 +186,7 @@ def main() -> int:
     proc = subprocess.Popen(
         cmd,
         cwd=str(project_root),
+        env=subproc_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

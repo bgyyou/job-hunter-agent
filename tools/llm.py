@@ -4,8 +4,9 @@ LLM 封装层 - 支持火山引擎（豆包等模型）
 提供统一的 LLM 调用接口、Token 计数、Prompt 缓存和流式响应
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, AsyncGenerator, Any, Union
+from typing import Dict, List, Optional, AsyncGenerator, Any, Union, Callable, Awaitable
 from enum import Enum
+import asyncio
 import hashlib
 import json
 import time
@@ -305,6 +306,9 @@ class OpenAICompatibleClient(LLMClient):
         self.pricing = pricing
         self.is_coding_api = is_coding_api
         self.use_anthropic_format = use_anthropic_format
+        # Root fix: transient provider/network failures should not kill a Flow A turn.
+        # Tests may set this to (0, 0) for fast deterministic retry checks.
+        self.retry_delays = (1.2, 2.0, 3.0)
 
         # 根据格式设置不同的 headers
         if use_anthropic_format:
@@ -339,6 +343,48 @@ class OpenAICompatibleClient(LLMClient):
                 self.api_url = url + "/chat/completions"
             else:
                 self.api_url = url + "/v1/chat/completions"
+
+    @staticmethod
+    def _is_retryable_exception(exc: Exception) -> bool:
+        """Return True for transient provider/network failures.
+
+        Authentication/configuration errors should fail fast; 429/5xx/timeout and
+        transport resets are worth retrying because they are common during long
+        Flow A sessions.
+        """
+        text = str(exc).lower()
+        retryable_markers = (
+            "timeout", "timed out", "temporarily", "connection reset",
+            "connection aborted", "server disconnected", "429", "500", "502",
+            "503", "504", "rate limit", "too many requests", "upstream",
+        )
+        non_retryable_markers = ("401", "403", "invalid api key", "permission denied", "unauthorized")
+        if any(marker in text for marker in non_retryable_markers):
+            return False
+        if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
+            return True
+        return any(marker in text for marker in retryable_markers)
+
+    async def _call_with_retries(
+        self,
+        call_factory: Callable[[], Awaitable[Dict]],
+        operation: str,
+    ) -> Dict:
+        delays = tuple(getattr(self, "retry_delays", (1.2, 2.0, 3.0)))
+        attempt = 0
+        while True:
+            try:
+                return await call_factory()
+            except Exception as exc:
+                if attempt >= len(delays) or not self._is_retryable_exception(exc):
+                    raise
+                delay = delays[attempt]
+                attempt += 1
+                self.logger.warning(
+                    f"LLM {operation} failed transiently; retry {attempt}/{len(delays)} in {delay}s: {exc}"
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
     async def analyze(
         self,
@@ -386,11 +432,14 @@ class OpenAICompatibleClient(LLMClient):
         try:
             # 调用 API
             if self.use_anthropic_format:
-                response = await self._call_api_anthropic(
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system_prompt=system_prompt
+                response = await self._call_with_retries(
+                    lambda: self._call_api_anthropic(
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        system_prompt=system_prompt,
+                    ),
+                    operation="analyze_anthropic",
                 )
 
                 # 构建 LLMResponse (Anthropic 格式)
@@ -405,10 +454,13 @@ class OpenAICompatibleClient(LLMClient):
                 api_messages = self._convert_messages(messages, system_prompt)
 
                 # 调用 API (OpenAI 格式)
-                response = await self._call_api(
-                    messages=api_messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature
+                response = await self._call_with_retries(
+                    lambda: self._call_api(
+                        messages=api_messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    ),
+                    operation="analyze",
                 )
 
                 # 构建 LLMResponse
@@ -475,36 +527,51 @@ class OpenAICompatibleClient(LLMClient):
 
         total_content = ""
         tokens_used = 0
+        delays = tuple(getattr(self, "retry_delays", (1.2, 2.0, 3.0)))
+        attempt = 0
 
-        try:
-            async for chunk in self._call_api_stream(
-                messages=api_messages,
-                max_tokens=max_tokens,
-                temperature=temperature
-            ):
-                content = chunk.get("content", "")
-                if content:
-                    total_content += content
-                    tokens_used = self.estimate_tokens(content)
+        while True:
+            yielded_any = False
+            try:
+                async for chunk in self._call_api_stream(
+                    messages=api_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                ):
+                    content = chunk.get("content", "")
+                    if content:
+                        yielded_any = True
+                        total_content += content
+                        tokens_used = self.estimate_tokens(total_content)
 
-                    yield StreamChunk(
-                        content=content,
-                        is_complete=False,
-                        metadata={"tokens_accumulated": tokens_used}
-                    )
+                        yield StreamChunk(
+                            content=content,
+                            is_complete=False,
+                            metadata={"tokens_accumulated": tokens_used}
+                        )
 
-            # 记录调用
-            self.record_call(tokens_used)
+                # 记录调用
+                self.record_call(tokens_used)
 
-            yield StreamChunk(
-                content="",
-                is_complete=True,
-                metadata={"total_tokens": tokens_used}
-            )
+                yield StreamChunk(
+                    content="",
+                    is_complete=True,
+                    metadata={"total_tokens": tokens_used}
+                )
+                return
 
-        except Exception as e:
-            self.logger.error(f"流式 LLM 调用失败: {e}")
-            raise
+            except Exception as e:
+                # 流已经吐过字后不能自动重试，否则 UI 会出现重复内容；交给用户按钮重试。
+                if yielded_any or attempt >= len(delays) or not self._is_retryable_exception(e):
+                    self.logger.error(f"流式 LLM 调用失败: {e}")
+                    raise
+                delay = delays[attempt]
+                attempt += 1
+                self.logger.warning(
+                    f"流式 LLM 调用启动失败，retry {attempt}/{len(delays)} in {delay}s: {e}"
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
     def _convert_messages(self, messages: List[LLMMessage], system_prompt: Optional[str] = None) -> List[Dict]:
         """

@@ -59,6 +59,14 @@ def run_if_needed() -> None:
     if _is_configured():
         return
 
+    # v2.1 P2-1 阶段一：internal beta 模式直接跳过向导（key 已就位）
+    try:
+        from config.internal_keys import is_internal_beta_active
+        if is_internal_beta_active():
+            return
+    except Exception:
+        pass
+
     st.set_page_config(page_title="JobHunter 首次配置", page_icon="🛠️", layout="centered")
     st.title("🛠️ 首次运行配置")
     st.caption("只需 2 分钟，配置完一次往后自动加载。")
@@ -83,7 +91,7 @@ def run_if_needed() -> None:
     api_key = st.text_input(
         "API Key（必填）",
         type="password",
-        placeholder="sk-...",
+        placeholder="粘贴你的 API Key",
         help="粘贴后会写入本机 .env 文件，不会上传到任何服务器",
     )
 
