@@ -30,10 +30,13 @@ def test_get_project_root_unfrozen():
 
 
 def test_get_project_root_frozen():
-    """get_project_root 只是简单返回 web_app 的 parent，与 frozen 状态无关。"""
-    web_app = Path(r"C:\dist\web_app.py")
+    """get_project_root 只是简单返回 web_app 的 parent，与 frozen 状态无关。
+    用正斜杠 'C:/dist' 是为了让该测试在 Linux / Windows 上行为一致：
+    Path 在 Windows 上同时接受正反斜杠，反斜杠形式在 Linux 上会被当成单个文件名。
+    """
+    web_app = Path("C:/dist/web_app.py")
     root = launcher.get_project_root(web_app)
-    assert str(root) == r"C:\dist"
+    assert str(root).replace("\\", "/") == "C:/dist"
 
 
 def test_parse_streamlit_url_extracts_port():
