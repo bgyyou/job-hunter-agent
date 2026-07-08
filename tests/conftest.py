@@ -159,6 +159,38 @@ class _FakeBeautifulSoup:
 sys.modules.setdefault("bs4", types.ModuleType("bs4"))
 sys.modules["bs4"].BeautifulSoup = _FakeBeautifulSoup
 
+# requests / httpx：HTTP 客户端。测试不发请求，但 web_app → tools.scraper 会拉。
+class _FakeResponse:
+    status_code = 200
+    text = ""
+    content = b""
+    def json(self): return {}
+    def raise_for_status(self): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+def _fake_get(*a, **kw): return _FakeResponse()
+def _fake_post(*a, **kw): return _FakeResponse()
+def _fake_session(*a, **kw):
+    s = _StubEverything()
+    s.get = _fake_get
+    s.post = _fake_post
+    return s
+for _m in ("requests", "httpx"):
+    if _m not in sys.modules:
+        mod = types.ModuleType(_m)
+        mod.get = _fake_get
+        mod.post = _fake_post
+        mod.head = _fake_get
+        mod.put = _fake_post
+        mod.delete = _fake_get
+        mod.Session = _fake_session
+        mod.Response = _FakeResponse
+        sys.modules[_m] = mod
+# lxml: HTML 解析底层，bs4 警告链可能拉
+if "lxml" not in sys.modules:
+    sys.modules["lxml"] = types.ModuleType("lxml")
+    sys.modules["lxml.html"] = types.ModuleType("lxml.html")
+
 # fake_useragent：仅在 import 时构造 UserAgent 实例
 class _FakeUserAgent:
     def random(self): return "Mozilla/5.0"
