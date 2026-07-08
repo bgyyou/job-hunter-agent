@@ -1270,3 +1270,34 @@ CREATE TABLE audit_logs (
 - **不在 schema 里加 `archived_at` / `is_archived`**：软删除按 `deleted_at IS NULL` 一条规则走，不引入第二套"归档"语义，避免双轨
 - **不做 PG backend 的简历版本树方法同步**：版本树是 SQLite-only feature（N10 不涉及 PG）；等需求出现再 PR 同步
 
+
+---
+
+## [P2-1] Flow A 内测稳定性根治：草稿恢复 + 确定性状态机（2026-07-09）
+
+### 动机
+手动跑 Flow A 暴露 4 个体验硬伤：LLM 偶发失败会卡死、逐段对话轮次过多、`max_rounds` 到点会强制跳段、刷新后进度全丢且不能返回上一节。根因是 Flow A 把流程推进权交给 LLM 文本标记与 `st.session_state`，没有可恢复草稿与确定性完成判定。
+
+### 改动清单
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Flow A 草稿 | 新增 `flow_a_drafts` 表，持久化目标岗位、当前 section、section 数据/消息、生成阶段状态和 last_error；SQLite / PostgreSQL 迁移同步 | `database/migrations/010_flow_a_drafts.sql`、`database/migrations_pg/010_flow_a_drafts.sql` |
+| Backend API | 新增 Flow A draft CRUD：`upsert_flow_a_draft` / `get_flow_a_draft` / `get_latest_flow_a_draft` / `abandon_flow_a_draft` | `database/backends/__init__.py`、`sqlite_backend.py`、`postgres_backend.py` |
+| 状态机 | 新增 `services/flow_a_draft_service.py`，用本地 validator 判断 `experience/projects` 必填项，不再让 LLM `[SECTION_DONE]` 独占推进权 | `services/flow_a_draft_service.py` |
+| Flow A UI | 进入 Flow A 时检测未完成草稿；支持恢复/放弃；每次用户输入、LLM 回复、section 完成/跳过、生成阶段都保存草稿 | `web_app.py` |
+| 返回与重试 | 增加返回上一节、信息不全确认继续、AI 响应失败重试、生成失败按已完成 stage 续跑 | `web_app.py`、`agents/resume_flow_a.py` |
+| 生成可恢复 | 新增 `generate_resume_payload_resumable`，将 skeleton / rewrite_experience / rewrite_projects / derive / render 分阶段 checkpoint | `agents/resume_flow_a.py` |
+| LLM 稳定性 | `OpenAICompatibleClient` 增加 429/5xx/timeout/网络抖动 retry；流式调用只在未吐出内容前自动重试，避免 UI 重复输出 | `tools/llm.py` |
+| 内测启动 | `internal_keys.json` 支持跳过 `.env` / setup wizard；launcher 将 internal key 注入 Streamlit 子进程；模板文件入库，真实 key 继续 gitignore | `config/internal_keys.py`、`config/internal_keys.example.json`、`setup_wizard.py`、`scripts/jobhunter_launcher.py` |
+| 流式体验 | Flow A 第 4 步 skeleton / derive 文本流式输出，经历/项目改写显示阶段进度 | `agents/resume_flow_a.py`、`web_app.py` |
+| 测试 | 新增 Flow A draft/validator/resumable generation、internal keys、streaming callback、LLM retry 回归测试 | `tests/unit/test_flow_a_draft_service.py`、`tests/unit/test_internal_keys.py`、`tests/unit/test_resume_flow_a_streaming.py`、`tests/unit/test_llm_client.py`、`tests/integration/test_resume_flow_a.py` |
+
+### 验证
+- `python -m py_compile web_app.py agents/resume_flow_a.py tools/llm.py services/flow_a_draft_service.py database/backends/sqlite_backend.py database/backends/postgres_backend.py database/backends/__init__.py` → 通过
+- `pytest tests/ -q` → **234 passed in ~40s**
+- 暂存文件内无疑似真实 API key；`internal_keys.json` 真实文件不入库。
+
+### 显式不做
+- 不引入后台队列 / Celery；本轮保持 Streamlit 同步执行，但每个阶段可恢复。
+- 不做多草稿列表 UI；只恢复最近一个未完成草稿。
+- 不把 LLM 完全移出采集链路；LLM 仍负责提问和抽取，流程推进由本地状态机兜底。
