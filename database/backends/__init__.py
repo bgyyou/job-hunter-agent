@@ -234,6 +234,29 @@ class BaseBackend(ABC):
                        limit: int = 100) -> List[Dict]:
         """List recent LLM call records, newest first; filter by model/operation/status."""
 
+    # -------------------- Flow A Drafts --------------------
+
+    @abstractmethod
+    def upsert_flow_a_draft(self, data: Dict[str, Any]) -> str:
+        """Create or update a recoverable Flow A draft.
+
+        JSON fields: ``section_data``, ``section_messages``, ``section_status``,
+        ``generation_state``. Returns the draft id.
+        """
+
+    @abstractmethod
+    def get_flow_a_draft(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch one non-deleted Flow A draft with JSON columns parsed."""
+
+    @abstractmethod
+    def get_latest_flow_a_draft(self, user_id: str = "default",
+                                statuses: Optional[tuple[str, ...]] = None) -> Optional[Dict[str, Any]]:
+        """Fetch the latest recoverable Flow A draft for a user."""
+
+    @abstractmethod
+    def abandon_flow_a_draft(self, draft_id: str) -> None:
+        """Mark a Flow A draft as abandoned so it is no longer recoverable."""
+
     # -------------------- Audit Logs --------------------
 
     @abstractmethod

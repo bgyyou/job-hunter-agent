@@ -18,6 +18,18 @@ import streamlit as st
 from dotenv import load_dotenv
 from loguru import logger
 
+# v2.1 P2-1 阶段一：internal beta 模式 — internal_keys.json 存在则优先注入
+# 必须在 load_dotenv 之前：load_dotenv 不覆盖已存在的 env var
+# 这保证 internal_key 比 .env 默认值优先（用户 .env 显式配置仍可覆盖 internal）
+try:
+    from config.internal_keys import apply_internal_keys, is_internal_beta_active
+    if is_internal_beta_active():
+        applied, src = apply_internal_keys()
+        if applied:
+            logger.info(f"JobHunter started in internal beta mode (key from {src})")
+except Exception as _exc:
+    logger.debug(f"internal_keys helper not available: {_exc}")
+
 load_dotenv()
 
 from agents.coordinator import CoordinatorAgent
@@ -26,6 +38,11 @@ from config.settings import settings
 from database.backends.sqlite_backend import SqliteBackend
 from database.classifier import Classifier
 from services.audit_service import log_action
+from services.flow_a_draft_service import (
+    FlowADraftService,
+    missing_fields_label,
+    validate_section_completion,
+)
 from services.jd_library_service import (
     JdLibraryError,
     cleanup_garbage_public_jds,
@@ -631,6 +648,11 @@ def init_session_state() -> None:
         "fa_industry": None,
         "fa_function": None,
         "fa_position": None,
+        "fa_draft_id": None,
+        "fa_generation_state": {},
+        "fa_last_error": None,
+        "fa_incomplete_confirm_section": None,
+        "fa_incomplete_missing": [],
         "fa_messages": [],
         "fa_chat_done": False,
         "fa_resume_data": None,
@@ -701,11 +723,25 @@ def require_services() -> bool:
 
 
 def reset_flow_a_state() -> None:
+    draft_id = st.session_state.get("fa_draft_id")
+    db = st.session_state.get("db")
+    if draft_id and db:
+        try:
+            FlowADraftService(db, current_user_id()).abandon_draft(draft_id)
+        except Exception as exc:
+            logger.warning(f"Flow A draft abandon skipped: {exc}")
     for key in [
         "fa_industry", "fa_function", "fa_position", "fa_resume_data",
-        "fa_resume_md", "fa_resume_html", "fa_skeleton",
+        "fa_resume_md", "fa_resume_html", "fa_resume_pdf", "fa_skeleton",
     ]:
         st.session_state[key] = None
+    st.session_state.fa_draft_id = None
+    st.session_state.fa_generation_state = {}
+    st.session_state.fa_pdf_status = None
+    st.session_state.fa_pdf_error = None
+    st.session_state.fa_last_error = None
+    st.session_state.fa_incomplete_confirm_section = None
+    st.session_state.fa_incomplete_missing = []
     st.session_state.fa_messages = []
     st.session_state.fa_chat_done = False
     st.session_state.fa_section_index = 0
@@ -725,6 +761,157 @@ def reset_flow_b_state() -> None:
         st.session_state[key] = None
     st.session_state.last_opt_ids = []
     st.session_state.flow_b_step = "resume"
+
+
+def _flow_a_collect_sections() -> List[Dict[str, Any]]:
+    return [s for s in SECTIONS if not s.get("derived") and s["key"] in LLM_COLLECT_SECTION_KEYS]
+
+
+def _flow_a_draft_service() -> Optional[FlowADraftService]:
+    db = st.session_state.get("db")
+    if not db:
+        return None
+    return FlowADraftService(db, current_user_id())
+
+
+def _invalidate_flow_a_generation() -> None:
+    for key in ["fa_resume_data", "fa_resume_md", "fa_resume_html", "fa_resume_pdf", "fa_skeleton"]:
+        st.session_state[key] = None
+    st.session_state.fa_generation_state = {}
+    st.session_state.fa_pdf_status = None
+    st.session_state.fa_pdf_error = None
+
+
+def _save_flow_a_draft(
+    current_step: str,
+    current_section: Optional[str],
+    *,
+    status: str = "draft",
+    last_error: Optional[str] = None,
+) -> None:
+    service = _flow_a_draft_service()
+    if not service:
+        return
+    try:
+        draft_id = service.save_runtime_state(
+            st.session_state.get("fa_draft_id"),
+            industry=st.session_state.get("fa_industry"),
+            function=st.session_state.get("fa_function"),
+            position=st.session_state.get("fa_position"),
+            current_step=current_step,
+            current_section=current_section,
+            section_data=st.session_state.get("fa_section_data", {}),
+            section_messages=st.session_state.get("fa_section_messages", {}),
+            section_done=st.session_state.get("fa_section_done", []),
+            section_skipped=st.session_state.get("fa_section_skipped", []),
+            generation_state=st.session_state.get("fa_generation_state", {}),
+            status=status,
+            last_error=last_error,
+        )
+        st.session_state.fa_draft_id = draft_id
+    except Exception as exc:
+        logger.warning(f"Flow A draft save skipped: {exc}")
+
+
+def _restore_flow_a_draft(draft: Dict[str, Any]) -> None:
+    collect_sections = _flow_a_collect_sections()
+    collect_keys = [s["key"] for s in collect_sections]
+    section_status = draft.get("section_status") or {}
+    done = [k for k, v in section_status.items() if v == "done"]
+    skipped = [k for k, v in section_status.items() if v == "skipped"]
+    current_section = draft.get("current_section")
+
+    st.session_state.fa_draft_id = draft.get("id")
+    st.session_state.fa_industry = draft.get("industry")
+    st.session_state.fa_function = draft.get("function")
+    st.session_state.fa_position = draft.get("position")
+    st.session_state.fa_section_data = draft.get("section_data") or {}
+    st.session_state.fa_section_messages = draft.get("section_messages") or {}
+    st.session_state.fa_section_done = done
+    st.session_state.fa_section_skipped = skipped
+    st.session_state.fa_generation_state = draft.get("generation_state") or {}
+    st.session_state.fa_last_error = draft.get("last_error")
+    st.session_state.fa_basic_form_done = bool(st.session_state.fa_section_data.get("header"))
+
+    if draft.get("current_step") in {"generate", "completed"}:
+        st.session_state.fa_section_index = len(collect_sections)
+    elif current_section in collect_keys:
+        st.session_state.fa_section_index = collect_keys.index(current_section)
+    else:
+        st.session_state.fa_section_index = 0
+        for idx, key in enumerate(collect_keys):
+            if key not in done and key not in skipped:
+                st.session_state.fa_section_index = idx
+                break
+
+
+def _render_flow_a_recovery_prompt() -> bool:
+    if st.session_state.get("fa_draft_id") or st.session_state.get("fa_position"):
+        return False
+    service = _flow_a_draft_service()
+    if not service:
+        return False
+    draft = service.get_latest_recoverable_draft()
+    if not draft:
+        return False
+
+    st.info(
+        f"检测到上次未完成的简历草稿：{draft.get('industry') or '-'} / "
+        f"{draft.get('position') or '-'}。可以直接恢复，不用从头来。"
+    )
+    c1, c2, _ = st.columns([1, 1, 4])
+    with c1:
+        if st.button("恢复上次进度", type="primary"):
+            _restore_flow_a_draft(draft)
+            st.rerun()
+    with c2:
+        if st.button("放弃草稿，重新开始"):
+            service.abandon_draft(draft["id"])
+            st.rerun()
+    return True
+
+
+def _advance_flow_a_section(section_key: str, *, skipped: bool = False) -> None:
+    if skipped:
+        if section_key not in st.session_state.fa_section_skipped:
+            st.session_state.fa_section_skipped.append(section_key)
+        if section_key in st.session_state.fa_section_done:
+            st.session_state.fa_section_done.remove(section_key)
+    else:
+        if section_key not in st.session_state.fa_section_done:
+            st.session_state.fa_section_done.append(section_key)
+        if section_key in st.session_state.fa_section_skipped:
+            st.session_state.fa_section_skipped.remove(section_key)
+    st.session_state.fa_incomplete_confirm_section = None
+    st.session_state.fa_incomplete_missing = []
+    st.session_state.fa_section_index += 1
+    _invalidate_flow_a_generation()
+    next_sections = _flow_a_collect_sections()
+    next_section = None
+    if st.session_state.fa_section_index < len(next_sections):
+        next_section = next_sections[st.session_state.fa_section_index]["key"]
+    _save_flow_a_draft(
+        "collect" if next_section else "generate",
+        next_section,
+    )
+
+
+def _apply_flow_a_section_extracted(
+    section_key: str,
+    extracted: Any,
+    *,
+    allow_incomplete: bool = False,
+) -> bool:
+    st.session_state.fa_section_data[section_key] = extracted
+    validation = validate_section_completion(section_key, extracted)
+    if validation.complete or allow_incomplete:
+        _advance_flow_a_section(section_key)
+        return True
+
+    st.session_state.fa_incomplete_confirm_section = section_key
+    st.session_state.fa_incomplete_missing = validation.missing_fields
+    _save_flow_a_draft("collect", section_key)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -947,7 +1134,6 @@ def render_mode_select() -> None:
             st.write("适合没有现成简历，或想按目标岗位重新组织经历的人。")
             st.markdown("- 选择行业 / 职能 / 岗位\n- 和 Agent 多轮对话采集经历\n- 基于 JD 库生成岗位化简历")
             if st.button("开始生成", type="primary", use_container_width=True):
-                reset_flow_a_state()
                 st.session_state.app_route = "flow_a"
                 st.rerun()
 
@@ -977,7 +1163,10 @@ def render_flow_a() -> None:
 
     flow_a = ResumeFlowA(st.session_state.llm_client, db=st.session_state.db)
 
-    collect_sections = [s for s in SECTIONS if not s.get("derived") and s["key"] in LLM_COLLECT_SECTION_KEYS]
+    if _render_flow_a_recovery_prompt():
+        return
+
+    collect_sections = _flow_a_collect_sections()
     total_sections = 1 + len(collect_sections)
 
     if not st.session_state.fa_position:
@@ -1003,6 +1192,7 @@ def render_flow_a() -> None:
             st.session_state.fa_section_done = []
             st.session_state.fa_section_skipped = []
             st.session_state.fa_basic_form_done = False
+            _save_flow_a_draft("basic_form", None)
             st.rerun()
         return
 
@@ -1073,6 +1263,8 @@ def render_flow_a() -> None:
                     "raw_advantages": raw_advantages.strip(),
                 })
                 st.session_state.fa_basic_form_done = True
+                first_section = collect_sections[0]["key"] if collect_sections else None
+                _save_flow_a_draft("collect" if first_section else "generate", first_section)
                 st.rerun()
         return
 
@@ -1084,9 +1276,38 @@ def render_flow_a() -> None:
         st.markdown(f'<span class="step-pill">第 3 步</span>采集 {section["name"]}', unsafe_allow_html=True)
         st.caption(f"目标：{st.session_state.fa_industry} / {st.session_state.fa_position}")
 
-        if st.button("重新选择岗位"):
-            reset_flow_a_state()
-            st.rerun()
+        nav_back, nav_reset, _ = st.columns([1, 1, 4])
+        with nav_back:
+            if st.session_state.fa_section_index > 0 and st.button("← 返回上一节"):
+                prev_section = collect_sections[st.session_state.fa_section_index - 1]["key"]
+                st.session_state.fa_section_index -= 1
+                if prev_section in st.session_state.fa_section_done:
+                    st.session_state.fa_section_done.remove(prev_section)
+                if prev_section in st.session_state.fa_section_skipped:
+                    st.session_state.fa_section_skipped.remove(prev_section)
+                st.session_state.fa_incomplete_confirm_section = None
+                st.session_state.fa_incomplete_missing = []
+                _invalidate_flow_a_generation()
+                _save_flow_a_draft("collect", prev_section)
+                st.rerun()
+        with nav_reset:
+            if st.button("重新选择岗位"):
+                reset_flow_a_state()
+                st.rerun()
+
+        if st.session_state.get("fa_incomplete_confirm_section") == section_key:
+            missing = st.session_state.get("fa_incomplete_missing", [])
+            st.warning(
+                "本节还没收齐：" + missing_fields_label(missing)
+                + "。继续补充，或者确认信息不全也进入下一节。"
+            )
+            if st.button("确认信息不全也继续", key=f"fa_force_continue_{section_key}"):
+                _apply_flow_a_section_extracted(
+                    section_key,
+                    st.session_state.fa_section_data.get(section_key) or ResumeFlowA._empty_section_value(section_key),
+                    allow_incomplete=True,
+                )
+                st.rerun()
 
         # PR5 (M12): 模式切换 — 粘贴通道 / 逐段对话 二选一
         extract_mode = st.radio(
@@ -1130,54 +1351,116 @@ def render_flow_a() -> None:
                 sec_msgs.append({"role": "assistant", "content": reply["message"]})
 
                 if reply["type"] == "section_skipped":
-                    st.session_state.fa_section_skipped.append(section_key)
-                    st.session_state.fa_section_index += 1
+                    _advance_flow_a_section(section_key, skipped=True)
                 elif reply["type"] == "section_done":
                     extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
-                    st.session_state.fa_section_data[section_key] = extracted
-                    st.session_state.fa_section_done.append(section_key)
-                    st.session_state.fa_section_index += 1
+                    _apply_flow_a_section_extracted(section_key, extracted)
+                else:
+                    _save_flow_a_draft("collect", section_key)
                 st.rerun()
             except Exception as exc:
+                st.session_state.fa_last_error = str(exc)
+                _save_flow_a_draft("collect", section_key, last_error=str(exc))
                 st.error(f"AI 响应失败：{exc}")
+                if st.button("重试这条 AI 响应", key=f"fa_retry_ai_{section_key}_{len(sec_msgs)}"):
+                    st.rerun()
 
         user_input = st.chat_input(f"回复关于「{section['name']}」的问题...")
         if user_input:
             sec_msgs.append({"role": "user", "content": user_input})
+            st.session_state.fa_incomplete_confirm_section = None
+            st.session_state.fa_incomplete_missing = []
+            _save_flow_a_draft("collect", section_key)
             st.rerun()
 
         b1, b2, _ = st.columns(3)
         with b1:
             if section.get("skippable") and st.button(f"跳过 {section['name']}"):
-                st.session_state.fa_section_skipped.append(section_key)
-                st.session_state.fa_section_index += 1
+                _advance_flow_a_section(section_key, skipped=True)
                 st.rerun()
         with b2:
             if st.button("完成本节，进入下一节"):
                 try:
-                    if sec_msgs:
-                        extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
-                        st.session_state.fa_section_data[section_key] = extracted
+                    extracted = run_async(flow_a.extract_section(section_key, sec_msgs)) if sec_msgs else ResumeFlowA._empty_section_value(section_key)
+                    _apply_flow_a_section_extracted(section_key, extracted)
                 except Exception as exc:
-                    st.warning(f"提取本节数据时出错（继续推进）：{exc}")
-                st.session_state.fa_section_done.append(section_key)
-                st.session_state.fa_section_index += 1
+                    st.session_state.fa_last_error = str(exc)
+                    _save_flow_a_draft("collect", section_key, last_error=str(exc))
+                    st.warning(f"提取本节数据时出错：{exc}。状态已保存，可以重试。")
                 st.rerun()
         return
 
     st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
     st.markdown('<span class="step-pill">第 4 步</span>生成简历', unsafe_allow_html=True)
+    back_col, reset_col, _ = st.columns([1, 1, 4])
+    with back_col:
+        if collect_sections and st.button("← 返回上一节修改"):
+            prev_section = collect_sections[-1]["key"]
+            st.session_state.fa_section_index = len(collect_sections) - 1
+            if prev_section in st.session_state.fa_section_done:
+                st.session_state.fa_section_done.remove(prev_section)
+            if prev_section in st.session_state.fa_section_skipped:
+                st.session_state.fa_section_skipped.remove(prev_section)
+            st.session_state.fa_incomplete_confirm_section = None
+            st.session_state.fa_incomplete_missing = []
+            _invalidate_flow_a_generation()
+            _save_flow_a_draft("collect", prev_section)
+            st.rerun()
+    with reset_col:
+        if st.button("重新选择岗位"):
+            reset_flow_a_state()
+            st.rerun()
     if st.session_state.fa_resume_md is None:
         with st.status("正在生成简历...", expanded=True) as status:
             try:
-                status.update(label="1/4 检索 JD 库、改写经历、派生总结（耗时最长）...", state="running")
-                payload = run_async(flow_a.generate_resume_payload(
+                # v2.1 P2-1 阶段一：流式占位 — 用户能看到 LLM 在动
+                skeleton_placeholder = st.empty()
+                derive_placeholder = st.empty()
+                rewrite_status_placeholder = st.empty()
+                rewrite_log: list[str] = []
+
+                def _skeleton_cb(delta: str, accumulated: str) -> None:
+                    """RAG skeleton 蒸馏进度 — 用户看到字一个个出来。"""
+                    skeleton_placeholder.markdown(
+                        f"**岗位核心要求提炼中**（基于 {st.session_state.fa_position} 相关 JD）"
+                        f"\n\n```\n{accumulated}\n```"
+                        f"\n\n_逐字输出中..._"
+                    )
+
+                def _derive_cb(delta: str, accumulated: str) -> None:
+                    """派生 summary / core_competencies 进度。"""
+                    derive_placeholder.markdown(
+                        f"**个人总结 + 核心能力生成中**"
+                        f"\n\n```json\n{accumulated}\n```"
+                        f"\n\n_逐字输出中..._"
+                    )
+
+                def _rewrite_cb(stage: str, payload: dict) -> None:
+                    label = "经历" if stage == "experience" else "项目"
+                    rewrite_log.append(f"✅ 已改写 {payload.get('count', 0)} 段{label}")
+                    rewrite_status_placeholder.markdown(
+                        "\n\n".join(rewrite_log) if rewrite_log else "_改写进度:_"
+                    )
+
+                def _generation_state_cb(state: Dict[str, Any]) -> None:
+                    st.session_state.fa_generation_state = dict(state)
+                    _save_flow_a_draft("generate", None, status="generating")
+
+                _save_flow_a_draft("generate", None, status="generating")
+                status.update(label="1/5 检索 JD 库 + 提炼岗位核心要求（可恢复）...", state="running")
+                payload = run_async(flow_a.generate_resume_payload_resumable(
                     collected=st.session_state.fa_section_data or {},
                     industry=st.session_state.fa_industry,
                     position=st.session_state.fa_position,
+                    generation_state=st.session_state.get("fa_generation_state", {}),
+                    state_callback=_generation_state_cb,
+                    skeleton_callback=_skeleton_cb,
+                    derive_callback=_derive_cb,
+                    rewrite_callback=_rewrite_cb,
                 ))
+                st.session_state.fa_generation_state = payload.get("generation_state", st.session_state.get("fa_generation_state", {}))
 
-                status.update(label="2/4 组装简历结构...", state="running")
+                status.update(label="2/5 组装简历结构...", state="running")
                 skeleton = payload["skeleton"]
                 final_data = flow_a._normalize_resume_shape(payload["resume"])
                 st.session_state.fa_resume_data = final_data
@@ -1185,16 +1468,25 @@ def render_flow_a() -> None:
                 st.session_state.fa_resume_md = flow_a.to_markdown(final_data)
                 html_str = flow_a.to_html(final_data)
                 st.session_state.fa_resume_html = html_str
+                skeleton_placeholder.empty()
+                derive_placeholder.empty()
+                rewrite_status_placeholder.empty()
 
-                status.update(label="3/4 启动 PDF 后台渲染（不阻塞预览）...", state="running")
+                status.update(label="3/5 启动 PDF 后台渲染（不阻塞预览）...", state="running")
                 # PR6 (M12): PDF 改后台线程，先让用户看到 MD/HTML
                 _kick_off_background_pdf(html_str)
+                st.session_state.fa_generation_state["render"] = {"status": "done"}
+                _save_flow_a_draft("completed", None, status="completed")
 
-                status.update(label="4/4 完成！", state="complete")
+                status.update(label="4/5 完成！", state="complete")
                 st.success("简历生成成功！")
             except Exception as exc:
                 status.update(label="生成失败", state="error")
+                st.session_state.fa_last_error = str(exc)
+                _save_flow_a_draft("generate", None, status="failed", last_error=str(exc))
                 st.error(f"生成失败：{exc}")
+                if st.button("重试生成（保留已完成步骤）", key="fa_retry_generation"):
+                    st.rerun()
 
     if st.session_state.fa_resume_md:
         # PR6 (M12): 先把后台线程结果同步进 session_state，让 rerun 后按钮 enable
@@ -1248,7 +1540,7 @@ def render_flow_a() -> None:
                     details={"flow": "a", "position": st.session_state.fa_position},
                 )
                 st.success(f"已保存，resume_id={resume_id[:12]}...")
-        with dl4:
+        with dl5:
             if st.button("重新开始"):
                 reset_flow_a_state()
                 st.rerun()
@@ -2019,8 +2311,14 @@ def _render_flow_a_paste_panel(flow_a) -> None:
         )
     with c_skip:
         if st.button("跳过本节，直接生成"):
-            st.session_state.fa_section_skipped.extend(["experience", "projects"])
-            st.session_state.fa_section_index = 999
+            for key in ["experience", "projects"]:
+                if key not in st.session_state.fa_section_skipped:
+                    st.session_state.fa_section_skipped.append(key)
+                if key in st.session_state.fa_section_done:
+                    st.session_state.fa_section_done.remove(key)
+            st.session_state.fa_section_index = len(_flow_a_collect_sections())
+            _invalidate_flow_a_generation()
+            _save_flow_a_draft("generate", None)
             st.rerun()
 
     if parse_clicked:
@@ -2031,6 +2329,9 @@ def _render_flow_a_paste_panel(flow_a) -> None:
             st.session_state["fa_paste_parsed_projects"] = projects
             st.success("解析完成，可微调后确认。")
         except Exception as exc:
+            st.session_state.fa_last_error = str(exc)
+            current_section = _flow_a_collect_sections()[st.session_state.fa_section_index]["key"]
+            _save_flow_a_draft("collect", current_section, last_error=str(exc))
             st.error(f"解析失败：{exc}")
 
     parsed_exp = st.session_state.get("fa_paste_parsed_experience")
@@ -2062,21 +2363,27 @@ def _render_flow_a_paste_panel(flow_a) -> None:
         c_confirm, c_back, _ = st.columns([1, 1, 4])
         with c_confirm:
             if st.button("✅ 确认 → 跳过对话采集", type="primary"):
-                if edited_exp is not None:
-                    st.session_state.fa_section_data["experience"] = (
-                        edited_exp if isinstance(edited_exp, list) else [edited_exp]
-                    )
-                    st.session_state.fa_section_done.append("experience")
-                elif exp_text.strip():
-                    st.session_state.fa_section_done.append("experience")
-                if edited_proj is not None:
-                    st.session_state.fa_section_data["projects"] = (
-                        edited_proj if isinstance(edited_proj, list) else [edited_proj]
-                    )
-                    st.session_state.fa_section_done.append("projects")
-                elif proj_text.strip():
-                    st.session_state.fa_section_done.append("projects")
-                st.session_state.fa_section_index = 999
+                exp_data = edited_exp if isinstance(edited_exp, list) else ([edited_exp] if edited_exp else [])
+                proj_data = edited_proj if isinstance(edited_proj, list) else ([edited_proj] if edited_proj else [])
+
+                # 粘贴为空代表用户明确不提供该可选段，按 skipped 处理；有内容则必须先过本地 validator。
+                if exp_data:
+                    if not _apply_flow_a_section_extracted("experience", exp_data):
+                        st.rerun()
+                else:
+                    if "experience" not in st.session_state.fa_section_skipped:
+                        st.session_state.fa_section_skipped.append("experience")
+                    st.session_state.fa_section_index = max(st.session_state.fa_section_index, 1)
+
+                if proj_data:
+                    if not _apply_flow_a_section_extracted("projects", proj_data):
+                        st.rerun()
+                else:
+                    if "projects" not in st.session_state.fa_section_skipped:
+                        st.session_state.fa_section_skipped.append("projects")
+                    st.session_state.fa_section_index = len(_flow_a_collect_sections())
+                    _save_flow_a_draft("generate", None)
+
                 st.success("已应用粘贴结果，进入简历生成阶段。")
                 st.rerun()
         with c_back:

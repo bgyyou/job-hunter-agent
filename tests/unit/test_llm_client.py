@@ -21,7 +21,7 @@ from tools.llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleClient
 
 def _client(tmp_path, **overrides):
     kw = dict(
-        api_key="sk-FAKEKEY",
+        api_key="FAKEKEY",
         api_url="https://example.invalid/v1",
         model="agnes-2.0-flash",
         cache_dir=str(tmp_path / "llm_cache"),
@@ -222,6 +222,33 @@ def test_analyze_returns_cached_without_calling_api(tmp_path, monkeypatch):
 
     out = asyncio.run(c.analyze([LLMMessage(role="user", content="x")], use_cache=True))
     assert out.content == "from cache"
+
+
+# ----- retry behavior -----
+
+
+def test_analyze_retries_retryable_api_failure(tmp_path, monkeypatch):
+    c = _client(tmp_path)
+    c.retry_delays = (0, 0)
+    attempts = {"n": 0}
+
+    async def flaky_call(*args, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("API 调用失败 (500): upstream busy")
+        return {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 7},
+            "model": c.model,
+        }
+
+    monkeypatch.setattr(c, "_call_api", flaky_call)
+    monkeypatch.setattr(c, "_record_llm_call", lambda **kw: None)
+
+    out = asyncio.run(c.analyze([LLMMessage(role="user", content="x")], use_cache=False))
+
+    assert out.content == "ok"
+    assert attempts["n"] == 3
 
 
 # ----- LLMClient abstract instantiation guard -----

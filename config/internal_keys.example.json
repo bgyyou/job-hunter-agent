@@ -1,0 +1,7 @@
+{
+    "_comment": "Internal beta 模板 — 复制成 internal_keys.json 后填入真实 key。这个文件不进 git（见 .gitignore）。",
+    "_scope": "双击 .exe 或 streamlit run web_app.py 时自动检测此文件；存在则注入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL 到 os.environ，覆盖 .env 默认值。",
+    "api_key": "PUT-YOUR-REAL-KEY-HERE",
+    "base_url": "https://apihub.agnes-ai.com/v1",
+    "model": "agnes-2.0-flash"
+}

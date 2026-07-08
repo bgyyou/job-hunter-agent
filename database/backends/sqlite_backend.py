@@ -877,6 +877,127 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
+    # ==================== Flow A Drafts ====================
+
+    def _deserialize_flow_a_draft(self, row: sqlite3.Row) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        d = self._row_to_dict(row)
+        for field in ["section_data", "section_messages", "section_status", "generation_state"]:
+            d[field] = self._json_deserialize(d.get(field))
+            if d[field] == []:
+                d[field] = {}
+        return d
+
+    def upsert_flow_a_draft(self, data: Dict[str, Any]) -> str:
+        draft_id = data.get("id") or str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        status = data.get("status", "draft")
+        completed_at = data.get("completed_at")
+        if status == "completed" and not completed_at:
+            completed_at = now
+
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO flow_a_drafts
+                    (id, user_id, status, industry, function, position,
+                     current_step, current_section, section_data, section_messages,
+                     section_status, generation_state, last_error, created_at,
+                     updated_at, completed_at, deleted_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    user_id = COALESCE(excluded.user_id, flow_a_drafts.user_id),
+                    status = excluded.status,
+                    industry = COALESCE(excluded.industry, flow_a_drafts.industry),
+                    function = COALESCE(excluded.function, flow_a_drafts.function),
+                    position = COALESCE(excluded.position, flow_a_drafts.position),
+                    current_step = excluded.current_step,
+                    current_section = excluded.current_section,
+                    section_data = excluded.section_data,
+                    section_messages = excluded.section_messages,
+                    section_status = excluded.section_status,
+                    generation_state = excluded.generation_state,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at,
+                    completed_at = COALESCE(excluded.completed_at, flow_a_drafts.completed_at),
+                    deleted_at = excluded.deleted_at
+                """,
+                (
+                    draft_id,
+                    data.get("user_id", "default"),
+                    status,
+                    data.get("industry"),
+                    data.get("function"),
+                    data.get("position"),
+                    data.get("current_step", "target"),
+                    data.get("current_section"),
+                    self._json_serialize(data.get("section_data", {})),
+                    self._json_serialize(data.get("section_messages", {})),
+                    self._json_serialize(data.get("section_status", {})),
+                    self._json_serialize(data.get("generation_state", {})),
+                    data.get("last_error"),
+                    data.get("created_at", now),
+                    now,
+                    completed_at,
+                    data.get("deleted_at"),
+                ),
+            )
+            conn.commit()
+            return draft_id
+        finally:
+            conn.close()
+
+    def get_flow_a_draft(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM flow_a_drafts WHERE id = ? AND deleted_at IS NULL",
+                (draft_id,),
+            ).fetchone()
+            return self._deserialize_flow_a_draft(row)
+        finally:
+            conn.close()
+
+    def get_latest_flow_a_draft(self, user_id: str = "default",
+                                statuses: Optional[tuple[str, ...]] = None) -> Optional[Dict[str, Any]]:
+        statuses = statuses or ("draft", "generating", "failed")
+        placeholders = ",".join("?" for _ in statuses)
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                f"""
+                SELECT * FROM flow_a_drafts
+                WHERE user_id = ?
+                  AND deleted_at IS NULL
+                  AND status IN ({placeholders})
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (user_id, *statuses),
+            ).fetchone()
+            return self._deserialize_flow_a_draft(row)
+        finally:
+            conn.close()
+
+    def abandon_flow_a_draft(self, draft_id: str) -> None:
+        conn = self._get_conn()
+        try:
+            now = datetime.now().isoformat()
+            conn.execute(
+                """
+                UPDATE flow_a_drafts
+                SET status = 'abandoned', deleted_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, draft_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     # ==================== Audit Logs ====================
 
     def insert_audit_log(self, data: Dict) -> int:
