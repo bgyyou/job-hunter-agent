@@ -394,6 +394,56 @@ class OpenAICompatibleClient(LLMClient):
                 if delay > 0:
                     await asyncio.sleep(delay)
 
+    # v2.1 P2-3: thinking model 兜底重试参数
+    REASONING_RETRY_MULTIPLIER = 4
+    REASONING_RETRY_FLOOR = 4000
+    REASONING_RETRY_CEILING = 8000
+
+    async def _retry_if_reasoning_starved(
+        self,
+        response: Dict,
+        api_messages: List[Dict],
+        max_tokens: int,
+        temperature: float,
+    ) -> Dict:
+        """thinking model reasoning 吃光预算导致 content 为空时，带 headroom 重试一次。
+
+        只在 content 空 + finish_reason=length + 确有 reasoning_content 时触发，
+        避免误伤"模型本就该返回空"的正常场景。重试仍失败则原样返回（上层自有兜底）。
+        """
+        try:
+            choice = response["choices"][0]
+            message = choice.get("message", {}) or {}
+            content = (message.get("content") or "").strip()
+            reasoning = message.get("reasoning_content") or ""
+            finish = choice.get("finish_reason")
+        except (KeyError, IndexError, TypeError):
+            return response
+
+        if content or finish != "length" or not reasoning:
+            return response
+
+        bigger = min(
+            max(max_tokens * self.REASONING_RETRY_MULTIPLIER, self.REASONING_RETRY_FLOOR),
+            self.REASONING_RETRY_CEILING,
+        )
+        if bigger <= max_tokens:
+            return response
+
+        self.logger.warning(
+            f"LLM analyze: thinking model reasoning starved content "
+            f"(finish=length, reasoning={len(reasoning)} chars, max_tokens={max_tokens}); "
+            f"retrying once with max_tokens={bigger}"
+        )
+        return await self._call_with_retries(
+            lambda: self._call_api(
+                messages=api_messages,
+                max_tokens=bigger,
+                temperature=temperature,
+            ),
+            operation="analyze_reasoning_retry",
+        )
+
     async def analyze(
         self,
         messages: List[LLMMessage],
@@ -471,12 +521,23 @@ class OpenAICompatibleClient(LLMClient):
                     operation="analyze",
                 )
 
-                # 构建 LLMResponse
+                # v2.1 P2-3: thinking model 兜底（root fix，覆盖所有非流式调用点）。
+                # agnes-2.0-flash 这类 thinking model 把 reasoning_content 也算进 max_tokens
+                # 预算；reasoning 吃光预算后 content 直接为空、finish_reason=length（answer 一个
+                # 字都没输出）。此前 M12 只修了流式 chat（analyze_stream），非流式 analyze()
+                # 漏了 —— 导致 Flow A 的 extract_section / extract_from_paste / derive 抽到 0 条。
+                response = await self._retry_if_reasoning_starved(
+                    response, api_messages, max_tokens, temperature,
+                )
+
+                message = response["choices"][0]["message"]
+                # 构建 LLMResponse；透传 reasoning，和 analyze_stream 对齐，便于观测
                 result = LLMResponse(
-                    content=response["choices"][0]["message"]["content"],
+                    content=message.get("content") or "",
                     model=response.get("model", self.model),
                     tokens_used=response["usage"]["total_tokens"],
-                    finish_reason=response["choices"][0]["finish_reason"]
+                    finish_reason=response["choices"][0]["finish_reason"],
+                    reasoning=message.get("reasoning_content") or "",
                 )
 
             # 记录调用
