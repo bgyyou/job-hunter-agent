@@ -1301,3 +1301,23 @@ CREATE TABLE audit_logs (
 - 不引入后台队列 / Celery；本轮保持 Streamlit 同步执行，但每个阶段可恢复。
 - 不做多草稿列表 UI；只恢复最近一个未完成草稿。
 - 不把 LLM 完全移出采集链路；LLM 仍负责提问和抽取，流程推进由本地状态机兜底。
+
+## [P2-3] Flow A 抽取抽到 0 条根治：thinking model reasoning 吃光非流式预算（2026-07-10）
+
+### 动机
+手动跑 Flow A 完整流程时发现：粘贴模式和逐段对话模式采集经历/项目都抽到 **0 条**，最终简历生成空壳。真值排查（用存下的 30 轮真实对话直接复现 `_call_api`）拿到铁证：`agnes-2.0-flash` 是 thinking model，把 `reasoning_content` 也算进 `max_tokens` 预算；`extract_section`(1000) / `extract_from_paste`(1200) 的预算被 reasoning 全部吃光（`reasoning_tokens=1000, text_tokens=0`），`content` 返回空串、`finish_reason=length`，`_parse_json_loose('')` → None → 空结构。这与 M12 修的流式 chat 是**同一个根因**，但 M12 只修了 `analyze_stream`，非流式 `analyze()` 漏了。
+
+### 改动清单
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| LLM 客户端兜底 | `analyze()` 新增 `_retry_if_reasoning_starved`：`content` 空 + `finish_reason=length` + 确有 `reasoning_content` 时，带 headroom（×4，下限 4000 上限 8000）自动重试一次并 loud log；同时透传 `reasoning_content` 到 `LLMResponse.reasoning`，和 `analyze_stream` 对齐 | `tools/llm.py` |
+| 抽取热路径 | `extract_section` / `extract_from_paste` 的 `max_tokens` 1000/1200 → 4096（实测 reasoning 吃 ~2.5k，需为 JSON 输出留够预算，避免每次都触发兜底重试） | `agents/resume_flow_a.py` |
+| 测试 | 新增 3 个单测：reasoning 吃光时触发重试且预算变大 / content 正常时不重试 / 合法空响应不误伤 | `tests/unit/test_llm_client.py` |
+
+### 验证
+- 真值复现：用存下的 30 轮 experience 对话跑 `extract_section` → 修复前 0 条，修复后正确抽出 2 段经历；`extract_from_paste` 同样从 0 → 2 段。
+- `pytest tests/ -q` → **241 passed in ~30s**。
+
+### 显式不做
+- 不改 provider（保持 provider-neutral）；不硬编码 agnes 专属的 reasoning 关闭参数。兜底靠"检测截断 + headroom 重试"，对任意 OpenAI 兼容 thinking model 通用。
+- 不逐个抬所有 11 处 `max_tokens`；只右调抽取热路径，其余小预算调用由 client 层兜底网覆盖。
