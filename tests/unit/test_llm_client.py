@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleClient
+from tools.llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleClient, StreamChunk
 
 
 def _client(tmp_path, **overrides):
@@ -256,3 +256,111 @@ def test_analyze_retries_retryable_api_failure(tmp_path, monkeypatch):
 def test_llmclient_is_abstract():
     with pytest.raises(TypeError):
         LLMClient(model="m")  # type: ignore[abstract]
+
+
+# ----- v2.1 P2-2: thinking model reasoning_content 解析 -----
+
+def test_stream_chunk_default_has_optional_reasoning():
+    """StreamChunk 默认 reasoning_content=None，向后兼容老调用方。"""
+    chunk = StreamChunk(content="hello")
+    assert chunk.content == "hello"
+    assert chunk.reasoning_content is None
+    assert chunk.is_complete is False
+
+    # 显式传空串 reasoning 也 OK（None 或 '' 都被视为"无思考过程"）
+    chunk2 = StreamChunk(content="x", reasoning_content="")
+    assert chunk2.reasoning_content == ""
+
+
+def test_analyze_stream_yields_reasoning_and_content_separately(tmp_path, monkeypatch):
+    """thinking model 的 SSE 流同时含 content 和 reasoning_content，
+    analyze_stream 必须分别透传到 StreamChunk，不能丢弃 reasoning。"""
+    c = _client(tmp_path)
+
+    async def fake_stream(messages, max_tokens, temperature):
+        # 模拟 thinking model 的 chunk 序列：
+        # 先吐 reasoning，然后吐 content，最后 [DONE]
+        yield {"reasoning_content": "用户问开始采集"}
+        yield {"reasoning_content": "工作经历"}
+        yield {"content": "好的，"}
+        yield {"reasoning_content": "先问公司名", "content": "请告诉"}
+        yield {"content": "我您最近一份工作的公司名？"}
+        # content 已结束但 reasoning 还会继续（截断情形）
+        yield {"reasoning_content": "考虑是否要给个示例"}
+
+    monkeypatch.setattr(c, "_call_api_stream", fake_stream)
+    monkeypatch.setattr(c, "record_call", lambda *a, **kw: None)
+
+    chunks = asyncio.run(_drain_stream(c.analyze_stream(
+        [LLMMessage(role="user", content="开始采集")],
+        max_tokens=2048,
+        temperature=0.6,
+    )))
+
+    # 收齐所有 chunk（含 is_complete=True 的 sentinel）
+    contents = [ch.content for ch in chunks if ch.content]
+    reasonings = [ch.reasoning_content for ch in chunks if ch.reasoning_content]
+    assert "".join(contents) == "好的，请告诉我您最近一份工作的公司名？"
+    assert "".join(reasonings) == "用户问开始采集工作经历先问公司名考虑是否要给个示例"
+
+    # 最后一定有 is_complete=True 的 chunk
+    assert chunks[-1].is_complete is True
+
+
+def test_analyze_stream_skips_empty_chunks_without_crashing(tmp_path, monkeypatch):
+    """上游偶尔会发 delta 里 content/reasoning_content 都为空（如 role-only chunk），
+    这种 chunk 应该被安静跳过，不应该 yield 出空 StreamChunk。"""
+    c = _client(tmp_path)
+
+    async def fake_stream(messages, max_tokens, temperature):
+        yield {"role": "assistant", "content": "", "reasoning_content": ""}
+        yield {"content": "实际内容"}
+        yield {"reasoning_content": ""}  # 空字符串 reasoning
+        yield {}
+
+    monkeypatch.setattr(c, "_call_api_stream", fake_stream)
+    monkeypatch.setattr(c, "record_call", lambda *a, **kw: None)
+
+    chunks = asyncio.run(_drain_stream(c.analyze_stream(
+        [LLMMessage(role="user", content="x")], max_tokens=2048, temperature=0.6,
+    )))
+
+    # 仅收到有 content 的 chunk + 收尾 sentinel
+    real_chunks = [ch for ch in chunks if not ch.is_complete]
+    assert len(real_chunks) == 1
+    assert real_chunks[0].content == "实际内容"
+    assert real_chunks[0].reasoning_content is None  # 空串被规范化为 None
+
+
+def test_analyze_stream_reasoning_only_then_content_truncated(tmp_path, monkeypatch):
+    """thinking model 的常见故障模式：reasoning 吃光 token，content 被截断为空。
+    analyze_stream 不应该 raise（reasoning 已成功消费）。"""
+    c = _client(tmp_path)
+
+    async def fake_stream(messages, max_tokens, temperature):
+        for i in range(50):
+            yield {"reasoning_content": f"思考第 {i} 步 "}
+        # 最后没有任何 content — 模拟 reasoning 截断情形
+        return
+
+    monkeypatch.setattr(c, "_call_api_stream", fake_stream)
+    monkeypatch.setattr(c, "record_call", lambda *a, **kw: None)
+
+    chunks = asyncio.run(_drain_stream(c.analyze_stream(
+        [LLMMessage(role="user", content="x")], max_tokens=600, temperature=0.6,
+    )))
+
+    contents = [ch.content for ch in chunks if ch.content]
+    reasonings = [ch.reasoning_content for ch in chunks if ch.reasoning_content]
+    assert contents == [], "reasoning 截断情形下 content 应为空，调用方据此给提示"
+    assert len(reasonings) == 50
+    # 收尾 sentinel 仍然存在
+    assert chunks[-1].is_complete is True
+
+
+async def _drain_stream(async_gen):
+    """把 async generator 跑完收集到 list。"""
+    out = []
+    async for ch in async_gen:
+        out.append(ch)
+    return out

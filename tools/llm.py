@@ -59,8 +59,16 @@ class LLMResponse:
 
 @dataclass
 class StreamChunk:
-    """流式响应块"""
+    """流式响应块。
+
+    Attributes:
+        content: 最终输出内容（给用户看的）
+        reasoning_content: 思考过程 / chain-of-thought（thinking model 才有）
+        is_complete: 流是否结束
+        metadata: 额外元信息（tokens_accumulated 等）
+    """
     content: str
+    reasoning_content: Optional[str] = None
     is_complete: bool = False
     metadata: Optional[Dict[str, Any]] = None
 
@@ -526,6 +534,7 @@ class OpenAICompatibleClient(LLMClient):
         api_messages = self._convert_messages(messages, system_prompt)
 
         total_content = ""
+        total_reasoning = ""
         tokens_used = 0
         delays = tuple(getattr(self, "retry_delays", (1.2, 2.0, 3.0)))
         attempt = 0
@@ -538,25 +547,38 @@ class OpenAICompatibleClient(LLMClient):
                     max_tokens=max_tokens,
                     temperature=temperature
                 ):
-                    content = chunk.get("content", "")
-                    if content:
-                        yielded_any = True
-                        total_content += content
-                        tokens_used = self.estimate_tokens(total_content)
+                    content = chunk.get("content", "") or ""
+                    reasoning = chunk.get("reasoning_content", None)
+                    # 兼容上游把空字符串 reasoning_content 也吐出来 — 当 None 处理
+                    if reasoning == "":
+                        reasoning = None
 
-                        yield StreamChunk(
-                            content=content,
-                            is_complete=False,
-                            metadata={"tokens_accumulated": tokens_used}
-                        )
+                    # reasoning 与 content 至少要有一个，否则这个 chunk 没价值
+                    if not content and reasoning is None:
+                        continue
+
+                    yielded_any = True
+                    if content:
+                        total_content += content
+                    if reasoning:
+                        total_reasoning += reasoning
+                    tokens_used = self.estimate_tokens(total_content)
+
+                    yield StreamChunk(
+                        content=content,
+                        reasoning_content=reasoning,
+                        is_complete=False,
+                        metadata={"tokens_accumulated": tokens_used},
+                    )
 
                 # 记录调用
                 self.record_call(tokens_used)
 
                 yield StreamChunk(
                     content="",
+                    reasoning_content=None,
                     is_complete=True,
-                    metadata={"total_tokens": tokens_used}
+                    metadata={"total_tokens": tokens_used},
                 )
                 return
 
@@ -762,7 +784,13 @@ class OpenAICompatibleClient(LLMClient):
                             data = json.loads(line)
                             if "choices" in data and data["choices"]:
                                 delta = data["choices"][0].get("delta", {})
-                                if "content" in delta:
+                                # v2.1 P2-2: 同时透传 content 与 reasoning_content。
+                                # thinking model (Agnes 2.0 flash / DeepSeek-R1 / o1 系列)
+                                # 把思考过程放在 reasoning_content，最终答案放 content。
+                                # 之前只解析 content 导致 thinking model 在 max_tokens 受限时
+                                # reasoning 耗光预算 → 最终 content 被截断 / 为空 → UI 上
+                                # 表现为"agent 不说话了"。
+                                if "content" in delta or "reasoning_content" in delta:
                                     yield delta
                         except json.JSONDecodeError:
                             continue
