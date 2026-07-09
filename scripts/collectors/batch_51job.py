@@ -12,13 +12,13 @@
     # 冒烟：单关键词 10 条
     python scripts/collectors/batch_51job.py --keyword "AI产品经理" --per-keyword 10
 
-    # 正式：内置 30 个关键词，每词 20 条 ≈ 600 条
+    # 正式：内置 153 个关键词，每词 20 条 ≈ 3000 条/城市
     python scripts/collectors/batch_51job.py --default-keywords --per-keyword 20
 
     # 指定城市
     python scripts/collectors/batch_51job.py --keyword "Java工程师" --city "上海" --per-keyword 20
 
-    # N10 中等放量：100 关键词 × 5 大城市 × 20 条 ≈ 10000 JD，分批冷却
+    # N11 中等放量：153 关键词 × 5 大城市 × 20 条 ≈ 15000 JD，分批冷却
     python scripts/collectors/batch_51job.py --default-keywords --per-keyword 20 \
         --cities "深圳,北京,上海,广州,杭州" \
         --rest-every 20 --rest-seconds 60
@@ -46,7 +46,7 @@ from services.jd_library_service import is_garbage_jd
 from tools.scraper.fiftyonejob_scraper import FiftyOneJobScraper
 
 
-# 内置 100 个中端 + 长尾关键词（N10 扩容：30 核心 + 70 长尾）
+# 内置 153 个中端 + 长尾关键词（N11 扩容：30 核心 + 70 长尾 + 53 长尾行业）
 DEFAULT_KEYWORDS = [
     # AI / 数据（6）
     "AI产品经理", "算法工程师", "机器学习工程师", "数据科学家",
@@ -91,6 +91,31 @@ DEFAULT_KEYWORDS = [
     "课程顾问", "培训师", "医药代表", "临床监察员", "CRC",
     # 海外 / 跨境（6）
     "跨境电商运营", "亚马逊运营", "Shopee运营", "海外市场", "海外运营", "海外技术支持",
+] + [
+    # 制造业 / 工厂（6）
+    "工艺工程师", "ME工程师", "PE工程师", "QE工程师", "设备工程师", "电气工程师",
+    # 房地产 / 建筑（4）
+    "土建工程师", "成本工程师", "造价工程师", "项目经理-地产",
+    # 医药 / 生物（6）
+    "临床运营", "医学经理", "药物警戒", "CRA", "CTA", "生物统计师",
+    # 咨询 / 顾问（4）
+    "管理咨询顾问", "战略顾问", "财务顾问", "猎头顾问",
+    # 客服 / 售后 / 售前（5）
+    "客服经理", "售后工程师", "售前工程师", "技术支持", "技术顾问",
+    # 物流 / 供应链（5）
+    "物流经理", "仓储经理", "采购工程师", "PMC", "报关员",
+    # 金融科技（4）
+    "支付产品", "风控模型", "Java后端-金融", "理财顾问",
+    # 行政 / HR（5）
+    "HRM", "HRD", "招聘经理", "培训经理", "薪酬绩效",
+    # 法务合规（3）
+    "法务经理", "合规经理", "专利工程师",
+    # 自由职业 / 远程 / 兼职（5）
+    "远程开发", "兼职工程师", "自由设计师", "远程运维", "远程产品经理",
+    # 电力 / 新能源（3）
+    "光伏工程师", "储能工程师", "电气设计工程师",
+    # 汽车 / 出行（3）
+    "汽车电子", "BMS工程师", "嵌入式软件工程师",
 ]
 
 DEFAULT_CITIES = ["深圳", "北京", "上海", "广州", "杭州"]
@@ -279,7 +304,7 @@ def main():
     )
     parser.add_argument("--keyword", help="单关键词（冒烟用）")
     parser.add_argument("--keywords-file", help="多关键词文件，每行一个")
-    parser.add_argument("--default-keywords", action="store_true", help="用内置 100 个中文关键词")
+    parser.add_argument("--default-keywords", action="store_true", help="用内置 153 个中文关键词")
     parser.add_argument("--per-keyword", type=int, default=20, help="每词抓多少条（默认 20）")
     parser.add_argument("--city", help="单城市，如 上海 / 深圳（默认全国），与 --cities 互斥")
     parser.add_argument(
