@@ -251,6 +251,98 @@ def test_analyze_retries_retryable_api_failure(tmp_path, monkeypatch):
     assert attempts["n"] == 3
 
 
+# ----- v2.1 P2-3: thinking model reasoning 吃光预算的非流式兜底 -----
+
+def test_analyze_retries_when_reasoning_starves_content(tmp_path, monkeypatch):
+    """thinking model reasoning 吃光 max_tokens → content 空 + finish=length。
+    analyze() 必须带 headroom 自动重试一次，并透传 reasoning。"""
+    c = _client(tmp_path)
+    c.retry_delays = (0, 0)
+    calls = []
+
+    async def fake_call(messages, max_tokens, temperature):
+        calls.append(max_tokens)
+        if len(calls) == 1:
+            # 第一次：预算被 reasoning 吃光，content 空，被 length 截断
+            return {
+                "choices": [{
+                    "message": {"content": "", "reasoning_content": "想" * 500},
+                    "finish_reason": "length",
+                }],
+                "usage": {"total_tokens": 1000},
+                "model": c.model,
+            }
+        # 重试（更大预算）：正常吐出答案
+        return {
+            "choices": [{
+                "message": {"content": '{"ok": true}', "reasoning_content": "想" * 500},
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 2500},
+            "model": c.model,
+        }
+
+    monkeypatch.setattr(c, "_call_api", fake_call)
+    monkeypatch.setattr(c, "_record_llm_call", lambda **kw: None)
+
+    out = asyncio.run(c.analyze([LLMMessage(role="user", content="x")], max_tokens=1000, use_cache=False))
+
+    assert out.content == '{"ok": true}'
+    assert out.reasoning  # reasoning 被透传
+    assert len(calls) == 2  # 触发了一次兜底重试
+    assert calls[1] > calls[0]  # 重试预算更大
+
+
+def test_analyze_no_retry_when_content_present(tmp_path, monkeypatch):
+    """content 正常返回时不应触发兜底重试（避免误伤 + 额外成本）。"""
+    c = _client(tmp_path)
+    calls = []
+
+    async def fake_call(messages, max_tokens, temperature):
+        calls.append(max_tokens)
+        return {
+            "choices": [{
+                "message": {"content": "hello", "reasoning_content": "想"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 10},
+            "model": c.model,
+        }
+
+    monkeypatch.setattr(c, "_call_api", fake_call)
+    monkeypatch.setattr(c, "_record_llm_call", lambda **kw: None)
+
+    out = asyncio.run(c.analyze([LLMMessage(role="user", content="x")], max_tokens=1000, use_cache=False))
+
+    assert out.content == "hello"
+    assert len(calls) == 1  # 没有重试
+
+
+def test_analyze_no_retry_on_legit_empty_without_reasoning(tmp_path, monkeypatch):
+    """content 空但 finish=stop 且无 reasoning → 是正常空响应，不重试。"""
+    c = _client(tmp_path)
+    calls = []
+
+    async def fake_call(messages, max_tokens, temperature):
+        calls.append(max_tokens)
+        return {
+            "choices": [{
+                "message": {"content": "", "reasoning_content": ""},
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 5},
+            "model": c.model,
+        }
+
+    monkeypatch.setattr(c, "_call_api", fake_call)
+    monkeypatch.setattr(c, "_record_llm_call", lambda **kw: None)
+
+    out = asyncio.run(c.analyze([LLMMessage(role="user", content="x")], max_tokens=1000, use_cache=False))
+
+    assert out.content == ""
+    assert len(calls) == 1  # 不重试
+
+
 # ----- LLMClient abstract instantiation guard -----
 
 def test_llmclient_is_abstract():

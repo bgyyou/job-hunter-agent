@@ -362,7 +362,7 @@ class ResumeFlowA:
 
         try:
             response: LLMResponse = await self.llm_client.analyze(
-                messages=llm_messages, max_tokens=1000, temperature=0.2,
+                messages=llm_messages, max_tokens=4096, temperature=0.2,
             )
             parsed = self._parse_json_loose(response.content)
         except Exception as exc:
@@ -415,7 +415,7 @@ class ResumeFlowA:
             parsed = self._parse_json_loose(
                 (
                     await self.llm_client.analyze(
-                        messages=llm_messages, max_tokens=1200, temperature=0.2,
+                        messages=llm_messages, max_tokens=4096, temperature=0.2,
                     )
                 ).content
             )
