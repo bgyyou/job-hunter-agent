@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Flow A: 0→1 对话式简历生成 Agent
+Flow A: 0→1 简历生成 Agent
 
 流程：
-  行业选择 → 岗位选择 → section 状态机分段采集 → 派生 summary/能力 → RAG 骨架 → 渲染
+  行业选择 → 岗位选择 → 各段粘贴文本一次性抽取 → 派生 summary/能力 → RAG 骨架 → 渲染
 
-按 SECTIONS 顺序采集 8 段（6 个 chat 采集 + 2 个 LLM 派生），每段独立完成。
+用户按 section 粘贴原始文本，每段调一次 LLM 结构化抽取；summary/core_competencies 由已采集数据派生。
 """
 from __future__ import annotations
 
@@ -22,40 +22,6 @@ from tools.llm import LLMMessage, LLMResponse
 # ----------------------------------------------------------------
 # Section 状态机 — 分段采集，每段聚焦、独立小结
 # ----------------------------------------------------------------
-
-_SECTION_CHAT_SYSTEM = """你是简历助手，正在采集**{section_name}**这一段信息。专注本段，不要跑题问其他段。
-
-【本段任务】
-{section_task}
-
-【本段必填项】
-{section_must_have}
-
-【对话规则】
-1. 每轮只问 1-2 个问题，不要一次性列出长清单
-2. 用户说"跳过""不适用""没有"算回答了，不要纠缠
-3. 该段所有必填项都问到（用户答了/明确跳过）后，在回复末尾加 [SECTION_DONE]
-4. 用户明确说"这段全跳过"时，回复一句确认后输出 [SECTION_DONE,SKIP]
-5. 你最多可以问 {max_rounds} 轮；接近上限时果断收尾
-6. 已采集段里有多个项目/经历时，如果用户已说过角色相同，后续条目不要重复问角色
-
-【已采集的其他段（仅供参考，避免重复问）】
-{collected_summary}
-
-【目标岗位上下文】
-行业：{industry}    岗位：{position}"""
-
-_SECTION_EXTRACT_SYSTEM = """你是简历数据提取专家。从对话历史中只提取**{section_name}**这一段的结构化数据。
-
-【输出 JSON 字段】
-{section_schema}
-
-要求：
-1. 只提取用户明确说过的，不要编造；缺失字段留空字符串或空列表
-2. 不要把其他段的内容（如工作经历）塞进本段
-3. 用户口语描述保留原意，仅做轻微润色
-
-只返回 JSON，不要其他文字。"""
 
 _DERIVE_SYSTEM = """你是资深简历优化专家。基于已采集的简历数据，派生**个人总结**和**核心能力**两个字段。
 
@@ -133,9 +99,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "个人信息",
         "skippable": False,
         "derived": False,
-        "max_rounds": 3,
-        "task": "采集姓名、手机、邮箱、微信（可选）、LinkedIn（可选）。1-2 轮问完。",
-        "must_have": "姓名（必填）；手机/邮箱至少一项；微信/LinkedIn 可选",
         "schema": '{"name": "", "contact": {"phone": "", "email": "", "wechat": "", "linkedin": ""}}',
     },
     {
@@ -143,9 +106,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "教育经历",
         "skippable": False,
         "derived": False,
-        "max_rounds": 4,
-        "task": "先问'你有几段教育经历？'得到 N，再逐个问学校/专业/学历/起止年份。",
-        "must_have": "至少 1 段教育经历，包含学校 + 专业 + 学历",
         "schema": '[{"school": "", "degree": "", "major": "", "start_year": "", "end_year": ""}]',
     },
     {
@@ -153,14 +113,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "工作经历",
         "skippable": True,
         "derived": False,
-        "max_rounds": 8,
-        "task": (
-            "先问'你有几段相关工作/实习经历想写进简历？'得到 N。"
-            "再按顺序逐个深挖：公司、职位、起止、STAR 量化成果。"
-            "**每段经历至少问 1 轮**，不能挖完第 1 段就跳过其他。"
-            "用户答'应届无经验/没有'回复一句确认后输出 [SECTION_DONE,SKIP]。"
-        ),
-        "must_have": "每段经历：公司 + 职位 + 起止 + 至少 1 个量化成果",
         "schema": '[{"title": "", "company": "", "duration": "", "achievements": [""]}]',
     },
     {
@@ -168,13 +120,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "项目经历",
         "skippable": True,
         "derived": False,
-        "max_rounds": 8,
-        "task": (
-            "先问'你有几个想重点突出的项目？'得到 N。"
-            "再按顺序逐个问：项目名、角色、技术栈、做了什么、量化成果。"
-            "**每个项目至少问 1 轮**。N=0 / 用户说没有 → [SECTION_DONE,SKIP]。"
-        ),
-        "must_have": "每个项目：项目名 + 你的角色 + 技术栈 + 主要成果",
         "schema": '[{"name": "", "role": "", "description": "", "tech_stack": [""], "achievements": [""]}]',
     },
     {
@@ -182,9 +127,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "技能",
         "skippable": False,
         "derived": False,
-        "max_rounds": 2,
-        "task": "采集技术栈（编程语言、框架、工具）+ 关键软技能。1 轮问完。",
-        "must_have": "至少 3-5 项技能",
         "schema": '{"skills": [""]}',
     },
     {
@@ -192,9 +134,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "语言能力",
         "skippable": True,
         "derived": False,
-        "max_rounds": 2,
-        "task": "采集语言能力。例：中文（母语）、英语（CET-6 / IELTS 7.0 / 流利）。1 轮问完，没有就 SKIP。",
-        "must_have": "无（可整段跳过）",
         "schema": '{"languages": [{"name": "", "level": ""}]}',
     },
     {
@@ -202,9 +141,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "个人总结",
         "skippable": False,
         "derived": True,
-        "max_rounds": 0,
-        "task": None,
-        "must_have": None,
         "schema": None,
     },
     {
@@ -212,9 +148,6 @@ SECTIONS: List[Dict[str, Any]] = [
         "name": "核心能力",
         "skippable": False,
         "derived": True,
-        "max_rounds": 0,
-        "task": None,
-        "must_have": None,
         "schema": None,
     },
 ]
@@ -239,150 +172,17 @@ class ResumeFlowA:
         self.db = db
 
     # ----------------------------------------------------------------
-    # Step 1: section 状态机对话与提取
+    # Step 1: 粘贴文本 → 结构化抽取
     # ----------------------------------------------------------------
-
-    def _build_chat_messages(
-        self,
-        section_key: str,
-        messages: List[Dict[str, str]],
-        collected_so_far: Dict[str, Any],
-        industry: str,
-        position: str,
-    ) -> tuple[List[LLMMessage], bool, int]:
-        """构建 chat section 的 LLM messages + force_close flag + rounds_used。"""
-        section = _get_section(section_key)
-        if not section:
-            raise ValueError(f"Unknown section_key: {section_key}")
-        if section.get("derived"):
-            raise ValueError(f"Section {section_key} is derived, not chat-collectable")
-
-        rounds_used = sum(1 for m in messages if m["role"] == "assistant")
-        max_rounds = section["max_rounds"]
-        force_close = rounds_used >= max_rounds
-
-        collected_summary_lines = []
-        for k, v in (collected_so_far or {}).items():
-            if v and k != section_key:
-                if k == "projects" and isinstance(v, list):
-                    roles = []
-                    for p in v:
-                        r = p.get("role") if isinstance(p, dict) else None
-                        if r:
-                            roles.append(r)
-                    if roles:
-                        collected_summary_lines.append(f"- projects: 已采集 {len(v)} 个项目，角色：{', '.join(roles)}（如果后续项目角色相同，不要重复确认）")
-                        continue
-                preview = json.dumps(v, ensure_ascii=False)[:400]
-                collected_summary_lines.append(f"- {k}: {preview}")
-        collected_summary = "\n".join(collected_summary_lines) if collected_summary_lines else "（暂无）"
-
-        system_text = _SECTION_CHAT_SYSTEM.format(
-            section_name=section["name"],
-            section_task=section["task"],
-            section_must_have=section["must_have"],
-            max_rounds=max_rounds,
-            collected_summary=collected_summary,
-            industry=industry,
-            position=position,
-        )
-        if force_close:
-            system_text += "\n\n【接近上限】本段轮次已较多，请优先围绕缺失信息收敛；只有用户信息足够或明确不补充时才输出 [SECTION_DONE]。"
-
-        llm_messages = [LLMMessage(role="system", content=system_text)]
-        for m in messages:
-            llm_messages.append(LLMMessage(role=m["role"], content=m["content"]))
-        return llm_messages, force_close, rounds_used
-
-    @staticmethod
-    def _parse_chat_reply(content: str, force_close: bool, rounds_used: int) -> Dict[str, Any]:
-        """把 LLM 完整回复解析成 reply dict。"""
-        content = content.strip()
-        if "[SECTION_DONE,SKIP]" in content or "[SECTION_DONE, SKIP]" in content:
-            return {
-                "type": "section_skipped",
-                "message": content.replace("[SECTION_DONE,SKIP]", "").replace("[SECTION_DONE, SKIP]", "").strip(),
-                "rounds_used": rounds_used,
-            }
-        if "[SECTION_DONE]" in content:
-            return {
-                "type": "section_done",
-                "message": content.replace("[SECTION_DONE]", "").strip(),
-                "rounds_used": rounds_used,
-            }
-        return {"type": "question", "message": content, "rounds_used": rounds_used}
-
-    async def chat_section(
-        self,
-        section_key: str,
-        messages: List[Dict[str, str]],
-        collected_so_far: Dict[str, Any],
-        industry: str,
-        position: str,
-    ) -> Dict[str, Any]:
-        """在单个 section 内多轮对话。LLM 判断段是否问完。
-
-        Returns:
-            {"type": "question"|"section_done"|"section_skipped",
-             "message": str, "rounds_used": int}
-        """
-        llm_messages, force_close, rounds_used = self._build_chat_messages(
-            section_key, messages, collected_so_far, industry, position,
-        )
-        response: LLMResponse = await self.llm_client.analyze(
-            messages=llm_messages, max_tokens=600, temperature=0.6,
-        )
-        return self._parse_chat_reply(response.content, force_close, rounds_used)
-
-    async def extract_section(
-        self,
-        section_key: str,
-        messages: List[Dict[str, str]],
-    ) -> Any:
-        """只提取当前 section 的结构化数据。"""
-        section = _get_section(section_key)
-        if not section or section.get("derived"):
-            raise ValueError(f"Cannot extract section {section_key}")
-
-        convo_text = "\n".join(
-            f"{'👤' if m['role'] == 'user' else '🤖'}: {m['content']}"
-            for m in messages
-        )
-        system_text = _SECTION_EXTRACT_SYSTEM.format(
-            section_name=section["name"],
-            section_schema=section["schema"],
-        )
-        llm_messages = [
-            LLMMessage(role="system", content=system_text),
-            LLMMessage(
-                role="user",
-                content=f"从以下对话中提取 {section['name']} 数据：\n\n{convo_text}",
-            ),
-        ]
-
-        try:
-            response: LLMResponse = await self.llm_client.analyze(
-                messages=llm_messages, max_tokens=4096, temperature=0.2,
-            )
-            parsed = self._parse_json_loose(response.content)
-        except Exception as exc:
-            logger.warning(f"Flow A extract_section({section_key}) failed: {exc}")
-            parsed = None
-
-        if parsed is None:
-            # 兜底：返回空结构
-            return self._empty_section_value(section_key)
-        return self._strip_placeholders(parsed)
 
     async def extract_from_paste(
         self,
         section_key: str,
         raw_text: str,
     ) -> Any:
-        """PR5 (M12): 用户粘贴完整文本 → 一次性结构化抽取。
+        """用户粘贴完整文本 → 一次性结构化抽取。
 
-        对比原 chat_section + extract_section 的 16 轮聊天（experience+projects），
-        这里只调一次 LLM；约束用 SECTIONS[section].schema，输出回填到 fa_section_data。
+        每段只调一次 LLM；约束用 SECTIONS[section].schema，输出回填到 fa_section_data。
         """
         section = _get_section(section_key)
         if not section:

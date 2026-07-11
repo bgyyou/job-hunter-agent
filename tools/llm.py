@@ -525,7 +525,7 @@ class OpenAICompatibleClient(LLMClient):
                 # agnes-2.0-flash 这类 thinking model 把 reasoning_content 也算进 max_tokens
                 # 预算；reasoning 吃光预算后 content 直接为空、finish_reason=length（answer 一个
                 # 字都没输出）。此前 M12 只修了流式 chat（analyze_stream），非流式 analyze()
-                # 漏了 —— 导致 Flow A 的 extract_section / extract_from_paste / derive 抽到 0 条。
+                # 漏了 —— 导致 Flow A 的 extract_from_paste / derive 抽到 0 条。
                 response = await self._retry_if_reasoning_starved(
                     response, api_messages, max_tokens, temperature,
                 )
