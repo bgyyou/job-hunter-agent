@@ -426,14 +426,25 @@ def test_analyze_stream_skips_empty_chunks_without_crashing(tmp_path, monkeypatc
 
 def test_analyze_stream_reasoning_only_then_content_truncated(tmp_path, monkeypatch):
     """thinking model 的常见故障模式：reasoning 吃光 token，content 被截断为空。
-    analyze_stream 不应该 raise（reasoning 已成功消费）。"""
+
+    v2.1 P3-B: analyze_stream 必须自动用更大 budget 重试一次（对齐 analyze() 的
+    _retry_if_reasoning_starved），最后让 caller 拿到真实 content，而不是空字符串。
+    """
     c = _client(tmp_path)
 
+    call_count = {"n": 0}
+
     async def fake_stream(messages, max_tokens, temperature):
-        for i in range(50):
-            yield {"reasoning_content": f"思考第 {i} 步 "}
-        # 最后没有任何 content — 模拟 reasoning 截断情形
-        return
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # 第一次：50 个 reasoning chunk + 0 content（reasoning 吃光预算）
+            for i in range(50):
+                yield {"reasoning_content": f"思考第 {i} 步 "}
+            return
+        # 第二次：更大 budget 下产出真实 content
+        for i in range(3):
+            yield {"reasoning_content": f"重试思考 {i} "}
+        yield {"content": "重试后真实答案"}
 
     monkeypatch.setattr(c, "_call_api_stream", fake_stream)
     monkeypatch.setattr(c, "record_call", lambda *a, **kw: None)
@@ -442,11 +453,57 @@ def test_analyze_stream_reasoning_only_then_content_truncated(tmp_path, monkeypa
         [LLMMessage(role="user", content="x")], max_tokens=600, temperature=0.6,
     )))
 
-    contents = [ch.content for ch in chunks if ch.content]
+    # 至少调用了两次（首轮 + 重试）
+    assert call_count["n"] >= 2, "should auto-retry when reasoning starves content"
+    # 两次 reasoning chunk 都透传了
     reasonings = [ch.reasoning_content for ch in chunks if ch.reasoning_content]
-    assert contents == [], "reasoning 截断情形下 content 应为空，调用方据此给提示"
-    assert len(reasonings) == 50
+    assert len(reasonings) == 53  # 50 + 3
+    # 重试后 content 真的出现了
+    contents = [ch.content for ch in chunks if ch.content]
+    assert contents == ["重试后真实答案"]
     # 收尾 sentinel 仍然存在
+    assert chunks[-1].is_complete is True
+
+
+def test_analyze_stream_no_retry_when_content_present(tmp_path, monkeypatch):
+    """v2.1 P3-B 边界：首轮就拿到 content 时，不应该触发 reasoning-starved 重试。"""
+    c = _client(tmp_path)
+    call_count = {"n": 0}
+
+    async def fake_stream(messages, max_tokens, temperature):
+        call_count["n"] += 1
+        yield {"content": "直接回答"}
+
+    monkeypatch.setattr(c, "_call_api_stream", fake_stream)
+    monkeypatch.setattr(c, "record_call", lambda *a, **kw: None)
+
+    chunks = asyncio.run(_drain_stream(c.analyze_stream(
+        [LLMMessage(role="user", content="x")], max_tokens=600, temperature=0.6,
+    )))
+
+    assert call_count["n"] == 1, "no retry when content arrives normally"
+    assert chunks[-1].is_complete is True
+
+
+def test_analyze_stream_no_retry_when_neither_reasoning_nor_content(tmp_path, monkeypatch):
+    """v2.1 P3-B 边界：首轮连 reasoning 都没有（纯空流），也不重试 — 模型本就该返空。"""
+    c = _client(tmp_path)
+    call_count = {"n": 0}
+
+    async def fake_stream(messages, max_tokens, temperature):
+        call_count["n"] += 1
+        # 完全空的流（不 yield 任何 chunk）
+        if False:
+            yield {}
+
+    monkeypatch.setattr(c, "_call_api_stream", fake_stream)
+    monkeypatch.setattr(c, "record_call", lambda *a, **kw: None)
+
+    chunks = asyncio.run(_drain_stream(c.analyze_stream(
+        [LLMMessage(role="user", content="x")], max_tokens=600, temperature=0.6,
+    )))
+
+    assert call_count["n"] == 1, "no retry when stream is naturally empty"
     assert chunks[-1].is_complete is True
 
 
