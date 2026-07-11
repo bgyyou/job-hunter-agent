@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import queue
 import sys
-import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -586,41 +584,6 @@ def run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
-
-
-def stream_llm_to_sync(async_gen):
-    """把 async generator 转成 sync generator，用线程跑 async，queue 传 chunk。
-
-    LLM client 的 analyze_stream 是 async generator，但 Streamlit 主线程是同步的。
-    用 daemon 线程跑 async generator，chunk 通过 queue 传到主线程，st.write_stream
-    能逐 chunk 实时渲染。
-    """
-    q: "queue.Queue[Any]" = queue.Queue()
-    SENTINEL = object()
-
-    def runner():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            async def _drain():
-                async for chunk in async_gen:
-                    q.put(chunk)
-            loop.run_until_complete(_drain())
-        except Exception as exc:
-            q.put(exc)
-        finally:
-            q.put(SENTINEL)
-            loop.close()
-
-    threading.Thread(target=runner, daemon=True).start()
-
-    while True:
-        item = q.get()
-        if item is SENTINEL:
-            break
-        if isinstance(item, Exception):
-            raise item
-        yield item
 
 
 def init_session_state() -> None:
@@ -1309,134 +1272,7 @@ def render_flow_a() -> None:
                 )
                 st.rerun()
 
-        # PR5 (M12): 模式切换 — 粘贴通道 / 逐段对话 二选一
-        extract_mode = st.radio(
-            "采集方式",
-            ["🪄 粘贴完整文本（推荐，10 秒）", "💬 逐段对话"],
-            horizontal=True,
-            key="fa_extract_mode_radio",
-        )
-        is_paste_mode = "粘贴" in extract_mode
-
-        if is_paste_mode:
-            _render_flow_a_paste_panel(flow_a)
-            return
-
-        sec_msgs = st.session_state.fa_section_messages.setdefault(section_key, [])
-        for msg in sec_msgs:
-            with st.chat_message("user" if msg["role"] == "user" else "assistant"):
-                st.markdown(msg["content"])
-
-        needs_assistant_turn = not sec_msgs or sec_msgs[-1]["role"] == "user"
-        if needs_assistant_turn:
-            try:
-                msgs_for_llm = sec_msgs if sec_msgs else [{"role": "user", "content": f"开始采集{section['name']}吧。"}]
-                llm_messages, force_close, rounds_used = flow_a._build_chat_messages(
-                    section_key=section_key,
-                    messages=msgs_for_llm,
-                    collected_so_far=st.session_state.fa_section_data,
-                    industry=st.session_state.fa_industry,
-                    position=st.session_state.fa_position,
-                )
-                # v2.1 P3-A: thinking model (Agnes 2.0 flash) 把 reasoning_content 也算进
-                # max_tokens 预算。1500 经常被 reasoning 耗光 → content 被截断为空。
-                # 提到 4000 给 reasoning + content 都留够空间，兜底重试也能省一次。
-                async_gen = st.session_state.llm_client.analyze_stream(
-                    messages=llm_messages, max_tokens=4000, temperature=0.6,
-                )
-                with st.chat_message("assistant"):
-                    # 思考过程（reasoning_content）走 expander 折叠，不抢用户的视觉注意力，
-                    # 但让用户明确看到"agent 在思考"而不是"agent 卡死了"。
-                    reasoning_box = st.empty()
-                    content_box = st.empty()
-                    # v2.1 P3-D: 首 chunk 之前给一个 spinner 占位，避免用户看到
-                    # "空白气泡 30 秒后突然出现正文"的卡死错觉。
-                    spinner_placeholder = st.empty()
-                    spinner_placeholder.markdown("🧠 AI 思考中…")
-                    full_text_parts: list[str] = []
-                    full_reasoning_parts: list[str] = []
-                    chunks_iter = stream_llm_to_sync(async_gen)
-                    first_chunk_seen = False
-                    for chunk in chunks_iter:
-                        if not first_chunk_seen:
-                            spinner_placeholder.empty()
-                            first_chunk_seen = True
-                        if chunk.reasoning_content:
-                            full_reasoning_parts.append(chunk.reasoning_content)
-                            # 折叠展示，截断避免每次 rerender 太多
-                            reasoning_box.expander(
-                                f"🧠 AI 思考中… ({sum(len(s) for s in full_reasoning_parts)} 字)",
-                                expanded=False,
-                            ).markdown(
-                                "```text\n"
-                                + "".join(full_reasoning_parts)[-2000:]
-                                + "\n```"
-                            )
-                        if chunk.content:
-                            full_text_parts.append(chunk.content)
-                            content_box.markdown("".join(full_text_parts))
-                    full_text = "".join(full_text_parts)
-                    reasoning_text = "".join(full_reasoning_parts)
-
-                # v2.1 P3-C: thinking model 的防御性兜底。
-                # 注意：P3-B 后 analyze_stream 已经会自动用更大 budget 重试一次，
-                # 所以走到这里说明连重试都没救回来（如 budget 已到 8000 上限），
-                # 不再撒谎说"已自动重试"。
-                if not full_text.strip():
-                    if reasoning_text.strip():
-                        full_text = (
-                            "（模型本次思考时间过长、未在重试后给出最终回答。"
-                            "建议把问题拆得更具体一些，或点击下方「重试这条 AI 响应」再试一次）"
-                        )
-                    else:
-                        full_text = (
-                            "（模型本次未返回内容，可能是上游暂时无响应或网络中断。"
-                            "请稍候再发一次，或点击下方「重试这条 AI 响应」按钮）"
-                        )
-
-                reply = ResumeFlowA._parse_chat_reply(full_text, force_close, rounds_used)
-                if not sec_msgs:
-                    sec_msgs.append({"role": "user", "content": f"开始采集{section['name']}吧。"})
-                sec_msgs.append({"role": "assistant", "content": reply["message"]})
-
-                if reply["type"] == "section_skipped":
-                    _advance_flow_a_section(section_key, skipped=True)
-                elif reply["type"] == "section_done":
-                    extracted = run_async(flow_a.extract_section(section_key, sec_msgs))
-                    _apply_flow_a_section_extracted(section_key, extracted)
-                else:
-                    _save_flow_a_draft("collect", section_key)
-                st.rerun()
-            except Exception as exc:
-                st.session_state.fa_last_error = str(exc)
-                _save_flow_a_draft("collect", section_key, last_error=str(exc))
-                st.error(f"AI 响应失败：{exc}")
-                if st.button("重试这条 AI 响应", key=f"fa_retry_ai_{section_key}_{len(sec_msgs)}"):
-                    st.rerun()
-
-        user_input = st.chat_input(f"回复关于「{section['name']}」的问题...")
-        if user_input:
-            sec_msgs.append({"role": "user", "content": user_input})
-            st.session_state.fa_incomplete_confirm_section = None
-            st.session_state.fa_incomplete_missing = []
-            _save_flow_a_draft("collect", section_key)
-            st.rerun()
-
-        b1, b2, _ = st.columns(3)
-        with b1:
-            if section.get("skippable") and st.button(f"跳过 {section['name']}"):
-                _advance_flow_a_section(section_key, skipped=True)
-                st.rerun()
-        with b2:
-            if st.button("完成本节，进入下一节"):
-                try:
-                    extracted = run_async(flow_a.extract_section(section_key, sec_msgs)) if sec_msgs else ResumeFlowA._empty_section_value(section_key)
-                    _apply_flow_a_section_extracted(section_key, extracted)
-                except Exception as exc:
-                    st.session_state.fa_last_error = str(exc)
-                    _save_flow_a_draft("collect", section_key, last_error=str(exc))
-                    st.warning(f"提取本节数据时出错：{exc}。状态已保存，可以重试。")
-                st.rerun()
+        _render_flow_a_paste_panel(flow_a)
         return
 
     st.progress(1.0, text=f"进度 {total_sections}/{total_sections} ✓")
@@ -2409,36 +2245,30 @@ def _render_flow_a_paste_panel(flow_a) -> None:
         else:
             edited_proj = parsed_proj
 
-        c_confirm, c_back, _ = st.columns([1, 1, 4])
-        with c_confirm:
-            if st.button("✅ 确认 → 跳过对话采集", type="primary"):
-                exp_data = edited_exp if isinstance(edited_exp, list) else ([edited_exp] if edited_exp else [])
-                proj_data = edited_proj if isinstance(edited_proj, list) else ([edited_proj] if edited_proj else [])
+        if st.button("✅ 确认并进入生成", type="primary"):
+            exp_data = edited_exp if isinstance(edited_exp, list) else ([edited_exp] if edited_exp else [])
+            proj_data = edited_proj if isinstance(edited_proj, list) else ([edited_proj] if edited_proj else [])
 
-                # 粘贴为空代表用户明确不提供该可选段，按 skipped 处理；有内容则必须先过本地 validator。
-                if exp_data:
-                    if not _apply_flow_a_section_extracted("experience", exp_data):
-                        st.rerun()
-                else:
-                    if "experience" not in st.session_state.fa_section_skipped:
-                        st.session_state.fa_section_skipped.append("experience")
-                    st.session_state.fa_section_index = max(st.session_state.fa_section_index, 1)
+            # 粘贴为空代表用户明确不提供该可选段，按 skipped 处理；有内容则必须先过本地 validator。
+            if exp_data:
+                if not _apply_flow_a_section_extracted("experience", exp_data):
+                    st.rerun()
+            else:
+                if "experience" not in st.session_state.fa_section_skipped:
+                    st.session_state.fa_section_skipped.append("experience")
+                st.session_state.fa_section_index = max(st.session_state.fa_section_index, 1)
 
-                if proj_data:
-                    if not _apply_flow_a_section_extracted("projects", proj_data):
-                        st.rerun()
-                else:
-                    if "projects" not in st.session_state.fa_section_skipped:
-                        st.session_state.fa_section_skipped.append("projects")
-                    st.session_state.fa_section_index = len(_flow_a_collect_sections())
-                    _save_flow_a_draft("generate", None)
+            if proj_data:
+                if not _apply_flow_a_section_extracted("projects", proj_data):
+                    st.rerun()
+            else:
+                if "projects" not in st.session_state.fa_section_skipped:
+                    st.session_state.fa_section_skipped.append("projects")
+                st.session_state.fa_section_index = len(_flow_a_collect_sections())
+                _save_flow_a_draft("generate", None)
 
-                st.success("已应用粘贴结果，进入简历生成阶段。")
-                st.rerun()
-        with c_back:
-            if st.button("↩ 返回逐段对话"):
-                st.session_state["fa_extract_mode"] = "chat"
-                st.rerun()
+            st.success("已应用粘贴结果，进入简历生成阶段。")
+            st.rerun()
 
 
 def _render_flow_a_provenance_panel(skeleton: Dict) -> None:

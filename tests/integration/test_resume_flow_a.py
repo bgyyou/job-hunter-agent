@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Flow A 测试：section 状态机分段采集 → 派生 → RAG 骨架 → 渲染。
+"""Flow A 测试：粘贴文本抽取 → 派生 → RAG 骨架 → 渲染。
 
-mock LLM 返回，验证状态流转和数据传递。RAG 检索失败做兜底。
+mock LLM 返回，验证抽取和数据传递。RAG 检索失败做兜底。
 """
 from __future__ import annotations
 
@@ -143,77 +143,49 @@ def test_normalize_strips_llm_placeholders():
     assert result["education"][0]["major"] == "计算机"
 
 
-def test_parse_chat_reply_force_close_does_not_auto_complete():
-    """Root fix: 轮次上限只能提示收尾，不能绕过本地 validator 直接推进。"""
-    reply = ResumeFlowA._parse_chat_reply(
-        "我还需要再确认一个成果数据。",
-        force_close=True,
-        rounds_used=8,
-    )
+# ---------- extract_from_paste：粘贴文本一次性抽取 ----------
 
-    assert reply["type"] == "question"
-    assert "成果" in reply["message"]
-
-
-# ---------- Section 状态机：新接线测试 ----------
-
-def test_chat_section_collects_personal_info():
-    """chat_section: 个人信息段，LLM 回答带 [SECTION_DONE] 时应识别为段完成。"""
-    flow = ResumeFlowA(_llm_with_responses("好的，信息已记录。[SECTION_DONE]"))
-    loop = asyncio.new_event_loop()
-    try:
-        reply = loop.run_until_complete(flow.chat_section(
-            section_key="header",
-            messages=[
-                {"role": "assistant", "content": "请问你的姓名和联系方式？"},
-                {"role": "user", "content": "我叫 Leon,电话 13800138000"},
-            ],
-            collected_so_far={},
-            industry="互联网/软件",
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
-    assert reply["type"] == "section_done"
-    assert "[SECTION_DONE]" not in reply["message"]
-
-
-def test_chat_section_skip_marker():
-    """chat_section: 用户跳过整段时识别 [SECTION_DONE,SKIP]。"""
-    flow = ResumeFlowA(_llm_with_responses("好的，跳过本段。[SECTION_DONE,SKIP]"))
-    loop = asyncio.new_event_loop()
-    try:
-        reply = loop.run_until_complete(flow.chat_section(
-            section_key="experience",
-            messages=[{"role": "user", "content": "我是应届毕业生没有工作经历"}],
-            collected_so_far={},
-            industry="互联网/软件",
-            position="AI产品经理",
-        ))
-    finally:
-        loop.close()
-    assert reply["type"] == "section_skipped"
-
-
-def test_extract_section_education():
-    """extract_section: 教育经历段只提取该段 JSON。"""
-    education_json = json.dumps([
-        {"school": "CUHK", "degree": "硕士", "major": "信息系统", "start_year": "2018", "end_year": "2020"}
+def test_extract_from_paste_experience():
+    """extract_from_paste: 粘贴一段工作经历 → 结构化 list。"""
+    exp_json = json.dumps([
+        {"title": "产品经理", "company": "ACME", "duration": "2021-2023",
+         "achievements": ["上线 Agent 系统，满意度提升 30%"]},
     ], ensure_ascii=False)
-    flow = ResumeFlowA(_llm_with_responses(education_json))
+    flow = ResumeFlowA(_llm_with_responses(exp_json))
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(flow.extract_section(
-            section_key="education",
-            messages=[
-                {"role": "assistant", "content": "你的教育背景？"},
-                {"role": "user", "content": "我硕士毕业于 CUHK，专业是信息系统，2018-2020"},
-            ],
+        result = loop.run_until_complete(flow.extract_from_paste(
+            section_key="experience",
+            raw_text="在 ACME 做产品经理，2021 到 2023，上线了 Agent 系统满意度涨了 30%",
         ))
     finally:
         loop.close()
     assert isinstance(result, list)
-    assert result[0]["school"] == "CUHK"
+    assert result[0]["company"] == "ACME"
+
+
+def test_extract_from_paste_empty_returns_empty_structure():
+    """空文本不调 LLM，直接返回空结构。"""
+    flow = ResumeFlowA(_llm_with_responses("{}"))
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(flow.extract_from_paste("experience", "   "))
+    finally:
+        loop.close()
+    assert result == []
+    flow.llm_client.analyze.assert_not_called()
+
+
+def test_extract_from_paste_derived_section_returns_empty():
+    """派生段（summary）不走粘贴抽取，返回空结构。"""
+    flow = ResumeFlowA(_llm_with_responses("{}"))
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(flow.extract_from_paste("summary", "任意文本"))
+    finally:
+        loop.close()
+    flow.llm_client.analyze.assert_not_called()
+    assert result == "" or result == [] or result == {}
 
 
 def test_derive_summary_and_competencies():
