@@ -594,67 +594,110 @@ class OpenAICompatibleClient(LLMClient):
         # 转换消息格式
         api_messages = self._convert_messages(messages, system_prompt)
 
-        total_content = ""
-        total_reasoning = ""
-        tokens_used = 0
+        # v2.1 P3-B: reasoning-starved 兜底
+        # thinking model (Agnes 2.0 flash / DeepSeek-R1 / o1) 把 reasoning_content
+        # 也算进 max_tokens 预算；reasoning 写满后 content 被截断为空。
+        # 对齐 analyze() 的 _retry_if_reasoning_starved：流结束后若 content 空 +
+        # reasoning 有内容，自动用更大 budget 重试一次并把 chunks 透传给 caller。
+        # 只重试一次，避免无限循环。
+        bigger = max_tokens
+        reasoning_retry_done = False
         delays = tuple(getattr(self, "retry_delays", (1.2, 2.0, 3.0)))
-        attempt = 0
 
         while True:
-            yielded_any = False
-            try:
-                async for chunk in self._call_api_stream(
-                    messages=api_messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                ):
-                    content = chunk.get("content", "") or ""
-                    reasoning = chunk.get("reasoning_content", None)
-                    # 兼容上游把空字符串 reasoning_content 也吐出来 — 当 None 处理
-                    if reasoning == "":
-                        reasoning = None
+            total_content = ""
+            total_reasoning = ""
+            tokens_used = 0
+            attempt = 0
+            need_reasoning_retry = False
 
-                    # reasoning 与 content 至少要有一个，否则这个 chunk 没价值
-                    if not content and reasoning is None:
-                        continue
+            while True:
+                yielded_any = False
+                try:
+                    async for chunk in self._call_api_stream(
+                        messages=api_messages,
+                        max_tokens=bigger,
+                        temperature=temperature
+                    ):
+                        content = chunk.get("content", "") or ""
+                        reasoning = chunk.get("reasoning_content", None)
+                        # 兼容上游把空字符串 reasoning_content 也吐出来 — 当 None 处理
+                        if reasoning == "":
+                            reasoning = None
 
-                    yielded_any = True
-                    if content:
-                        total_content += content
-                    if reasoning:
-                        total_reasoning += reasoning
-                    tokens_used = self.estimate_tokens(total_content)
+                        # reasoning 与 content 至少要有一个，否则这个 chunk 没价值
+                        if not content and reasoning is None:
+                            continue
+
+                        yielded_any = True
+                        if content:
+                            total_content += content
+                        if reasoning:
+                            total_reasoning += reasoning
+                        tokens_used = self.estimate_tokens(total_content)
+
+                        yield StreamChunk(
+                            content=content,
+                            reasoning_content=reasoning,
+                            is_complete=False,
+                            metadata={"tokens_accumulated": tokens_used},
+                        )
+
+                    # 流正常结束。检查是否需要 reasoning-starved 重试。
+                    if (
+                        not total_content.strip()
+                        and total_reasoning.strip()
+                        and not reasoning_retry_done
+                    ):
+                        new_bigger = min(
+                            max(bigger * self.REASONING_RETRY_MULTIPLIER, self.REASONING_RETRY_FLOOR),
+                            self.REASONING_RETRY_CEILING,
+                        )
+                        if new_bigger > bigger:
+                            self.logger.warning(
+                                f"LLM stream: thinking model reasoning starved content "
+                                f"(reasoning={len(total_reasoning)} chars, max_tokens={bigger}); "
+                                f"retrying once with max_tokens={new_bigger}"
+                            )
+                            bigger = new_bigger
+                            reasoning_retry_done = True
+                            need_reasoning_retry = True
+                            # 跳出内层，进入外层重新跑流
+                            break
+                        # budget 已经到顶，没法再 retry
+                        self.logger.warning(
+                            f"LLM stream: reasoning starved but max_tokens already at ceiling "
+                            f"({self.REASONING_RETRY_CEILING}), giving up"
+                        )
+
+                    # 记录调用
+                    self.record_call(tokens_used)
 
                     yield StreamChunk(
-                        content=content,
-                        reasoning_content=reasoning,
-                        is_complete=False,
-                        metadata={"tokens_accumulated": tokens_used},
+                        content="",
+                        reasoning_content=None,
+                        is_complete=True,
+                        metadata={"total_tokens": tokens_used},
                     )
+                    return
 
-                # 记录调用
-                self.record_call(tokens_used)
+                except Exception as e:
+                    # 流已经吐过字后不能自动重试，否则 UI 会出现重复内容；交给用户按钮重试。
+                    if yielded_any or attempt >= len(delays) or not self._is_retryable_exception(e):
+                        self.logger.error(f"流式 LLM 调用失败: {e}")
+                        raise
+                    delay = delays[attempt]
+                    attempt += 1
+                    self.logger.warning(
+                        f"流式 LLM 调用启动失败，retry {attempt}/{len(delays)} in {delay}s: {e}"
+                    )
+                    if delay > 0:
+                        await asyncio.sleep(delay)
 
-                yield StreamChunk(
-                    content="",
-                    reasoning_content=None,
-                    is_complete=True,
-                    metadata={"total_tokens": tokens_used},
-                )
+            # 仅在 reasoning 重试时跳出内层；继续外层循环
+            if not need_reasoning_retry:
+                # 不该走到这里（return 已处理完所有路径）；保险起见退出
                 return
-
-            except Exception as e:
-                # 流已经吐过字后不能自动重试，否则 UI 会出现重复内容；交给用户按钮重试。
-                if yielded_any or attempt >= len(delays) or not self._is_retryable_exception(e):
-                    self.logger.error(f"流式 LLM 调用失败: {e}")
-                    raise
-                delay = delays[attempt]
-                attempt += 1
-                self.logger.warning(
-                    f"流式 LLM 调用启动失败，retry {attempt}/{len(delays)} in {delay}s: {e}"
-                )
-                if delay > 0:
-                    await asyncio.sleep(delay)
 
     def _convert_messages(self, messages: List[LLMMessage], system_prompt: Optional[str] = None) -> List[Dict]:
         """
@@ -824,7 +867,11 @@ class OpenAICompatibleClient(LLMClient):
             "stream": True
         }
 
-        async with aiohttp.ClientSession() as session:
+        # v2.1 P3-D: 给流式 socket 加 60s 单次读超时。
+        # 上游 LLM 思考过程中如果连续 60s 不吐 chunk（卡死 / 网络断），立即报错，
+        # 由 _is_retryable_exception 触发 transient retry，最多 3 次后抛给 UI。
+        stream_timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=60)
+        async with aiohttp.ClientSession(timeout=stream_timeout) as session:
             async with session.post(
                 self.api_url,
                 headers=self.headers,

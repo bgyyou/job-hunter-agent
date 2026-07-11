@@ -462,8 +462,9 @@ class ResumeFlowA:
         if stream_callback is not None:
             full = ""
             try:
+                # v2.1 P3-A: thinking model 600 → 4000，让 reasoning + JSON 输出都吃得下
                 async for chunk in self.llm_client.analyze_stream(
-                    messages=llm_messages, max_tokens=600, temperature=0.4,
+                    messages=llm_messages, max_tokens=4000, temperature=0.4,
                 ):
                     if chunk.content:
                         full += chunk.content
@@ -477,8 +478,9 @@ class ResumeFlowA:
                 parsed = None
         else:
             try:
+                # v2.1 P3-A: thinking model 600 → 4000，与流式路径对齐
                 response: LLMResponse = await self.llm_client.analyze(
-                    messages=llm_messages, max_tokens=600, temperature=0.4,
+                    messages=llm_messages, max_tokens=4000, temperature=0.4,
                 )
                 parsed = self._parse_json(response.content)
             except Exception as exc:
@@ -825,8 +827,9 @@ class ResumeFlowA:
             # v2.1 P2-1 阶段一：流式路径 — UI 层实时看到字
             full = ""
             try:
+                # v2.1 P3-A: thinking model 300 → 4000，reasoning 不再吃光 JSON 输出
                 async for chunk in self.llm_client.analyze_stream(
-                    messages=messages, max_tokens=300, temperature=0.3,
+                    messages=messages, max_tokens=4000, temperature=0.3,
                 ):
                     if chunk.content:
                         full += chunk.content
@@ -843,8 +846,9 @@ class ResumeFlowA:
         else:
             # 兼容路径：原 analyze（单测和外部调用者走这里）
             try:
+                # v2.1 P3-A: 与流式路径对齐
                 response: LLMResponse = await self.llm_client.analyze(
-                    messages=messages, max_tokens=300, temperature=0.3,
+                    messages=messages, max_tokens=4000, temperature=0.3,
                 )
                 text = response.content.strip()
             except Exception as exc:

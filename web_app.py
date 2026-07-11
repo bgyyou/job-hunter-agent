@@ -1338,20 +1338,29 @@ def render_flow_a() -> None:
                     industry=st.session_state.fa_industry,
                     position=st.session_state.fa_position,
                 )
-                # v2.1 P2-2: thinking model (Agnes 2.0 flash) 需要给 reasoning 留 token 预算。
-                # 600 经常被 reasoning 耗光 → content 被截断为空 → UI 上 agent"不说话了"。
+                # v2.1 P3-A: thinking model (Agnes 2.0 flash) 把 reasoning_content 也算进
+                # max_tokens 预算。1500 经常被 reasoning 耗光 → content 被截断为空。
+                # 提到 4000 给 reasoning + content 都留够空间，兜底重试也能省一次。
                 async_gen = st.session_state.llm_client.analyze_stream(
-                    messages=llm_messages, max_tokens=1500, temperature=0.6,
+                    messages=llm_messages, max_tokens=4000, temperature=0.6,
                 )
                 with st.chat_message("assistant"):
                     # 思考过程（reasoning_content）走 expander 折叠，不抢用户的视觉注意力，
                     # 但让用户明确看到"agent 在思考"而不是"agent 卡死了"。
                     reasoning_box = st.empty()
                     content_box = st.empty()
+                    # v2.1 P3-D: 首 chunk 之前给一个 spinner 占位，避免用户看到
+                    # "空白气泡 30 秒后突然出现正文"的卡死错觉。
+                    spinner_placeholder = st.empty()
+                    spinner_placeholder.markdown("🧠 AI 思考中…")
                     full_text_parts: list[str] = []
                     full_reasoning_parts: list[str] = []
                     chunks_iter = stream_llm_to_sync(async_gen)
+                    first_chunk_seen = False
                     for chunk in chunks_iter:
+                        if not first_chunk_seen:
+                            spinner_placeholder.empty()
+                            first_chunk_seen = True
                         if chunk.reasoning_content:
                             full_reasoning_parts.append(chunk.reasoning_content)
                             # 折叠展示，截断避免每次 rerender 太多
@@ -1369,17 +1378,20 @@ def render_flow_a() -> None:
                     full_text = "".join(full_text_parts)
                     reasoning_text = "".join(full_reasoning_parts)
 
-                # thinking model 的防御性兜底：如果 reasoning 写了一大堆但 content 仍空，
-                # 至少给用户一个可读提示而不是空 bubble。
+                # v2.1 P3-C: thinking model 的防御性兜底。
+                # 注意：P3-B 后 analyze_stream 已经会自动用更大 budget 重试一次，
+                # 所以走到这里说明连重试都没救回来（如 budget 已到 8000 上限），
+                # 不再撒谎说"已自动重试"。
                 if not full_text.strip():
                     if reasoning_text.strip():
                         full_text = (
-                            "（模型本次推理过程较长但未给出最终回答，已自动重试请稍候再发一次）"
+                            "（模型本次思考时间过长、未在重试后给出最终回答。"
+                            "建议把问题拆得更具体一些，或点击下方「重试这条 AI 响应」再试一次）"
                         )
                     else:
                         full_text = (
                             "（模型本次未返回内容，可能是上游暂时无响应或网络中断。"
-                            "可点击下方「重试这条 AI 响应」按钮再试一次）"
+                            "请稍候再发一次，或点击下方「重试这条 AI 响应」按钮）"
                         )
 
                 reply = ResumeFlowA._parse_chat_reply(full_text, force_close, rounds_used)
