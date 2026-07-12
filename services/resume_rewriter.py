@@ -112,13 +112,16 @@ class ResumeRewriter:
 
         user_prompt = build_mode_a_user_prompt(original_d, jd_d)
         messages = [LLMMessage(role="user", content=user_prompt)]
-        response = await self.llm_client.analyze(
-            messages=messages,
-            system_prompt=MODE_A_SYSTEM_PROMPT,
-            max_tokens=4096,
-            temperature=0.3,
-            use_cache=True,
-        )
+        try:
+            response = await self.llm_client.analyze(
+                messages=messages,
+                system_prompt=MODE_A_SYSTEM_PROMPT,
+                max_tokens=4096,
+                temperature=0.3,
+                use_cache=True,
+            )
+        except Exception as e:
+            return self._fallback_mode_a(original_d, jd_d, reason=f"LLM 调用失败: {e!s}"[:200])
         raw = _strip_code_fence(response.content or "")
         parsed = self._safe_json_loads(raw)
         rewrites = parsed.get("rewrites") if isinstance(parsed, dict) else None
@@ -159,13 +162,16 @@ class ResumeRewriter:
 
         user_prompt = build_mode_b_user_prompt(jd_d, sections)
         messages = [LLMMessage(role="user", content=user_prompt)]
-        response = await self.llm_client.analyze(
-            messages=messages,
-            system_prompt=MODE_B_SYSTEM_PROMPT,
-            max_tokens=4096,
-            temperature=0.5,
-            use_cache=True,
-        )
+        try:
+            response = await self.llm_client.analyze(
+                messages=messages,
+                system_prompt=MODE_B_SYSTEM_PROMPT,
+                max_tokens=4096,
+                temperature=0.5,
+                use_cache=True,
+            )
+        except Exception as e:
+            return self._fallback_mode_b(jd_d, sections, reason=f"LLM 调用失败: {e!s}"[:200])
         raw = _strip_code_fence(response.content or "")
         parsed = self._safe_json_loads(raw)
         templates = parsed.get("templates") if isinstance(parsed, dict) else None

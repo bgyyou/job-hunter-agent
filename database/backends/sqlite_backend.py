@@ -190,7 +190,7 @@ class SqliteBackend(BaseBackend):
             if not row:
                 return None
             d = self._row_to_dict(row)
-            for field in ["skills", "experience", "domains", "target_roles", "preferred_locations", "education", "projects"]:
+            for field in ["skills", "experience", "domains", "target_roles", "preferred_locations", "education", "projects", "achievements"]:
                 d[field] = self._json_deserialize(d[field])
             return d
         finally:
