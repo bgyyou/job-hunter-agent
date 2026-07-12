@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS resumes (
     preferred_locations TEXT DEFAULT '[]',
     education TEXT NOT NULL DEFAULT '[]',
     projects TEXT NOT NULL DEFAULT '[]',
+    achievements TEXT NOT NULL DEFAULT '[]',  -- v3 M-rebuild-1: 顶层成果数据字段
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     deleted_at TEXT

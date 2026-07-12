@@ -62,6 +62,10 @@ class ResumeProfile(BaseEntity):
     education: List[Education] = Field(default_factory=list, description="教育背景")
     projects: List[Project] = Field(default_factory=list, description="项目经验")
 
+    # v3 M-rebuild-1: 顶层"成果数据"字段（HR 最看数字，独立列出视觉强；
+    # 与 experience/projects 嵌套的 achievements 并存，互不干扰）
+    achievements: List[str] = Field(default_factory=list, description="成果数据（独立字段）")
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v):

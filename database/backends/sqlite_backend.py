@@ -92,6 +92,10 @@ class SqliteBackend(BaseBackend):
         if "experience" not in resume_cols:
             conn.execute("ALTER TABLE resumes ADD COLUMN experience TEXT DEFAULT '[]'")
             logger.info("migration: added resumes.experience column")
+        # v3 M-rebuild-1: resumes.achievements 顶层字段（与 experience 嵌套的 achievements 并存）
+        if "achievements" not in resume_cols:
+            conn.execute("ALTER TABLE resumes ADD COLUMN achievements TEXT NOT NULL DEFAULT '[]'")
+            logger.info("migration: added resumes.achievements column")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_resumes_parent ON resumes(parent_resume_id)"
         )
