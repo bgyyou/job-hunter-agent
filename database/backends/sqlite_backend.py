@@ -1071,3 +1071,203 @@ class SqliteBackend(BaseBackend):
                 d[field] = self._json_deserialize(d[field])
             results.append(d)
         return results
+
+    # ==================== v3 M-rebuild-1: Structured JDs ====================
+
+    def insert_jd_structured(self, data: Dict) -> int:
+        """Insert a structured JD record (text/image/rag parsed).
+
+        Required: ``source`` (``'text'``/``'image'``/``'rag'``). Optional:
+        ``user_id`` (default ``'default'``), ``raw_text``, ``company``,
+        ``title``, ``industry``, ``function``, ``level``,
+        ``responsibilities`` (List[str]), ``requirements`` (List[str]).
+
+        Returns the autoincrement ``jd_id``.
+        """
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                """INSERT INTO jd_structured
+                   (user_id, source, raw_text, company, title, industry, function, level,
+                    responsibilities, requirements)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (data.get("user_id", "default"), data["source"], data.get("raw_text"),
+                 data.get("company"), data.get("title"), data.get("industry"),
+                 data.get("function"), data.get("level"),
+                 self._json_serialize(data.get("responsibilities", [])),
+                 self._json_serialize(data.get("requirements", []))),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_jd_structured(self, jd_id: int) -> Optional[Dict]:
+        """Fetch a structured JD by id; returns None if missing or soft-deleted."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM jd_structured WHERE jd_id = ? AND deleted_at IS NULL",
+                (jd_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return self._deserialize_all([row], ["responsibilities", "requirements"])[0]
+        finally:
+            conn.close()
+
+    def list_jds_structured(self, user_id: str = "default",
+                            source: Optional[str] = None,
+                            limit: int = 100) -> List[Dict]:
+        """List recent structured JDs, optionally filtered by source."""
+        conn = self._get_conn()
+        try:
+            sql = "SELECT * FROM jd_structured WHERE user_id = ? AND deleted_at IS NULL"
+            params: List[Any] = [user_id]
+            if source:
+                sql += " AND source = ?"
+                params.append(source)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return self._deserialize_all(rows, ["responsibilities", "requirements"])
+        finally:
+            conn.close()
+
+    # ==================== v3 M-rebuild-2: Rewrite History ====================
+
+    def insert_rewrite_history(self, data: Dict) -> int:
+        """Persist one rewrite run (mode A/B/A+B) with input/output snapshots.
+
+        Required: ``resume_id``, ``mode`` (``'A'``/``'B'``/``'A+B'``). Optional:
+        ``user_id`` (default ``'default'``), ``jd_id``, ``input_snapshot``
+        (Dict), ``output_snapshot`` (Dict), ``rewrite_notes`` (Dict),
+        ``user_edited`` (0/1, default 0).
+
+        Returns the autoincrement ``rewrite_id``.
+        """
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                """INSERT INTO rewrite_history
+                   (user_id, resume_id, jd_id, mode,
+                    input_snapshot, output_snapshot, rewrite_notes, user_edited)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (data.get("user_id", "default"), data["resume_id"], data.get("jd_id"),
+                 data["mode"],
+                 self._json_serialize(data.get("input_snapshot", {})),
+                 self._json_serialize(data.get("output_snapshot", {})),
+                 self._json_serialize(data.get("rewrite_notes", {})),
+                 data.get("user_edited", 0)),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def list_rewrite_history(self, resume_id: Optional[str] = None,
+                             user_id: str = "default",
+                             limit: int = 100) -> List[Dict]:
+        """List recent rewrites, optionally filtered by resume, newest first."""
+        conn = self._get_conn()
+        try:
+            sql = "SELECT * FROM rewrite_history WHERE user_id = ?"
+            params: List[Any] = [user_id]
+            if resume_id:
+                sql += " AND resume_id = ?"
+                params.append(resume_id)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return self._deserialize_all(
+                rows, ["input_snapshot", "output_snapshot", "rewrite_notes"]
+            )
+        finally:
+            conn.close()
+
+    def mark_rewrite_user_edited(self, rewrite_id: int) -> None:
+        """Set ``user_edited = 1`` after the user edits the rewrite output."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE rewrite_history SET user_edited = 1 WHERE rewrite_id = ?",
+                (rewrite_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ==================== v3 M-rebuild-2: RAG Industry×Function Library ====================
+
+    def upsert_rag_industry_function(self, data: Dict) -> int:
+        """Upsert one RAG library row keyed by (industry, function, level).
+
+        Required: ``industry``, ``function``. Optional: ``level``,
+        ``sample_jds`` (List), ``sample_resumes`` (List), ``scoring_rubric``
+        (Dict), ``source``.
+
+        Returns the row id.
+        """
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT INTO rag_industry_function
+                   (industry, function, level, sample_jds, sample_resumes,
+                    scoring_rubric, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(industry, function, level) DO UPDATE SET
+                    sample_jds = excluded.sample_jds,
+                    sample_resumes = excluded.sample_resumes,
+                    scoring_rubric = excluded.scoring_rubric,
+                    source = excluded.source,
+                    updated_at = datetime('now')""",
+                (data["industry"], data["function"], data.get("level"),
+                 self._json_serialize(data.get("sample_jds", [])),
+                 self._json_serialize(data.get("sample_resumes", [])),
+                 self._json_serialize(data.get("scoring_rubric")),
+                 data.get("source")),
+            )
+            conn.commit()
+            row = conn.execute(
+                """SELECT id FROM rag_industry_function
+                   WHERE industry = ? AND function = ?
+                     AND ((? IS NULL AND level IS NULL) OR level = ?)""",
+                (data["industry"], data["function"], data.get("level"), data.get("level")),
+            ).fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+
+    def list_rag_by_industry_function(self, industry: str, function: str,
+                                      level: Optional[str] = None,
+                                      limit: int = 50) -> List[Dict]:
+        """Look up RAG library rows by industry/function/level."""
+        conn = self._get_conn()
+        try:
+            sql = "SELECT * FROM rag_industry_function WHERE industry = ? AND function = ?"
+            params: List[Any] = [industry, function]
+            if level:
+                sql += " AND level = ?"
+                params.append(level)
+            sql += " LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return self._deserialize_all(
+                rows, ["sample_jds", "sample_resumes", "scoring_rubric"]
+            )
+        finally:
+            conn.close()
+
+    # ==================== v3 M-rebuild-1: Resume Achievements Top-Level ====================
+
+    def update_resume_achievements(self, resume_id: str, achievements: List[str]) -> None:
+        """Update the top-level ``resumes.achievements`` JSON column."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE resumes SET achievements = ?, updated_at = ? WHERE id = ?",
+                (self._json_serialize(achievements), datetime.now().isoformat(), resume_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
