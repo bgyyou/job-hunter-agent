@@ -324,3 +324,75 @@ class BaseBackend(ABC):
         Returns the same shape as ``vector_search`` but with ``similarity=0.0``.
         Used by ``RetrievalService`` when ``Embedder`` fails to load.
         """
+
+    # -------------------- v3 M-rebuild-1: Structured JDs --------------------
+
+    @abstractmethod
+    def insert_jd_structured(self, data: Dict) -> int:
+        """Insert one structured JD record.
+
+        Required: ``source`` (``'text'``/``'image'``/``'rag'``). Optional:
+        ``user_id``, ``raw_text``, ``company``, ``title``, ``industry``,
+        ``function``, ``level``, ``responsibilities`` (List[str]),
+        ``requirements`` (List[str]).
+
+        Returns the autoincrement ``jd_id`` (int).
+        """
+
+    @abstractmethod
+    def get_jd_structured(self, jd_id: int) -> Optional[Dict]:
+        """Fetch one structured JD by id; returns None if missing/soft-deleted."""
+
+    @abstractmethod
+    def list_jds_structured(self, user_id: str = "default",
+                            source: Optional[str] = None,
+                            limit: int = 100) -> List[Dict]:
+        """List recent structured JDs, optionally filtered by source."""
+
+    # -------------------- v3 M-rebuild-2: Rewrite History --------------------
+
+    @abstractmethod
+    def insert_rewrite_history(self, data: Dict) -> int:
+        """Persist one rewrite run (mode A/B/A+B).
+
+        Required: ``resume_id``, ``mode``. Optional: ``user_id``, ``jd_id``,
+        ``input_snapshot`` (Dict), ``output_snapshot`` (Dict),
+        ``rewrite_notes`` (Dict), ``user_edited`` (0/1).
+
+        Returns the autoincrement ``rewrite_id``.
+        """
+
+    @abstractmethod
+    def list_rewrite_history(self, resume_id: Optional[str] = None,
+                             user_id: str = "default",
+                             limit: int = 100) -> List[Dict]:
+        """List recent rewrites, optionally filtered by resume."""
+
+    @abstractmethod
+    def mark_rewrite_user_edited(self, rewrite_id: int) -> None:
+        """Mark a rewrite as user-edited (sets ``user_edited = 1``)."""
+
+    # -------------------- v3 M-rebuild-2: RAG Library --------------------
+
+    @abstractmethod
+    def upsert_rag_industry_function(self, data: Dict) -> int:
+        """Upsert one RAG row keyed by (industry, function, level).
+
+        Required: ``industry``, ``function``. Optional: ``level``,
+        ``sample_jds`` (List), ``sample_resumes`` (List),
+        ``scoring_rubric`` (Dict), ``source``.
+
+        Returns the row id.
+        """
+
+    @abstractmethod
+    def list_rag_by_industry_function(self, industry: str, function: str,
+                                      level: Optional[str] = None,
+                                      limit: int = 50) -> List[Dict]:
+        """Look up RAG rows by industry/function/level."""
+
+    # -------------------- v3 M-rebuild-1: Resume Achievements --------------------
+
+    @abstractmethod
+    def update_resume_achievements(self, resume_id: str, achievements: List[str]) -> None:
+        """Update the top-level ``resumes.achievements`` JSON column."""
