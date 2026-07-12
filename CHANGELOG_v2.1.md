@@ -1321,3 +1321,125 @@ CREATE TABLE audit_logs (
 ### 显式不做
 - 不改 provider（保持 provider-neutral）；不硬编码 agnes 专属的 reasoning 关闭参数。兜底靠"检测截断 + headroom 重试"，对任意 OpenAI 兼容 thinking model 通用。
 - 不逐个抬所有 11 处 `max_tokens`；只右调抽取热路径，其余小预算调用由 client 层兜底网覆盖。
+
+---
+
+## [M-rebuild-1 + M-rebuild-2] v3 简历生成 + JD 解析引擎（2026-07-13）
+
+### 动机
+v2.1 的「匹配度分析 + 投递历史」数据闭环（M1-M6）已稳定，但**简历生成是死胡同**：
+- 解析端没有回写路径（粘贴简历 → 信息量评分缺失）
+- 生成端没有一页纸强制 + 跨岗位改写
+- JD 端只有文本粘贴，没有图片 OCR/RAG
+- 模式 B（无公司名模板）完全缺失
+
+v3 round-1 重做"简历生成 + JD 解析"主路径：**本轮只做引擎层**（Phase 1+2），下一轮再做文档生成 + UI（Phase 3+4）。引擎层完成后，用户填一次表 + 给一份 JD，引擎能产出"模式 A 改写 + 模式 B 模板 + 自动切换"的结构化 JSON（每段含改写说明），可单测验证 prompt 锁死的边界。
+
+### 改动清单
+
+#### Schema 迁移（011 + 012）
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 4 张新表 | `jd_structured`（JD 结构化，text/image/rag 三来源）/ `rewrite_history`（改写留痕）/ `rag_industry_function`（行业×职能分类树）/ `interview_questions`（M-rebuild-4 占位） | `database/migrations/011_v3_resume_rewrite.sql` + `database/migrations_pg/011_v3_resume_rewrite.sql` |
+| 顶层字段 | `resumes.achievements TEXT NOT NULL DEFAULT '[]'`（独立成果数据，与 experience.achievements 嵌套并存） | `database/migrations/012_v3_resume_achievements.sql` + sqlite_backend 内联 PRAGMA + `data/schema.sql` / `data/schema_pg.sql` |
+| 幂等防御 | SQLite 用 PRAGMA table_info 检查 + ALTER ADD COLUMN（与 knowledge_chunks.legacy 同模式）；PG 用 ALTER TABLE IF NOT EXISTS | `database/backends/sqlite_backend.py` |
+
+#### Backend CRUD 扩展（9 个方法）
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| BaseBackend 抽象 | 加 9 个 `@abstractmethod`：3 个 jd_structured + 3 个 rewrite_history + 2 个 rag + 1 个 update_resume_achievements | `database/backends/__init__.py` |
+| SQLite 实现 | 镜像实现 9 个方法，JSON 列双向序列化（`json.dumps` 入 / `json.loads` 出）；upsert 用 `ON CONFLICT(industry, function, level) DO UPDATE` | `database/backends/sqlite_backend.py` |
+| PostgreSQL 实现 | 镜像实现（用 `%s` + JSONB + `RETURNING` 拿 id） | `database/backends/postgres_backend.py` |
+| Bug fix | `get_resume` 反序列化字段列表加 `"achievements"`，否则从 DB 读出还是字符串 | `database/backends/sqlite_backend.py:194` |
+
+#### Pydantic 模型字段升级
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| ResumeProfile | 加 `achievements: List[str] = Field(default_factory=list, description="成果数据（独立字段）")` | `models/resume.py` |
+
+#### 服务层（4 个新文件，沿用扁平约定）
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| JD 解析器 | `StructuredJD` dataclass + `TextJDParser`（关键词 + LLM 抽结构 + LLM 失败降级到关键词）/ `ImageJDParser`（PaddleOCR + 强制 `needs_user_review=True`）/ `RAGJDRetriever`（从 `rag_industry_function` 调真实 JD）/ `JDParserRouter`（按 source 路由） | `services/jd_parser.py` |
+| 一页纸预估器 | `PageEstimate` dataclass + `OnePageEstimator.estimate()`：按 10.5pt + 行距 1.2 + A4 可用 265mm 计算总高，超页触发 GPA/短期实习/重复技能瘦身建议 | `services/one_page_estimator.py` |
+| 改写器 prompt | `MODE_A_SYSTEM_PROMPT`（6 条硬规则：不编造/保留数字/视角切换/改写说明/建议删除/模糊百分比）+ `MODE_B_SYSTEM_PROMPT`（5 条硬规则：不编公司名/学校/项目/时间/数字用区间/末尾标注 [AI 模板生成]）+ `MODE_AB_SYSTEM_PROMPT` + 两个 build user prompt 工具 | `services/resume_rewriter_prompts.py` |
+| 改写器 | `RewriteResult` dataclass + `ResumeRewriter`（`rewrite_mode_a` / `rewrite_mode_b` / `rewrite(mode="auto")` / LLM 失败降级到原样 + warning）+ Duck-type 兼容 dict/Pydantic/dataclass | `services/resume_rewriter.py` |
+| 信息量评分 | `InformationScore` dataclass + `InformationScorer`：每段字段填充率加权（experience 0.35 / projects 0.25 / education 0.15 / achievements 0.15 / skills 0.10），阈值 A=70 / A+B=40 / B<40 | `services/information_scorer.py` |
+| Bug fix | 模式 A/B 的 LLM `analyze()` 调用加 try/except，LLM 抛异常时降级到 fallback（原样 + 占位 + warning），不静默失败 | `services/resume_rewriter.py` |
+
+### 验证
+
+- `pytest tests/ -q` → **307 passed in 42s**（baseline 242 + 新增 65，远超 ≥ 15 目标）
+- 新增 6 个测试文件（tests/{unit,integration}/）覆盖：
+  - `test_jd_parser.py`（12 条）：text/image/rag 三路径 + OCR 校对标志 + LLM 失败降级 + Router 路由
+  - `test_one_page_estimator.py`（7 条）：基本情况 + 超页边界 + GPA/短期实习/重复技能建议
+  - `test_information_scorer.py`（8 条）：评分边界 + 自动路由推荐模式正确性
+  - `test_resume_rewriter_mode_a.py`（8 条）：不编造数据 + 保留原数字 + 每段 rewrite_reason
+  - `test_resume_rewriter_mode_b.py`（10 条）：不编公司名/学校 + 区间数字 + [AI 模板生成] 标注 + anchored_keywords
+  - `test_schema_v3.py`（17 条）：4 张表存在 + 9 个 CRUD + achievements 持久化 + JSON 双向序列化
+
+### §6 验收 checklist（round-1 引擎层可勾选）
+
+- [ ] Tab1 表单填写流畅 —— **round-2 UI**
+- [x] Tab2 三种 JD 输入都能跑通 —— **后端层已实现**（text/image/rag 三 parser + Router）
+- [x] Tab3 模式 A / 模式 B / 自动切换都能触发 —— **后端层已实现**（3 个 mode + auto 路由）
+- [ ] 模式 B 输出有"虚线框 + 警示色 + 标注" —— **round-2 UI**（round-1 JSON 输出标 `is_ai_generated=true`）
+- [x] 改写说明每段都生成 —— **round-1 已实现**（`rewrite_reason` 字段必填）
+- [ ] Tab4 实时预估一页纸容量 —— **round-2 UI**（round-1 `services/one_page_estimator.py` 已实现）
+- [ ] 超页触发瘦身向导 —— **round-2 UI**（round-1 返回 `PageEstimate.suggestions`）
+- [ ] Tab5 导出 Word/PDF 强制一页 —— **round-2**
+- [x] 模式 B 补全部分默认带 [AI 补全] 标记 —— **round-1 prompt 已锁死**（代码强制追加 `[AI 模板生成]` 到末尾）
+- [ ] 文件命名自动 `{姓名}_{岗位}_{公司}.{ext}` —— **round-2**
+- [x] pytest 全过 baseline 242 + 新增 ≥ 15（实际 65）—— **round-1 验证 ✓**
+- [ ] 至少 5 个真实用户跑通全流程 —— **round-2**
+
+**round-1 可勾选**：5 / 12（后端层部分）
+
+### 手动验证场景（3 个端到端，引擎层可演示）
+
+1. **场景 A：基本信息 + 1 段工作经历 → 模式 A 改写**
+   - 输入：fixtures/sample_resume.json（含"促成 200 单成交 / GMV 120 万"）+ sample_jd.json
+   - 调 `ResumeRewriter(llm_client=ModeAFakeLLM()).rewrite_mode_a()` 端到端
+   - 断言：`RewriteResult.mode="A"`，每段含 `rewritten` + `rewrite_reason`，保留 "200" "120 万" 数字（`test_llm_response_preserves_original_numbers` 已自动验证）
+
+2. **场景 B：图片 JD → OCR → 校对 → 改写**
+   - 输入：tests/fixtures/sample_jd.png（需 round-2 准备）
+   - 调 `ImageJDParser().parse()` mock `_ocr` 返回"字节跳动\n招聘：AI 产品经理"
+   - 断言：`StructuredJD.needs_review=True`，含 `raw_text`（`test_image_parser_always_needs_review` 已验证）
+   - 模拟用户确认 → 调 `JDParserRouter.parse(source="text", raw_text)` 入库 → 跑模式 A 端到端
+
+3. **场景 C：原简历信息极少 → 模式 B 触发**
+   - 输入：极简 `ResumeProfile`（仅姓名/邮箱/1 段空 experience + 空 projects）
+   - 调 `InformationScorer.score()` → 推荐 `mode="B"`（`score.total_score < 40`）
+   - 调 `ResumeRewriter(scorer=scorer).rewrite(mode="auto")` → 模式 B 触发
+   - 断言：输出不含"字节/阿里/腾讯"等具体公司名（`test_no_specific_company_names_in_output` 已验证），数字用区间，每段含 "[AI 模板生成]"（`test_ai_tag_appended_even_if_llm_omits` 已验证）
+
+### 显式不做 / 延后
+
+- **不动文件**：`web_app.py`（round-2 才动 UI）、`tools/generator/`（round-2 复用）、`agents/applicant.py`（M-rebuild-3 范围）、`crawler/`（数据待定）、`agents/resume_flow_a.py`（保留，round-2 才改造）、`.env` / `.env.example` / `requirements.in`（无新依赖；PaddleOCR 已是可选）
+- **不引入第三方 RAG 数据源**：RAG schema 先建，实际数据待渠道明确（round-1 只做接口骨架，retriever 返回空列表 + 提示不阻塞主路径）
+- **不重写 flow_a**：保持现有入口，内部走 v3 改写器；flow_b 不动
+- **不硬编码 provider**：保持 provider-neutral（沿用 `tools/llm.LLMClient`，无新依赖）
+- **不破坏 v2.1**：achievements 字段提升为顶层，但 `experience.achievements` 嵌套字段保留并存；`BaseBackend` 9 个新方法都按 `@abstractmethod` 实现（不破坏其他 backend）
+
+### 风险与边界（已 lock）
+
+| 风险 | 缓解 |
+|---|---|
+| LLM 改写时编造数据 | prompt 锁死 + 测试断言边界（`test_no_specific_company_names_in_output`）+ 每段 `warning` 字段 |
+| LLM 模式 B 编公司名/学校 | prompt 锁死 + 关键词黑名单测试（字节/阿里/腾讯/清华/北大...） |
+| OCR 错误被默默入库 | `needs_user_review=True` 强制前端校对（`test_image_parser_always_needs_review` 锁死） |
+| LLM 服务不可用 | 模式 A/B 都加 try/except，降级到 fallback（原样 / 占位模板）+ warning，不静默失败 |
+| Backend 双写（sqlite + pg） | 接口镜像实现，共享 schema，CI 跑两套后端 |
+| RAG 数据空 | retriever 返回空列表 + 提示，不阻塞主路径 |
+
+### 下轮（round-2）预告
+
+Phase 3：复用 `tools/generator/resume_generator.py`（Word）+ `resume_pdf.py`（PDF）+ jinja2 模板
+Phase 4：改造 `web_app.py` 5 个 render 函数（landing / flow_a / flow_b / resume_library / jd_library）走 v3 路径
+
+不在本轮范围。
