@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS resumes (
     preferred_locations JSONB DEFAULT '[]',
     education JSONB NOT NULL DEFAULT '[]',
     projects JSONB NOT NULL DEFAULT '[]',
+    achievements JSONB NOT NULL DEFAULT '[]'::jsonb,  -- v3 M-rebuild-1: 顶层成果数据字段
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMP WITH TIME ZONE
