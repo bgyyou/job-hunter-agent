@@ -1558,3 +1558,83 @@ Phase 4：改造 `web_app.py` 5 个 render 函数（landing / flow_a / flow_b / 
 | (T12) | `docs(M-rebuild-3)` | update_plan.md §8.2 修订（T4-T9 状态） |
 
 **push 状态**：本轮不 push（GitHub 账号 sunlife 邮箱被回收），commit 本地积累。
+
+---
+
+## [M-rebuild-5] v3 收口：闭环工具链 + 真实用户工具就绪（2026-07-13）
+
+### 范围
+
+按 update_plan.md §8.3 round-3 任务清单，按 P0 → P1 顺序收口：
+- **P0-1**：PDF 降级 fallback（playwright 不可用 → HTML + 浏览器打印）
+- **P0-2**：真实 LLM 跑 3 场景端到端 integration test
+- **P0-3**：真实用户试用工具链（招募话术 + 反馈表 + 汇总脚本）
+- **P1-1**：Step 2 表单加"重置草稿"按钮（仅清 Step 2-5，保留 JD）
+- **P1-2**：Step 3 auto 切 B 后"重跑改写"按钮（区分首次/手动切）
+- **P1-3**：`CHANGELOG_v2.1.md` → rename `CHANGELOG.md`
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| **P0-1** | `web_app._handle_export` PDF 失败时调 `_offer_html_fallback`：渲染 HTML + 浏览器打印指引（5 步）+ 文件名 `{姓名}_{岗位}_{公司}.html` | `web_app.py` |
+| **P0-1** | 新增 `_offer_html_fallback(resume, jd, template, error=None)`：极端情况（HTML 也渲染失败）→ `st.error` 不抛 | `web_app.py` |
+| **P0-1** | 5 条单测覆盖：HTML 字节有效 / 文件名规范 / jd=None 兜底 / HTML 渲染失败兜底 / `_handle_export` PDF 失败触发 fallback | `tests/unit/test_flow_a_step_4_5.py` |
+| **P0-2** | 新增 `pytest` marker `real_llm`：自动 skip 当 `LLM_API_KEY` 缺失（CI 友好） | `pytest.ini` |
+| **P0-2** | 新增 `tests/integration/test_flow_a_real_llm_3_scenarios.py`：3 条真 LLM 端到端 test（场景 A 完整 / B 极简 / C 超页瘦身），断言保留原数字 200/120/18 + 模式 B 不含字节/阿里/腾讯/美团/复旦/清华/北大 + 超页瘦身后导出 | `tests/integration/test_flow_a_real_llm_3_scenarios.py` |
+| **P0-3** | 新增 `docs/round3_user_trial.md`：招募话术（朋友圈短版 + 1v1 长版）+ 8 题反馈表（耗时/卡点/质量分/惊喜/想砍/下版本）+ JSONL schema + 收口报告模板 + 数据合规要求 | `docs/round3_user_trial.md` |
+| **P0-3** | 新增 `scripts/aggregate_round3_feedback.py`：读 JSONL → 聚合（N/完成率/平均耗时/q4 4 维度均分/取舍分布/痛点 TOP-N）→ Markdown 报告 + §6 验收自动勾选 | `scripts/aggregate_round3_feedback.py` |
+| **P0-3** | 9 条单测覆盖：加载 JSONL / 基础统计 / q4 均分 / 卡点聚合 / 取舍分布 / 报告渲染 / 空输入 / CLI 端到端 / 缺失文件错误 | `tests/unit/test_aggregate_round3_feedback.py` |
+| **P0-3** | `.gitignore` 加 `data/round3_feedback.jsonl`（用户隐私保护） | `.gitignore` |
+| **P1-1** | 新增 `web_app.reset_flow_a_v3_step_state()`：只清 fa_step2_form / fa_step3_rewrites / fa_step3_final_resume + 重置 fa_step3_mode='auto' + fa_step3_first_run=True，**保留 fa_jd_structured / fa_position 等 Step 1 JD state** | `web_app.py` |
+| **P1-1** | 增强 `reset_flow_a_state()`：同步清 Step 2-5 state（之前漏） | `web_app.py` |
+| **P1-1** | Step 2 UI 加"🗑 重置草稿"按钮（与"← 返回 Step 1"和"重新开始"并列） | `web_app.py` |
+| **P1-1** | 7 条单测覆盖：函数存在 / 清 3 个 form 数据 / 重置 mode+first_run / 保留 JD / 全 reset 也清 | `tests/unit/test_flow_a_step_1.py` |
+| **P1-2** | 新增 session state `fa_step3_first_run`：True=首次跑，False=已跑过 | `web_app.py` |
+| **P1-2** | `init_session_state` 默认 `fa_step3_first_run=True` + `fa_step3_mode='auto'` + `fa_step3_rewrites=None` + `fa_step3_final_resume=None` | `web_app.py` |
+| **P1-2** | Step 3 按钮文案随状态变化：首次"🚀 改写 / 生成"；切模式"🔁 切换为 模式 X 重跑"；同模式"🔁 用 模式 X 重跑"（带 help 提示上次跑了啥） | `web_app.py` |
+| **P1-2** | 4 条单测覆盖：默认 True / reset_v3 复位 / full_reset 复位 / render 含 first_run + 3 种文案 | `tests/unit/test_flow_a_step_3.py` |
+| **P1-3** | `git mv CHANGELOG_v2.1.md CHANGELOG.md`（v3 内容已占主体，文件名不一致影响 review） | `CHANGELOG.md`（重命名） |
+| **P1-3** | 同步更新 7 处引用：`README.md` / `CLAUDE.md` / `CONTRIBUTING.md` / `docs/PRD.md` / `prompts/round-2-phase3-4.md` / `update_plan.md` | 同上 |
+
+### 验证
+
+```bash
+# mock-only（CI 默认）
+pytest tests/ -q -m "not real_llm"
+# → 396 passed in ~37s
+
+# 真 LLM（需 LLM_API_KEY）
+pytest tests/integration/test_flow_a_real_llm_3_scenarios.py -v -m real_llm
+# → 3 passed in ~185s（场景 A 60s / B 60s / C 64s）
+```
+
+| 检查项 | 结果 |
+|---|---|
+| mock-only pytest | **396 passed**, 0 fail |
+| real_llm pytest | **3 passed**（场景 A/B/C 全过） |
+| 真 LLM 端到端（场景 A 完整） | ✅ 保留原数字 200/120/18 |
+| 真 LLM 端到端（场景 B 极简） | ✅ 模式 B 不含字节/阿里/腾讯/美团/复旦/清华/北大 |
+| 真 LLM 端到端（场景 C 超页） | ✅ 4 段大工作超页 → 瘦身后导出 |
+| 聚合脚本（mock 3 用户） | ✅ 9/9 单测过 |
+| CHANGELOG rename | ✅ 7 处引用同步更新 |
+
+### Commit 列表
+
+| commit | scope | 内容 |
+|---|---|---|
+| `750a986` | `feat(M-rebuild-5)` | PDF 失败降级 HTML + 浏览器打印（P0-1 闭环） |
+| `0784cb2` | `feat(M-rebuild-5)` | 真 LLM 3 场景端到端 integration test（P0-2 闭环） |
+| `74ff23f` | `feat(M-rebuild-5)` | round-3 用户试用工具链（P0-3 AI 交付物） |
+| `3921b25` | `feat(M-rebuild-5)` | Step 2 加'重置草稿'按钮 — 仅清 Step 2-5 保留 JD（P1-1 闭环） |
+| `5031629` | `feat(M-rebuild-5)` | Step 3 加'重跑改写'按钮 — 区分首次/切换/同模式（P1-2 闭环） |
+| `1495399` | `refactor(M-rebuild-5)` | CHANGELOG_v2.1.md → CHANGELOG.md（v3 内容已占主体） |
+| (本节) | `docs(M-rebuild-5)` | CHANGELOG 追加 [M-rebuild-5] 节 + update_plan §8.3 / §8.1 修订 |
+
+**push 状态**：本轮 6 commit 本地积累，仍未 push 远端（账号问题未解）。
+
+### 显式不做 / 留给用户
+
+- **P0-3 真用户招募**：招募 3-5 个朋友跑全流程 → 收集 JSONL → 跑 `scripts/aggregate_round3_feedback.py` → 汇总到 `update_plan.md §8.1 round-3 收口报告`
+- **§6 验收最后 1 条**（5 个真实用户跑通）：依赖用户真实社交网络，AI 无法独立完成
+- **一键投递 / 面试真题库** 等 v3 round-4/5 功能：见 update_plan.md §5.2
