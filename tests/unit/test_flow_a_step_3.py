@@ -193,6 +193,53 @@ class TestRenderRewriteResults:
 
 
 # ============================================================
+# P1-2: fa_step3_first_run + 按钮文案随首次/重跑变化
+# ============================================================
+
+class TestStep3RerunButton:
+    def test_first_run_default_true(self, web_app_mod, monkeypatch):
+        """init_session_state / reset 后 fa_step3_first_run=True。"""
+        import inspect
+        src_init = inspect.getsource(web_app_mod.init_session_state)
+        assert "fa_step3_first_run" in src_init, (
+            "init_session_state 应默认 fa_step3_first_run=True"
+        )
+
+    def test_reset_v3_resets_first_run(self, web_app_mod, monkeypatch):
+        """reset_flow_a_v3_step_state 把 fa_step3_first_run 重置回 True。"""
+        state = _FakeSession()
+        state["fa_step3_first_run"] = False  # 模拟已经跑过
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+        web_app_mod.reset_flow_a_v3_step_state()
+        assert state["fa_step3_first_run"] is True
+
+    def test_full_reset_resets_first_run(self, web_app_mod, monkeypatch):
+        """reset_flow_a_state 也重置 fa_step3_first_run。"""
+        state = _FakeSession()
+        state["fa_step3_first_run"] = False
+        state["fa_step3_mode"] = "B"
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+        # 让 draft abandon 不抛
+        monkeypatch.setattr(web_app_mod, "current_user_id", lambda: "u_test")
+        from services.flow_a_draft_service import FlowADraftService
+        monkeypatch.setattr(FlowADraftService, "__init__", lambda *a, **kw: None)
+        monkeypatch.setattr(FlowADraftService, "abandon_draft", lambda *a, **kw: None)
+        web_app_mod.reset_flow_a_state()
+        assert state["fa_step3_first_run"] is True
+        assert state["fa_step3_mode"] == "auto"
+
+    def test_rerun_label_logic_in_source(self, web_app_mod):
+        """P1-2 关键路径：render_flow_a_step_3_rewrite 应有 first_run 分支。"""
+        import inspect
+        src = inspect.getsource(web_app_mod.render_flow_a_step_3_rewrite)
+        # 至少有 first_run 判断 + 3 种按钮文案
+        assert "fa_step3_first_run" in src, "render 应读 fa_step3_first_run"
+        assert "改写 / 生成" in src, "首次文案缺失"
+        assert "重跑" in src, "重跑文案缺失"
+        assert "切换为" in src, "模式切换文案缺失"
+
+
+# ============================================================
 # helpers
 # ============================================================
 

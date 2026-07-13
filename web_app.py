@@ -618,6 +618,11 @@ def init_session_state() -> None:
         "fa_jd_industry": None,               # 由 RAG 路径填的 industry/function/level（兼容旧 fa_industry 等）
         "fa_jd_function": None,
         "fa_jd_level": None,
+        # v3 round-3 (P1-2) Step 3 改写状态机：首次跑 / 重跑区分
+        "fa_step3_mode": "auto",              # 当前选中的模式（auto / A / B）
+        "fa_step3_first_run": True,           # True=首次跑按钮显示"改写/生成"，False=显示"重跑改写"
+        "fa_step3_rewrites": None,            # 上次改写结果（list[dict]）
+        "fa_step3_final_resume": None,        # 上次合并后的 final_resume（dict，供 Step 4/5 用）
         # 兼容旧 v2.1 flow_a state keys
         "fa_industry": None,
         "fa_function": None,
@@ -1956,13 +1961,28 @@ def render_flow_a_step_3_rewrite() -> None:
     # 已有改写结果时显示
     rewrites = st.session_state.get("fa_step3_rewrites")
     last_mode = st.session_state.get("fa_step3_mode")
+    first_run = st.session_state.get("fa_step3_first_run", True)
+
+    # P1-2：按钮文案随首次/重跑变化
+    if first_run:
+        run_label = "🚀 改写 / 生成"
+        run_help = "首次跑改写（用上方 auto / A / B 选择）"
+    else:
+        target_mode = auto_mode if mode_choice == "auto" else mode_choice
+        if last_mode and target_mode != last_mode:
+            run_label = f"🔁 切换为 模式 {target_mode} 重跑"
+            run_help = f"上次跑的是模式 {last_mode}，这次按你的选择切到 {target_mode} 重跑"
+        else:
+            run_label = f"🔁 用 模式 {target_mode} 重跑"
+            run_help = f"上次已经跑过模式 {last_mode or target_mode}，按相同模式再跑一遍"
 
     col_run, col_next = st.columns([1, 1])
     with col_run:
         run_clicked = st.button(
-            "改写 / 生成",
+            run_label,
             type="primary",
             key="fa_step3_run",
+            help=run_help,
         )
     with col_next:
         next_disabled = not rewrites
@@ -1989,6 +2009,7 @@ def render_flow_a_step_3_rewrite() -> None:
                 ))
                 st.session_state.fa_step3_rewrites = result.to_dict()
                 st.session_state.fa_step3_mode = result.mode
+                st.session_state.fa_step3_first_run = False  # P1-2：标记已跑过
                 # 把改写结果合并成下游（Step 4/5）能吃的 final_resume
                 st.session_state.fa_step3_final_resume = _compose_final_resume(
                     resume, result, form,
