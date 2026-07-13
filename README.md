@@ -141,7 +141,7 @@ pytest tests/ -v --cov=database --cov=tools/embedder --cov=tools/chunker
 - 入口收敛：根目录只剩 `web_app.py` + `run_web.bat`，老脚本在 `scripts/legacy/`
 - 日志轮转：loguru 20MB / 7 天，写到 `logs/`
 - LLM 调用埋点：每次调用一行 `quality_checks` 记录（latency / tokens / 命中缓存 / 成功失败）
-- 完整变更账本：见 `CHANGELOG_v2.1.md`
+- 完整变更账本：见 `CHANGELOG.md`
 
 ---
 
@@ -174,7 +174,7 @@ job-hunter-agent/
 
 - 代码风格：先读 `CLAUDE.md`（第一性原理 + 中文沟通）
 - 提交前：`bash tools/githooks/install.sh` 一次即可
-- 长程演进：每个里程碑追加到 `CHANGELOG_v2.1.md`，对照本文件修订项目结构图
+- 长程演进：每个里程碑追加到 `CHANGELOG.md`，对照本文件修订项目结构图
 - 升级 schema：在 `database/migrations/` 新增编号文件，更新 `schema_version` 表
 
 ---

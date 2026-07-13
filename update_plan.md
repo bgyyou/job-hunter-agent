@@ -515,7 +515,7 @@ v3 模板字段结构**对齐这份样例**，同时支持多套视觉风格。
 | `database/backends/sqlite_backend.py` | 同上（SQLite 实现） |
 | `database/backends/postgres_backend.py` | 同上（PostgreSQL 实现） |
 | `tools/resume_parser.py` | 字段结构对齐 v3 表单（新增"成果数据"独立字段） |
-| `CHANGELOG_v2.1.md` | 追加 `[M-rebuild-1]` 和 `[M-rebuild-2]` 两节 |
+| `CHANGELOG.md` | 追加 `[M-rebuild-1]` 和 `[M-rebuild-2]` 两节 |
 
 ### 3.3 不动文件
 
@@ -533,7 +533,7 @@ v3 模板字段结构**对齐这份样例**，同时支持多套视觉风格。
 | 文件 | 谁写 | 谁读 | 时机 |
 |---|---|---|---|
 | `update_plan.md`（本文件） | Mavis（产品 + 技术方案） | Claude code 实现 / 用户 review | v3 启动时定稿 |
-| `CHANGELOG_v2.1.md` | Claude code 实现后追加 | 用户 / reviewer | 每个里程碑完成后 |
+| `CHANGELOG.md` | Claude code 实现后追加 | 用户 / reviewer | 每个里程碑完成后 |
 | `CLAUDE.md` | 既有（项目协作规则） | Claude code | 全程遵守 |
 | `CONTRIBUTING.md` | 既有（贡献者流程） | 外部贡献者 | 全程 |
 
@@ -687,7 +687,7 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 
 - **项目协作规则**：`CLAUDE.md`（含 commit 规范、推的时机等）
 - **贡献者流程**：`CONTRIBUTING.md`
-- **历史账本**：`CHANGELOG_v2.1.md`（每个 milestone 完成后追加一节）
+- **历史账本**：`CHANGELOG.md`（每个 milestone 完成后追加一节）
 - **现成模板参照**：`AI Agent产品经理_简历.md`
 - **本文件**：`update_plan.md` — **Mavis + Claude code + 用户 唯一协作对接文件**
 
@@ -703,9 +703,9 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 | 轮次 | 范围 | 状态 | 关键产出 | 关联 commit |
 |---|---|---|---|---|
 | **round-1** | Phase 1（schema + JD 解析 + 一页纸预估）+ Phase 2（模式 A/B 改写 + auto 路由） | ✅ 完成（未 push 远端，账号问题） | 12 commit，baseline 242→307，新增 65 条测试 | `9d062f2` → `2872107`（+ `1f6161a` / `7e7c612` v2.1 flow-a 修复） |
-|  | §6 验收 5/12 勾选（后端层）；7/12 延后 round-2（UI 改造 + 手动场景） |  | 详细见 `CHANGELOG_v2.1.md` [M-rebuild-1+2] 节 |  |
+|  | §6 验收 5/12 勾选（后端层）；7/12 延后 round-2（UI 改造 + 手动场景） |  | 详细见 `CHANGELOG.md` [M-rebuild-1+2] 节 |  |
 | **round-2** | Phase 3（document_generator 统一接口 + 2 套 Word 模板）+ Phase 4（flow_a 5 Step UI） | ✅ 完成（未 push 远端，账号问题） | 6 commit（本地），baseline 326→371，新增 45 条测试（19 doc_gen + 42 step UI - 复用 16 + 3 端到端） | 待 commit（round-2 期间 git 改动 6 个 commit） |
-|  | §6 验收 11/12 勾选（剩 1 项 5 个真实用户验证 → round-3） |  | 详细见 `CHANGELOG_v2.1.md` [M-rebuild-3+4] 节 |  |
+|  | §6 验收 11/12 勾选（剩 1 项 5 个真实用户验证 → round-3） |  | 详细见 `CHANGELOG.md` [M-rebuild-3+4] 节 |  |
 
 ### 8.2 当前活跃轮次
 
@@ -728,7 +728,7 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 - [x] **T8**: Phase 4 — Step 5: Word/PDF 导出（调 document_generator，强制一页，文件命名 `{姓名}_{岗位}_{公司}.{ext}`） ✅ 同上（3 条单测）
 - [x] **T9**: Phase 4 — 5 个 Step UI 单测（≥ 15 条） ✅ 42 条（4 个 test 文件）
 - [x] **T10**: 3 个手动场景跑通（完整/极简/部分） ✅ 端到端集成 test 3 条（`test_flow_a_step_3to5_scenarios.py`）
-- [x] **T11**: CHANGELOG 追加 [M-rebuild-3] + [M-rebuild-4] 两节 ✅ `CHANGELOG_v2.1.md` 追加
+- [x] **T11**: CHANGELOG 追加 [M-rebuild-3] + [M-rebuild-4] 两节 ✅ `CHANGELOG.md` 追加
 - [x] **T12**: update_plan.md 修订 ✅ 本节（任务清单 + 进度汇总）
 
 ##### 歧义清单（启动前先看 update_plan + 现状能不能解）
@@ -782,7 +782,8 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
     - 选了同模式 → "🔁 用 模式 X 重跑"
   - ✅ `reset_flow_a_state` / `reset_flow_a_v3_step_state` 同步重置 fa_step3_first_run=True
   - ✅ 4 条新单测覆盖：默认 True / reset_v3 复位 / full_reset 复位 / render 含 first_run + 3 种文案
-- [ ] **P1-3**: CHANGELOG_v2.1.md → rename 成 CHANGELOG.md（v3 内容已占主体，文件名不一致影响 review）
+- [x] **P1-3**: CHANGELOG_v2.1.md → rename 成 CHANGELOG.md（v3 内容已占主体，文件名不一致影响 review）
+  - ✅ `git mv CHANGELOG_v2.1.md CHANGELOG.md`；同步改 README/CLAUDE.md/CONTRIBUTING.md/docs/PRD.md/prompts/round-2-phase3-4.md/update_plan.md 共 7 处引用；`data/temp/` 下的旧 snapshot 保留不动
 
 **收口验证**：
 

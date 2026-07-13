@@ -275,6 +275,6 @@ python tools/screenshot/capture_pages.py
 
 ## 8. 相关文档
 
-- [CHANGELOG_v2.1.md](../CHANGELOG_v2.1.md) — 完整变更账本
+- [CHANGELOG.md](../CHANGELOG.md) — 完整变更账本
 - [README.md](../README.md) — 快速上手
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — 贡献者流程
