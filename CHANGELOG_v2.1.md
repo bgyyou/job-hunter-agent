@@ -1443,3 +1443,118 @@ Phase 3：复用 `tools/generator/resume_generator.py`（Word）+ `resume_pdf.py
 Phase 4：改造 `web_app.py` 5 个 render 函数（landing / flow_a / flow_b / resume_library / jd_library）走 v3 路径
 
 不在本轮范围。
+
+---
+
+## [M-rebuild-3 + M-rebuild-4] v3 文档生成 + Flow A 5 Step UI（2026-07-13）
+
+> **范围**：v3 round-2 — Phase 3（文档生成统一接口）+ Phase 4（flow_a 5 Step 状态机）
+> **本节专门收录 round-2 的实现账本**。M-rebuild-3 之前在 §1.5 / §5.2 标注"暂不做"，
+> round-2 重新启动 = Phase 3（文档生成）+ Phase 4（5 Step UI）。M-rebuild-4 面试真题
+> 题库仍暂搁（§5.2）。
+
+### 范围
+
+| 阶段 | 范围 | 文件 |
+|---|---|---|
+| Phase 3 | `services/document_generator.py`（Word + PDF 统一接口 + 2 套 jinja2 模板） | T1-T3 |
+| Phase 4 | `web_app.py` 5 Step 状态机：JD 输入 / 表单 / 改写 / 预览 / 导出 | T4-T8 |
+| 测试 | 4 个新 test 文件，42 条新单测 | T9 |
+| 手动场景 | 3 端到端集成 test | T10 |
+| 文档 | CHANGELOG（本节）+ update_plan.md 修订 | T11-T12 |
+
+### 产出
+
+**Phase 3 — 文档生成（commit: `feat(M-rebuild-3): document_generator 统一接口 + 2 套 Word 模板`）**
+
+- `services/document_generator.py`（370 行）
+  - `DocumentGenerator.generate_word()` — python-docx + jinja2 模板（保守 / 现代 2 套）
+  - `DocumentGenerator.generate_pdf()` — 复用 `tools/generator/resume_pdf.py`（playwright headless chromium，零新增依赖）
+  - `OnePageOverflowError` — 严格一页纸校验，超页直接抛
+  - `suggest_filename()` / `sanitize_filename_part()` — 文件名 `{姓名}_{岗位}_{公司}.{ext}` + Windows 非法字符过滤
+  - §1.4 硬约束：10.5pt / 1.2 行距 / 12mm × 14mm 边距 / A4 265mm
+- `services/document_generator_templates/word/{conservative,modern}.j2` — 2 套 jinja2 模板
+- `services/one_page_estimator.py` — 加 `_get_field()` 辅助函数（dict / dataclass / Pydantic 三态读字段）
+- `tests/conftest.py` — 移除 lxml.etree stub（破坏 python-docx）
+- 19 条 document_generator 单测
+
+**Phase 4 — 5 Step UI（commit: `feat(M-rebuild-3): flow_a 5 Step 状态机 + 4 个 Step UI 改造`）**
+
+- `web_app.py` 新增：
+  - `render_flow_a_step_1_jd_input()` — T4
+  - `render_flow_a_step_2_form()` — T5
+  - `render_flow_a_step_3_rewrite()` — T6
+  - `render_flow_a_step_4_preview()` — T7
+  - `render_flow_a_step_5_export()` — T8
+  - `render_flow_a_legacy_steps()` — 旧 v2.1 4 步逻辑保留兼容
+  - 11 个 helper：`_render_jd_rag_panel()` / `_render_jd_text_panel()` / `_render_jd_image_panel()` / `_render_jd_review_form()` / `_jd_to_dict()` / `_sync_flow_a_position_from_jd()` / `_render_step2_basic()` / `_render_step2_education_list()` / `_render_step2_work_list()` / `_render_step2_project_list()` / `_render_step2_optional()` / `_validate_step2_form()` / `step2_form_to_resume()` / `_score_resume()` / `_compose_final_resume()` / `_render_rewrite_results()` / `_estimate_resume()` / `_render_one_page_estimate()` / `_handle_export()`
+  - 11 个 v3 新 state key：`fa_step` / `fa_jd_input_mode` / `fa_jd_text_input` / `fa_jd_structured` / `fa_jd_review_done` / `fa_jd_image_path` / `fa_jd_industry` / `fa_jd_function` / `fa_jd_level` / `fa_step2_form` / `fa_step3_rewrites` / `fa_step3_mode` / `fa_step3_final_resume`
+- 路由分发：`render_flow_a()` 根据 `fa_step`（1-5）调用对应 render 函数，6+ 走 legacy
+
+**Q1-Q5 决策（update_plan §8.2 已记录）**
+
+- Q1：下拉保留 = RAG 入口 + 旁加 text/image 两个按钮
+- Q2：本轮 2 套模板（保守/现代），第 3 套创意留 round-3
+- Q3：保留 playwright 方案（已稳定 ≥ 半年），前端 print-to-PDF 留 round-3
+- Q4：方案 A 渐进迁移（每 Step 一个 render 函数）
+- Q5：本轮只动 flow_a，flow_b 保留
+
+### 验收对照（update_plan §6）
+
+| # | 验收项 | round-2 完成情况 |
+|---|---|---|
+| 1 | Tab1 表单填写流畅 + `+` 号扩展 | ✅ T5：默认 1 段教育 + 1 段工作 + 0 段项目，`+` 号显式扩展 |
+| 2 | Tab2 三种 JD 输入都能跑通（含 OCR 校对） | ✅ T4：RAG + Text + Image 三路径 + 校对界面 |
+| 3 | Tab3 模式 A / B / 自动切换都能触发 | ✅ T6：3 个 radio 选项 + auto 路由 |
+| 4 | 模式 B 输出有"虚线框 + 警示色 + 标注" | ✅ T6：HTML 渲染虚线框 + ⚠️ 标 |
+| 5 | 改写说明每段都生成 | ✅ T6：调 round-1 ResumeRewriter（含 rewrite_reason） |
+| 6 | Tab4 实时预估一页纸容量 | ✅ T7：调 OnePageEstimator，进度条 + 段行数 |
+| 7 | 超页触发瘦身向导，标黄 + AI 建议 | ✅ T7：3 类建议（GPA / 短期实习 / 重复技能）+ 超页段名 |
+| 8 | Tab5 导出 Word/PDF 强制一页 | ✅ T8：strict_one_page=True，超页直接报错 |
+| 9 | 模式 B 补全部分默认带 [AI 补全] 标记 | ✅ T6 + T8：HTML 虚线框 + 模板"⚠️ [AI 模板生成]" |
+| 10 | 文件命名自动 `{姓名}_{岗位}_{公司}.{ext}` | ✅ T8：suggest_filename + sanitize_filename_part |
+| 11 | pytest 全过 baseline 326 + 新增 ≥ 15 | ✅ 实际 368（baseline 326 + 42 新） |
+| 12 | 至少 5 个真实用户跑通全流程 | ⏳ round-3 验证 |
+
+**round-2 完成 11/12**（剩 1 项依赖真实用户 round-3 跑通）。
+
+### 测试覆盖
+
+| 测试文件 | 条数 | 覆盖 |
+|---|---|---|
+| `tests/unit/test_flow_a_step_1.py` | 9 | JD 输入三路径 + state machine 路由 |
+| `tests/unit/test_flow_a_step_2.py` | 15 | 渐进式披露表单 + 默认最小集 + 必填校验 + form→resume 转换 |
+| `tests/unit/test_flow_a_step_3.py` | 11 | 模式 A/B/auto 切换 + InformationScorer 包装 + 改写结果展示 |
+| `tests/unit/test_flow_a_step_4_5.py` | 7 | 一页纸预估 + 瘦身向导 + Word/PDF 导出 |
+| **合计** | **42** | T9 要求 ≥ 15，超额 2.8× |
+
+### 风险与边界（已验证）
+
+| 风险 | 缓解 | round-2 验证 |
+|---|---|---|
+| LLM 改写编造数据 | prompt 锁死 + 每段 warning 字段 | 调 round-1 改写器，行为一致 |
+| LLM 模式 B 编公司名 | prompt 锁死 + UI 虚线框 + 标注 | T6 模式 B 渲染走虚线框 |
+| 简历超页 | 实时预估 + 瘦身向导 + 导出前检查 | T7 实时估 + T8 严格一页 |
+| OCR 错误被默默用 | needs_user_review=True 强制校对 | T4 image 路径强制走校对界面 |
+| Backend 双写 | 接口镜像，CI 跑两套 | 沿用 round-1 baseline 326 |
+| LLM 客户端未配置 | _score_resume / _estimate_resume fallback 不抛 | T6 test_no_llm_no_crash / T7 test_fallback_on_exception |
+
+### 不在本轮范围
+
+- M-rebuild-3 一键投递 4 平台（§5.2 暂不做，round-4 启动）
+- M-rebuild-4 AI 面试真题题库（§5.2 暂不做，round-5 启动）
+- 移动端 / 简历评分 / 多语言简历 / 简历市场（§5.2 一律暂不做）
+- 真实用户跑通 5 人（round-3 启动）
+
+### Commit 列表
+
+| commit | scope | 内容 |
+|---|---|---|
+| (T1-T3) | `feat(M-rebuild-3)` | document_generator 统一接口 + 2 套 Word 模板 |
+| (T4-T8) | `feat(M-rebuild-3)` | flow_a 5 Step 状态机 + 4 个 Step UI 改造 |
+| (T9) | `test(M-rebuild-3)` | 4 个 test 文件 42 条单测 |
+| (T10) | `test(M-rebuild-3)` | 3 端到端集成 test（手测等价） |
+| (T11) | `docs(M-rebuild-3)` | CHANGELOG_v2.1.md 追加 [M-rebuild-3 + M-rebuild-4] |
+| (T12) | `docs(M-rebuild-3)` | update_plan.md §8.2 修订（T4-T9 状态） |
+
+**push 状态**：本轮不 push（GitHub 账号 sunlife 邮箱被回收），commit 本地积累。
