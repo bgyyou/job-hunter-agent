@@ -608,6 +608,17 @@ def init_session_state() -> None:
         "flow_b_step": "resume",
         "flow_b_company_name": "",
         "flow_b_jd_input_type": "粘贴 JD",
+        # v3 round-2 (M-rebuild-1+2+3) 5-step state machine
+        "fa_step": 1,                         # 1-5: JD 输入 / 表单 / 改写 / 预览 / 导出
+        "fa_jd_input_mode": "rag",            # "rag" / "text" / "image"
+        "fa_jd_text_input": "",               # 粘贴的 JD 原文
+        "fa_jd_image_path": None,             # 上传图片的临时路径
+        "fa_jd_structured": None,             # JDParserRouter 输出的 StructuredJD（dict）
+        "fa_jd_review_done": False,           # 用户是否确认过（OCR 必走，RAG/text 可跳过）
+        "fa_jd_industry": None,               # 由 RAG 路径填的 industry/function/level（兼容旧 fa_industry 等）
+        "fa_jd_function": None,
+        "fa_jd_level": None,
+        # 兼容旧 v2.1 flow_a state keys
         "fa_industry": None,
         "fa_function": None,
         "fa_position": None,
@@ -713,6 +724,19 @@ def reset_flow_a_state() -> None:
     st.session_state.fa_section_done = []
     st.session_state.fa_section_skipped = []
     st.session_state.fa_basic_form_done = False
+    # v3 round-2: 重置 5-step state machine + JD 输入相关
+    for key in [
+        "fa_jd_input_mode", "fa_jd_text_input", "fa_jd_image_path",
+        "fa_jd_structured", "fa_jd_review_done",
+        "fa_jd_industry", "fa_jd_function", "fa_jd_level",
+    ]:
+        st.session_state[key] = (
+            "rag" if key == "fa_jd_input_mode"
+            else "" if key == "fa_jd_text_input"
+            else False if key == "fa_jd_review_done"
+            else None
+        )
+    st.session_state.fa_step = 1
 
 
 def reset_flow_b_state() -> None:
@@ -1116,7 +1140,1090 @@ def render_mode_select() -> None:
 # ---------------------------------------------------------------------------
 
 
+# v3 M-rebuild-2 Step 1: JD 三选一入口（text / image / rag）
+#
+# 设计（update_plan §1.2 + §8.2 Q1 已解）：
+# - 行业×职能×岗位下拉保留 = RAG 入口（确认时调 JDParserRouter.parse(source="rag", ...)）
+# - 旁加"粘贴文本 / 上传图片"两个备选按钮
+# - 三路径统一经 JDParserRouter.parse() 入库到 fa_jd_structured
+# - OCR 路径强制 needs_user_review=True，前端必须给校对界面
+# - RAG / text 路径若 needs_user_review=False，可跳过校对直接进 Step 2
+# - 当前 Step 完成 → fa_step += 1，进入 Step 2
+def render_flow_a_step_1_jd_input() -> None:
+    """v3 Step 1: JD 输入（三选一）+ 校对 + 入库。"""
+    st.markdown('<span class="step-pill">第 1 步</span>确定目标 JD', unsafe_allow_html=True)
+    st.caption("三种方式选一：① 选行业/职能/岗位从 JD 库调 ② 粘贴 JD 文本 ③ 上传 JD 截图。")
+
+    mode = st.radio(
+        "JD 输入方式",
+        options=["rag", "text", "image"],
+        format_func=lambda m: {
+            "rag": "从行业/职能/岗位推荐（JD 库）",
+            "text": "粘贴 JD 文本",
+            "image": "上传 JD 截图（OCR）",
+        }[m],
+        key="fa_jd_input_mode_radio",
+        index=["rag", "text", "image"].index(st.session_state.get("fa_jd_input_mode", "rag")),
+        horizontal=True,
+    )
+    # 同步到 session_state（供下游使用）
+    st.session_state.fa_jd_input_mode = mode
+
+    jd: Optional[Dict[str, Any]] = st.session_state.get("fa_jd_structured")
+    needs_review = bool(jd and jd.get("needs_user_review"))
+    review_done = bool(st.session_state.get("fa_jd_review_done"))
+
+    if mode == "rag":
+        _render_jd_rag_panel()
+    elif mode == "text":
+        _render_jd_text_panel()
+    else:
+        _render_jd_image_panel()
+
+    # 校对界面（仅在 needs_user_review=True 时显示）
+    if jd and needs_review and not review_done:
+        st.divider()
+        st.markdown("##### ⚠️ 需要你校对")
+        st.caption("OCR / LLM 抽取可能有误差，请逐项确认后再继续。")
+        _render_jd_review_form(jd)
+        return
+
+    # 解析结果摘要（确认后才显示）
+    if jd and (review_done or not needs_review):
+        st.divider()
+        with st.container(border=True):
+            st.markdown("##### 当前 JD")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.write(f"**公司**：{jd.get('company') or '（未识别）'}")
+            with c2:
+                st.write(f"**岗位**：{jd.get('title') or '（未识别）'}")
+            with c3:
+                st.write(f"**来源**：{jd.get('source')}")
+            if jd.get("industry") or jd.get("function"):
+                st.write(
+                    f"**行业 × 职能**：{jd.get('industry', '-')} / {jd.get('function', '-')}"
+                    + (f" / {jd.get('level')}" if jd.get("level") else "")
+                )
+            if jd.get("responsibilities"):
+                with st.expander(f"职责（{len(jd['responsibilities'])} 条）", expanded=False):
+                    for r in jd["responsibilities"]:
+                        st.write(f"- {r}")
+            if jd.get("requirements"):
+                with st.expander(f"要求（{len(jd['requirements'])} 条）", expanded=False):
+                    for r in jd["requirements"]:
+                        st.write(f"- {r}")
+            if jd.get("parse_notes"):
+                with st.expander("解析备注", expanded=False):
+                    for n in jd["parse_notes"]:
+                        st.caption(f"· {n}")
+            # 操作：重新解析 / 下一步
+            op1, op2, op3 = st.columns([1, 1, 3])
+            with op1:
+                if st.button("重新选择", key="fa_step1_repick"):
+                    st.session_state.fa_jd_structured = None
+                    st.session_state.fa_jd_review_done = False
+                    st.rerun()
+            with op2:
+                if st.button("下一步", type="primary", key="fa_step1_next"):
+                    st.session_state.fa_step = 2
+                    _save_flow_a_draft("basic_form", None)
+                    st.rerun()
+
+
+def _render_jd_rag_panel() -> None:
+    """RAG 路径：行业/职能/岗位下拉 + JDParserRouter.parse(source='rag', ...)。"""
+    col_i, col_f, col_p = st.columns(3)
+    with col_i:
+        industries = taxonomy.list_industries()
+        industry = st.selectbox(
+            "行业", ["(请选择)"] + industries, key="fa_step1_rag_industry"
+        )
+    with col_f:
+        functions = taxonomy.list_functions(industry) if industry != "(请选择)" else []
+        function = st.selectbox(
+            "职能",
+            ["(请选择)"] + functions if functions else ["(请先选行业)"],
+            key="fa_step1_rag_function",
+            disabled=not functions,
+        )
+    with col_p:
+        positions = (
+            taxonomy.list_positions(industry, function)
+            if industry != "(请选择)" and function and function != "(请选择)"
+            else []
+        )
+        position = st.selectbox(
+            "岗位",
+            ["(请选择)"] + positions if positions else ["(请先选职能)"],
+            key="fa_step1_rag_position",
+            disabled=not positions,
+        )
+
+    level = st.selectbox(
+        "级别（可选）",
+        ["（不限）", "junior", "mid", "senior"],
+        key="fa_step1_rag_level",
+    )
+    can_run = (
+        industry != "(请选择)" and function and function != "(请选择)"
+        and position and position != "(请选择)"
+    )
+    if st.button("从 JD 库调出", type="primary", disabled=not can_run, key="fa_step1_rag_run"):
+        st.session_state.fa_jd_industry = industry
+        st.session_state.fa_jd_function = function
+        st.session_state.fa_jd_level = None if level == "（不限）" else level
+        with st.spinner("调取 RAG 库中…"):
+            try:
+                from services.jd_parser import JDParserRouter
+                router = JDParserRouter(
+                    llm_client=st.session_state.get("llm_client"),
+                    db=st.session_state.get("db"),
+                )
+                jd_obj = run_async(router.parse(
+                    source="rag",
+                    input={
+                        "industry": industry,
+                        "function": function,
+                        "level": None if level == "（不限）" else level,
+                        "position": position,
+                    },
+                ))
+                jd_dict = _jd_to_dict(jd_obj)
+                st.session_state.fa_jd_structured = jd_dict
+                st.session_state.fa_jd_review_done = (
+                    not jd_dict.get("needs_user_review", False)
+                )
+                st.success(
+                    f"已调出（{jd_dict.get('parse_notes', ['RAG 库'])[0]}）"
+                    if jd_dict.get("parse_notes") else "已调出"
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"RAG 调取失败：{exc}")
+
+
+def _render_jd_text_panel() -> None:
+    """Text 路径：text_area + JDParserRouter.parse(source='text', ...)。"""
+    text = st.text_area(
+        "把 JD 完整粘贴到这里",
+        value=st.session_state.get("fa_jd_text_input", ""),
+        height=240,
+        key="fa_step1_text_input",
+        placeholder="示例：\n字节跳动 / AI 产品经理\n岗位职责：\n1. 负责 LLM 应用的需求分析…\n2. …\n任职要求：\n1. 本科及以上…\n",
+    )
+    # 同步到 session_state 以便提交按钮读取最新值
+    st.session_state.fa_jd_text_input = text
+    if st.button("解析", type="primary", disabled=not text.strip(), key="fa_step1_text_run"):
+        with st.spinner("LLM 解析中…"):
+            try:
+                from services.jd_parser import JDParserRouter
+                router = JDParserRouter(
+                    llm_client=st.session_state.get("llm_client"),
+                    db=st.session_state.get("db"),
+                )
+                jd_obj = run_async(router.parse(source="text", input=text))
+                jd_dict = _jd_to_dict(jd_obj)
+                st.session_state.fa_jd_structured = jd_dict
+                st.session_state.fa_jd_review_done = (
+                    not jd_dict.get("needs_user_review", False)
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"解析失败：{exc}")
+
+
+def _render_jd_image_panel() -> None:
+    """Image 路径：file_uploader + PaddleOCR + JDParserRouter.parse(source='image', ...)。
+
+    OCR 不可信 → 强制 needs_user_review=True，强制走校对界面（见 render_flow_a_step_1_jd_input）。
+    """
+    uploaded = st.file_uploader(
+        "上传 JD 截图（PNG / JPG）",
+        type=["png", "jpg", "jpeg", "webp", "bmp"],
+        key="fa_step1_image_upload",
+    )
+    if uploaded is not None:
+        # 保存到临时路径（ImageJDParser.parse 接文件路径）
+        import tempfile
+        suffix = "." + uploaded.name.split(".")[-1] if "." in uploaded.name else ".png"
+        tmp = tempfile.NamedTemporaryFile(
+            delete=False, suffix=suffix, dir=tempfile.gettempdir()
+        )
+        tmp.write(uploaded.read())
+        tmp.close()
+        st.session_state.fa_jd_image_path = tmp.name
+        st.caption(f"已保存到：{tmp.name}")
+    if st.button(
+        "OCR + 解析",
+        type="primary",
+        disabled=not st.session_state.get("fa_jd_image_path"),
+        key="fa_step1_image_run",
+    ):
+        with st.spinner("OCR + LLM 抽结构中（约 10s）…"):
+            try:
+                from services.jd_parser import JDParserRouter
+                router = JDParserRouter(
+                    llm_client=st.session_state.get("llm_client"),
+                    db=st.session_state.get("db"),
+                )
+                jd_obj = run_async(router.parse(
+                    source="image", input=st.session_state.fa_jd_image_path,
+                ))
+                jd_dict = _jd_to_dict(jd_obj)
+                # 强制走校对（即使 OCR 解析后 needs_user_review=False 也强制）
+                jd_dict["needs_user_review"] = True
+                st.session_state.fa_jd_structured = jd_dict
+                st.session_state.fa_jd_review_done = False
+                st.rerun()
+            except Exception as exc:
+                st.error(f"OCR 解析失败：{exc}")
+
+
+def _render_jd_review_form(jd: Dict[str, Any]) -> None:
+    """OCR / LLM 解析后的校对表单（用户可改字段 + 确认入库）。"""
+    with st.form("fa_step1_review_form"):
+        st.caption(f"原始文本预览：\n```\n{(jd.get('raw_text') or '')[:600]}\n```")
+        c1, c2 = st.columns(2)
+        with c1:
+            company = st.text_input("公司", value=jd.get("company") or "", key="fa_step1_rev_company")
+            industry = st.text_input("行业", value=jd.get("industry") or "", key="fa_step1_rev_industry")
+        with c2:
+            title = st.text_input("岗位", value=jd.get("title") or "", key="fa_step1_rev_title")
+            function = st.text_input("职能", value=jd.get("function") or "", key="fa_step1_rev_function")
+        responsibilities = st.text_area(
+            "职责（每行一条）",
+            value="\n".join(jd.get("responsibilities") or []),
+            height=120,
+            key="fa_step1_rev_resp",
+        )
+        requirements = st.text_area(
+            "要求（每行一条）",
+            value="\n".join(jd.get("requirements") or []),
+            height=120,
+            key="fa_step1_rev_req",
+        )
+        submitted = st.form_submit_button("确认无误，下一步", type="primary")
+    if submitted:
+        jd["company"] = company.strip() or None
+        jd["title"] = title.strip() or None
+        jd["industry"] = industry.strip() or None
+        jd["function"] = function.strip() or None
+        jd["responsibilities"] = [r.strip() for r in responsibilities.splitlines() if r.strip()]
+        jd["requirements"] = [r.strip() for r in requirements.splitlines() if r.strip()]
+        jd["needs_user_review"] = False
+        st.session_state.fa_jd_structured = jd
+        st.session_state.fa_jd_review_done = True
+        st.rerun()
+
+
+def _jd_to_dict(jd_obj: Any) -> Dict[str, Any]:
+    """StructuredJD（dataclass）→ dict（Streamlit session_state 友好）。"""
+    if jd_obj is None:
+        return {}
+    if isinstance(jd_obj, dict):
+        return jd_obj
+    if hasattr(jd_obj, "to_db_dict"):
+        d = jd_obj.to_db_dict()
+        d["needs_user_review"] = getattr(jd_obj, "needs_user_review", False)
+        d["parse_notes"] = list(getattr(jd_obj, "parse_notes", []) or [])
+        d["raw_text"] = getattr(jd_obj, "raw_text", "")
+        d["level"] = getattr(jd_obj, "level", None)
+        d["user_id"] = getattr(jd_obj, "user_id", "default")
+        return d
+    if hasattr(jd_obj, "__dict__"):
+        return vars(jd_obj)
+    return {}
+
+
+def _sync_flow_a_position_from_jd() -> None:
+    """把 fa_jd_structured 同步到兼容旧逻辑的 fa_position / fa_industry / fa_function。
+
+    旧 flow_a 后续步骤（Step 2-4 的兼容路径）会读 fa_position；
+    新 v3 步骤（Step 5+）直接读 fa_jd_structured。
+    """
+    jd = st.session_state.get("fa_jd_structured") or {}
+    if jd:
+        st.session_state.fa_position = jd.get("title") or st.session_state.get("fa_position")
+        st.session_state.fa_industry = (
+            jd.get("industry") or st.session_state.get("fa_jd_industry")
+            or st.session_state.get("fa_industry")
+        )
+        st.session_state.fa_function = (
+            jd.get("function") or st.session_state.get("fa_jd_function")
+            or st.session_state.get("fa_function")
+        )
+
+
 def render_flow_a() -> None:
+    # v3 5-step state machine 分发
+    _sync_flow_a_position_from_jd()
+    fa_step = st.session_state.get("fa_step", 1)
+    if fa_step == 1:
+        render_flow_a_step_1_jd_input()
+        return
+    if fa_step == 2:
+        render_flow_a_step_2_form()
+        return
+    if fa_step == 3:
+        render_flow_a_step_3_rewrite()
+        return
+    if fa_step == 4:
+        render_flow_a_step_4_preview()
+        return
+    if fa_step == 5:
+        render_flow_a_step_5_export()
+        return
+    # Step 6+ 暂沿用 v2.1 的 4 步旧逻辑
+    render_flow_a_legacy_steps()
+
+
+# v3 round-2 Step 2: 渐进式披露表单（基本+教育+工作+项目+技能）
+#
+# 设计（update_plan §1.1）：
+# - 默认最小集：1 段教育 + 1 段工作 + 0 段项目
+# - `+ 添加` 按钮显式扩展
+# - "成果数据"独立字段（HR 最看重的数字）
+# - 技能/证书/语言/作品集折叠区（默认收起）
+# - 所有字段存在 st.session_state["fa_step2_form"] dict 里
+def render_flow_a_step_2_form() -> None:
+    """v3 Step 2: 渐进式披露表单。"""
+    form = _ensure_step2_form()
+
+    st.markdown('<span class="step-pill">第 2 步</span>填写简历内容', unsafe_allow_html=True)
+    target = (st.session_state.get("fa_jd_structured") or {}).get("title") or \
+        st.session_state.get("fa_position") or "（未选岗位）"
+    st.caption(f"目标岗位：{target} — 填一次表，能产出多份匹配不同岗位的简历。")
+
+    # 上一步 / 重置
+    op_back, op_reset, _ = st.columns([1, 1, 4])
+    with op_back:
+        if st.button("← 返回 Step 1 改 JD", key="fa_step2_back"):
+            st.session_state.fa_step = 1
+            st.rerun()
+    with op_reset:
+        if st.button("重新开始", key="fa_step2_reset"):
+            reset_flow_a_state()
+            st.rerun()
+
+    # ---------------- 基本信息（始终展开） ----------------
+    with st.expander("### 基本信息（必填）", expanded=True):
+        _render_step2_basic(form["basic"])
+
+    # ---------------- 教育经历 ----------------
+    with st.expander(f"### 教育经历（{len(form['education'])} 段）", expanded=True):
+        _render_step2_education_list(form)
+
+    # ---------------- 工作经历 ----------------
+    with st.expander(f"### 工作经历（{len(form['work'])} 段）", expanded=True):
+        _render_step2_work_list(form)
+
+    # ---------------- 项目经历（默认折叠） ----------------
+    with st.expander(f"### 项目经历（{len(form['projects'])} 段，可选）", expanded=False):
+        _render_step2_project_list(form)
+
+    # ---------------- 折叠区：技能 / 证书 / 语言 / 作品集 ----------------
+    with st.expander("### 技能 / 证书 / 语言 / 作品集（可选）", expanded=False):
+        _render_step2_optional(form)
+
+    # ---------------- 提交 ----------------
+    st.divider()
+    if st.button("保存并继续到 Step 3（改写）", type="primary", key="fa_step2_next"):
+        err = _validate_step2_form(form)
+        if err:
+            st.error(err)
+        else:
+            st.session_state.fa_step2_form = form
+            st.session_state.fa_step = 3
+            st.rerun()
+
+
+def _ensure_step2_form() -> Dict[str, Any]:
+    """确保 fa_step2_form 存在（首次进入 Step 2 初始化默认值）。"""
+    if "fa_step2_form" in st.session_state and st.session_state.fa_step2_form:
+        return st.session_state.fa_step2_form
+
+    # 从旧 fa_section_data 兜底迁移（如果用户在 Step 1 后回头用过 legacy 路径）
+    legacy = st.session_state.get("fa_section_data") or {}
+    legacy_header = legacy.get("header") or {}
+
+    form = {
+        "basic": {
+            "name": legacy_header.get("name", ""),
+            "gender": "",
+            "phone": legacy_header.get("contact", {}).get("phone", ""),
+            "email": legacy_header.get("contact", {}).get("email", ""),
+            "location": legacy_header.get("location", ""),
+            "target_role": (
+                (st.session_state.get("fa_jd_structured") or {}).get("title")
+                or st.session_state.get("fa_position") or ""
+            ),
+            "birth_year": "",
+        },
+        "education": _seed_education(legacy.get("education")),
+        "work": _seed_work(legacy.get("experience")),
+        "projects": _seed_projects(legacy.get("projects")),
+        "skills_text": ", ".join(legacy.get("skills") or []),
+        "certifications_text": "",
+        "languages_text": ", ".join(legacy.get("languages") or []),
+        "portfolio": "",
+    }
+    st.session_state.fa_step2_form = form
+    return form
+
+
+def _seed_education(legacy_edu: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """从旧 education 列表迁移，否则 1 段空模板。"""
+    if legacy_edu:
+        return [dict(e) for e in legacy_edu]
+    return [{
+        "school": "", "degree": "", "major": "",
+        "start_year": "", "end_year": "", "gpa": "",
+    }]
+
+
+def _seed_work(legacy_exp: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    if legacy_exp:
+        return [dict(e) for e in legacy_exp]
+    return [{
+        "company": "", "title": "",
+        "start_date": "", "end_date": "至今",
+        "description": "", "achievements_text": "",
+    }]
+
+
+def _seed_projects(legacy_proj: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    if legacy_proj:
+        return [dict(p) for p in legacy_proj]
+    return []
+
+
+def _render_step2_basic(basic: Dict[str, str]) -> None:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        basic["name"] = st.text_input(
+            "姓名 *", value=basic.get("name", ""), key="fa_step2_basic_name"
+        )
+        basic["gender"] = st.text_input(
+            "性别（可选）", value=basic.get("gender", ""), key="fa_step2_basic_gender"
+        )
+    with c2:
+        basic["phone"] = st.text_input(
+            "手机 *", value=basic.get("phone", ""), key="fa_step2_basic_phone"
+        )
+        basic["email"] = st.text_input(
+            "邮箱 *", value=basic.get("email", ""), key="fa_step2_basic_email"
+        )
+    with c3:
+        basic["location"] = st.text_input(
+            "现居地", value=basic.get("location", ""), key="fa_step2_basic_loc"
+        )
+        basic["birth_year"] = st.text_input(
+            "出生年（可选）", value=basic.get("birth_year", ""), key="fa_step2_basic_byear"
+        )
+    basic["target_role"] = st.text_input(
+        "求职意向（与 JD 目标岗位）",
+        value=basic.get("target_role", ""),
+        key="fa_step2_basic_target",
+    )
+
+
+def _render_step2_education_list(form: Dict[str, Any]) -> None:
+    items = form["education"]
+    for idx, edu in enumerate(items):
+        with st.container(border=True):
+            c1, c2, c3, c4, c_del = st.columns([3, 2, 2, 1, 1])
+            with c1:
+                edu["school"] = st.text_input(
+                    "学校 *", value=edu.get("school", ""), key=f"fa_s2_edu_school_{idx}"
+                )
+            with c2:
+                edu["degree"] = st.text_input(
+                    "学历 *", value=edu.get("degree", ""),
+                    placeholder="本科/硕士/博士",
+                    key=f"fa_s2_edu_degree_{idx}",
+                )
+            with c3:
+                edu["major"] = st.text_input(
+                    "专业", value=edu.get("major", ""), key=f"fa_s2_edu_major_{idx}"
+                )
+            with c4:
+                edu["start_year"] = st.text_input(
+                    "入学", value=edu.get("start_year", ""),
+                    placeholder="2020",
+                    key=f"fa_s2_edu_start_{idx}",
+                )
+            with c_del:
+                if len(items) > 1 and st.button("✕", key=f"fa_s2_edu_del_{idx}"):
+                    items.pop(idx)
+                    st.rerun()
+            c5, c6, _ = st.columns([3, 2, 5])
+            with c5:
+                edu["end_year"] = st.text_input(
+                    "毕业", value=edu.get("end_year", ""),
+                    placeholder="2024",
+                    key=f"fa_s2_edu_end_{idx}",
+                )
+            with c6:
+                edu["gpa"] = st.text_input(
+                    "GPA（可选）", value=edu.get("gpa", ""),
+                    key=f"fa_s2_edu_gpa_{idx}",
+                )
+    if st.button("+ 添加教育经历", key="fa_s2_edu_add"):
+        items.append({
+            "school": "", "degree": "", "major": "",
+            "start_year": "", "end_year": "", "gpa": "",
+        })
+        st.rerun()
+
+
+def _render_step2_work_list(form: Dict[str, Any]) -> None:
+    items = form["work"]
+    for idx, w in enumerate(items):
+        with st.container(border=True):
+            c1, c2, c3, c4, c_del = st.columns([3, 3, 2, 2, 1])
+            with c1:
+                w["company"] = st.text_input(
+                    "公司 *", value=w.get("company", ""), key=f"fa_s2_w_company_{idx}"
+                )
+            with c2:
+                w["title"] = st.text_input(
+                    "岗位 *", value=w.get("title", ""), key=f"fa_s2_w_title_{idx}"
+                )
+            with c3:
+                w["start_date"] = st.text_input(
+                    "起始", value=w.get("start_date", ""),
+                    placeholder="2022.06",
+                    key=f"fa_s2_w_start_{idx}",
+                )
+            with c4:
+                w["end_date"] = st.text_input(
+                    "结束", value=w.get("end_date", "至今"),
+                    key=f"fa_s2_w_end_{idx}",
+                )
+            with c_del:
+                if len(items) > 1 and st.button("✕", key=f"fa_s2_w_del_{idx}"):
+                    items.pop(idx)
+                    st.rerun()
+            w["description"] = st.text_area(
+                "工作描述（事实流水账，不美化）",
+                value=w.get("description", ""),
+                height=100,
+                key=f"fa_s2_w_desc_{idx}",
+            )
+            w["achievements_text"] = st.text_area(
+                "成果数据（每行一条，HR 最看重的数字）",
+                value=w.get("achievements_text", ""),
+                height=80,
+                key=f"fa_s2_w_achv_{idx}",
+                placeholder="促成 200 单成交\nGMV 120 万\n团队规模从 3 扩到 10",
+            )
+    if st.button("+ 添加工作经历", key="fa_s2_w_add"):
+        items.append({
+            "company": "", "title": "",
+            "start_date": "", "end_date": "至今",
+            "description": "", "achievements_text": "",
+        })
+        st.rerun()
+
+
+def _render_step2_project_list(form: Dict[str, Any]) -> None:
+    items = form["projects"]
+    for idx, p in enumerate(items):
+        with st.container(border=True):
+            c1, c2, c3, c4, c_del = st.columns([3, 2, 2, 2, 1])
+            with c1:
+                p["name"] = st.text_input(
+                    "项目名", value=p.get("name", ""), key=f"fa_s2_p_name_{idx}"
+                )
+            with c2:
+                p["role"] = st.text_input(
+                    "我的角色", value=p.get("role", ""), key=f"fa_s2_p_role_{idx}"
+                )
+            with c3:
+                p["start_date"] = st.text_input(
+                    "起始", value=p.get("start_date", ""),
+                    key=f"fa_s2_p_start_{idx}",
+                )
+            with c4:
+                p["end_date"] = st.text_input(
+                    "结束", value=p.get("end_date", "至今"),
+                    key=f"fa_s2_p_end_{idx}",
+                )
+            with c_del:
+                if st.button("✕", key=f"fa_s2_p_del_{idx}"):
+                    items.pop(idx)
+                    st.rerun()
+            p["description"] = st.text_area(
+                "项目描述", value=p.get("description", ""),
+                height=80, key=f"fa_s2_p_desc_{idx}",
+            )
+            p["contribution"] = st.text_area(
+                "我的贡献", value=p.get("contribution", ""),
+                height=80, key=f"fa_s2_p_contrib_{idx}",
+            )
+            p["achievements_text"] = st.text_area(
+                "成果数据（每行一条）",
+                value=p.get("achievements_text", ""),
+                height=60, key=f"fa_s2_p_achv_{idx}",
+            )
+    if st.button("+ 添加项目经历", key="fa_s2_p_add"):
+        items.append({
+            "name": "", "role": "", "start_date": "", "end_date": "至今",
+            "description": "", "contribution": "", "achievements_text": "",
+        })
+        st.rerun()
+
+
+def _render_step2_optional(form: Dict[str, Any]) -> None:
+    form["skills_text"] = st.text_area(
+        "技能（用逗号或换行分隔）",
+        value=form.get("skills_text", ""),
+        height=80,
+        key="fa_s2_skills",
+        placeholder="Python, SQL, LLM, RAG, 产品设计",
+    )
+    form["certifications_text"] = st.text_input(
+        "证书（可选）",
+        value=form.get("certifications_text", ""),
+        key="fa_s2_certs",
+        placeholder="PMP, AWS 认证, CPA",
+    )
+    form["languages_text"] = st.text_input(
+        "语言能力（用逗号分隔）",
+        value=form.get("languages_text", ""),
+        key="fa_s2_langs",
+        placeholder="中文（母语）, 英语（CET-6）",
+    )
+    form["portfolio"] = st.text_input(
+        "作品集 / GitHub 链接（可选）",
+        value=form.get("portfolio", ""),
+        key="fa_s2_portfolio",
+    )
+
+
+def _validate_step2_form(form: Dict[str, Any]) -> Optional[str]:
+    """Step 2 必填校验。返回 None = OK，否则返回错误信息。"""
+    basic = form.get("basic") or {}
+    if not (basic.get("name") or "").strip():
+        return "姓名为必填。"
+    if not (basic.get("phone") or "").strip() and not (basic.get("email") or "").strip():
+        return "手机和邮箱至少填写一项。"
+    for idx, edu in enumerate(form.get("education") or []):
+        if not (edu.get("school") or "").strip() or not (edu.get("degree") or "").strip():
+            return f"教育经历第 {idx + 1} 段：学校 / 学历必填。"
+    for idx, w in enumerate(form.get("work") or []):
+        if not (w.get("company") or "").strip() or not (w.get("title") or "").strip():
+            return f"工作经历第 {idx + 1} 段：公司 / 岗位必填。"
+    return None
+
+
+def step2_form_to_resume(form: Dict[str, Any]) -> Dict[str, Any]:
+    """把 Step 2 表单数据转成下游（Step 3 改写器 / OnePageEstimator）能吃的简历 dict。
+
+    字段对齐 models.resume.py:ResumeProfile + update_plan §1.1。
+    """
+    basic = form.get("basic") or {}
+    return {
+        "name": basic.get("name", ""),
+        "phone": basic.get("phone", ""),
+        "email": basic.get("email", ""),
+        "location": basic.get("location", ""),
+        "target_roles": [basic.get("target_role", "")] if basic.get("target_role") else [],
+        "summary": "",
+        "experience": [
+            {
+                "company": w.get("company", ""),
+                "title": w.get("title", ""),
+                "start_date": w.get("start_date", ""),
+                "end_date": w.get("end_date", ""),
+                "description": w.get("description", ""),
+                "achievements": [
+                    a.strip() for a in (w.get("achievements_text", "") or "").splitlines() if a.strip()
+                ],
+            }
+            for w in (form.get("work") or [])
+        ],
+        "projects": [
+            {
+                "name": p.get("name", ""),
+                "role": p.get("role", ""),
+                "start_date": p.get("start_date", ""),
+                "end_date": p.get("end_date", ""),
+                "description": p.get("description", ""),
+                "contribution": p.get("contribution", ""),
+                "achievements": [
+                    a.strip() for a in (p.get("achievements_text", "") or "").splitlines() if a.strip()
+                ],
+            }
+            for p in (form.get("projects") or [])
+        ],
+        "education": [
+            {k: edu.get(k, "") for k in ("school", "degree", "major", "start_year", "end_year", "gpa")}
+            for edu in (form.get("education") or [])
+        ],
+        "skills": [s.strip() for s in (form.get("skills_text", "") or "").replace("\n", ",").split(",") if s.strip()],
+        "certifications": [s.strip() for s in (form.get("certifications_text", "") or "").split(",") if s.strip()],
+        "languages": [s.strip() for s in (form.get("languages_text", "") or "").split(",") if s.strip()],
+        "portfolio": form.get("portfolio", ""),
+    }
+
+
+# v3 round-2 Step 3: 模式 A / B / auto 切换 + 调 round-1 ResumeRewriter
+#
+# 设计（update_plan §1.2 + §1.3）：
+# - 模式 A 改写（基于原简历，不编造数据）
+# - 模式 B 生成模板（无公司名/时间/学校，数字用区间）
+# - auto 模式：InformationScorer 推荐 → A / A+B / B
+# - 模式 B 输出用虚线框 + 警示色 + "[AI 模板生成]" 标注
+# - 完成后 → fa_step=4（一页纸预览 + 瘦身向导）
+def render_flow_a_step_3_rewrite() -> None:
+    """v3 Step 3: 模式 A/B/auto 切换器 + 改写结果展示。"""
+    form = st.session_state.get("fa_step2_form")
+    jd = st.session_state.get("fa_jd_structured")
+    if not form:
+        st.warning("⚠️ 请先完成 Step 2 填写简历内容。")
+        if st.button("返回 Step 2", key="fa_step3_back2"):
+            st.session_state.fa_step = 2
+            st.rerun()
+        return
+    if not jd:
+        st.warning("⚠️ 请先完成 Step 1 选择目标 JD。")
+        if st.button("返回 Step 1", key="fa_step3_back1"):
+            st.session_state.fa_step = 1
+            st.rerun()
+        return
+
+    st.markdown('<span class="step-pill">第 3 步</span>改写 / 生成', unsafe_allow_html=True)
+    target = (jd or {}).get("title") or "（未选岗位）"
+    st.caption(f"目标岗位：{target} — 选择改写模式，AI 会按你的原简历 + 目标 JD 改写。")
+
+    # 上一步
+    if st.button("← 返回 Step 2 改简历内容", key="fa_step3_back"):
+        st.session_state.fa_step = 2
+        st.rerun()
+
+    resume = step2_form_to_resume(form)
+    score = _score_resume(resume)
+    auto_mode = score["recommended_mode"]
+    st.info(
+        f"📊 **信息量评估**：{score['total_score']:.0f}/100 → "
+        f"auto 推荐 **模式 {auto_mode}**（{score['reason']}）"
+    )
+
+    # 模式选择
+    mode_choice = st.radio(
+        "改写模式",
+        options=["auto", "A", "B"],
+        format_func=lambda m: {
+            "auto": f"auto（推荐 {auto_mode}）",
+            "A": "模式 A — 基于原简历改写（不编造数据）",
+            "B": "模式 B — AI 生成模板（不带公司名/时间）",
+        }[m],
+        index=0,
+        horizontal=True,
+        key="fa_step3_mode_choice",
+    )
+
+    # 已有改写结果时显示
+    rewrites = st.session_state.get("fa_step3_rewrites")
+    last_mode = st.session_state.get("fa_step3_mode")
+
+    col_run, col_next = st.columns([1, 1])
+    with col_run:
+        run_clicked = st.button(
+            "改写 / 生成",
+            type="primary",
+            key="fa_step3_run",
+        )
+    with col_next:
+        next_disabled = not rewrites
+        if st.button(
+            "下一步：预览与导出 →", disabled=next_disabled, key="fa_step3_next",
+        ):
+            st.session_state.fa_step = 4
+            st.rerun()
+
+    if run_clicked:
+        actual_mode = auto_mode if mode_choice == "auto" else mode_choice
+        with st.spinner(
+            f"模式 {actual_mode} 改写中…（约 5-15s）"
+        ):
+            try:
+                from services.resume_rewriter import ResumeRewriter
+                rewriter = ResumeRewriter(
+                    llm_client=st.session_state.get("llm_client"),
+                )
+                result = run_async(rewriter.rewrite(
+                    original=resume,
+                    jd=jd,
+                    mode="auto" if mode_choice == "auto" else mode_choice,
+                ))
+                st.session_state.fa_step3_rewrites = result.to_dict()
+                st.session_state.fa_step3_mode = result.mode
+                # 把改写结果合并成下游（Step 4/5）能吃的 final_resume
+                st.session_state.fa_step3_final_resume = _compose_final_resume(
+                    resume, result, form,
+                )
+                st.success(f"✅ 模式 {result.mode} 改写完成（{len(result.rewrites)} 段）")
+            except Exception as exc:
+                st.error(f"改写失败：{exc}")
+                return
+
+    if rewrites:
+        _render_rewrite_results(rewrites)
+
+
+def _score_resume(resume: Dict[str, Any]) -> Dict[str, Any]:
+    """调 round-1 InformationScorer。LLM 客户端未配置时返回 0 分。"""
+    try:
+        from services.information_scorer import InformationScorer
+        scorer = InformationScorer()
+        score = scorer.score(resume)
+        return {
+            "total_score": float(getattr(score, "total_score", 0)),
+            "recommended_mode": str(getattr(score, "recommended_mode", "B")),
+            "reason": str(getattr(score, "reason", "无评分信息")),
+        }
+    except Exception:
+        return {"total_score": 0.0, "recommended_mode": "B", "reason": "评分失败，默认 B"}
+
+
+def _compose_final_resume(
+    resume: Dict[str, Any], result: Any, form: Dict[str, Any],
+) -> Dict[str, Any]:
+    """把改写结果合并进简历 dict（下游 Step 4/5 用）。"""
+    out = dict(resume)
+    rewrites = result.rewrites if hasattr(result, "rewrites") else result.get("rewrites", [])
+    # 模式 A：每段含 section / original / rewritten → 用 rewritten 替换
+    # 模式 B：每段含 section / content → 用 content 当作追加段
+    out["_rewrites"] = list(rewrites)
+    out["_rewrite_mode"] = getattr(result, "mode", "A")
+    return out
+
+
+def _render_rewrite_results(rewrites_dict: Dict[str, Any]) -> None:
+    """展示改写结果（模式 A 段 vs 模式 B 段视觉区分）。"""
+    rewrites = rewrites_dict.get("rewrites") or []
+    mode = rewrites_dict.get("mode", "A")
+    warnings = rewrites_dict.get("warnings") or []
+    needs_review = rewrites_dict.get("needs_user_review", False)
+
+    if warnings:
+        with st.expander(f"⚠️ 警告（{len(warnings)} 条）", expanded=False):
+            for w in warnings:
+                st.warning(f"· {w}")
+
+    if needs_review:
+        st.caption("📝 改写结果需要人工校对（每段都附改写理由）。")
+
+    for i, rw in enumerate(rewrites):
+        section = rw.get("section") or f"段 {i + 1}"
+        original = rw.get("original") or ""
+        rewritten = rw.get("rewritten") or rw.get("content") or ""
+        reason = rw.get("rewrite_reason") or ""
+        warn = rw.get("warning") or ""
+        is_ai = bool(rw.get("is_ai_generated", False)) or mode == "B"
+
+        if is_ai:
+            # 模式 B：虚线框 + 警示色 + [AI 模板生成] 标注
+            st.markdown(
+                f'<div style="border:2px dashed #d97706;background:#fffbeb;'
+                f'padding:12px;margin:8px 0;border-radius:6px;color:#92400e">'
+                f'<strong>⚠️ [AI 模板生成] · {section}</strong><br/>'
+                f'{rewritten}<br/>'
+                f'<small>anchored_keywords: {rw.get("anchored_keywords") or "-"}</small>'
+                f'<br/><em>AI 虚构，不带公司名/时间/学校，请结合自身情况填写</em>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # 模式 A：原 vs 改写对比
+            with st.expander(f"✏️ {section}", expanded=False):
+                if original:
+                    st.markdown("**原**")
+                    st.markdown(f"> {original}")
+                st.markdown("**改写**")
+                st.markdown(rewritten)
+                if reason:
+                    st.caption(f"💡 改写理由：{reason}")
+                if warn:
+                    st.caption(f"⚠️ 风险：{warn}")
+
+
+# v3 round-2 Step 4: 一页纸实时预览 + 瘦身向导
+#
+# 设计（update_plan §1.4 + §2.5）：
+# - 调 round-1 OnePageEstimator 实时估算
+# - 标黄低优先级段（GPA<3.0 / 短期实习 / 重复技能）
+# - AI 瘦身建议（合并/删除/精简）
+# - 用户点选后实时刷新
+# - 完成后 → fa_step=5（导出）
+def render_flow_a_step_4_preview() -> None:
+    """v3 Step 4: 一页纸实时预览 + 瘦身向导。"""
+    form = st.session_state.get("fa_step2_form")
+    final = st.session_state.get("fa_step3_final_resume")
+    jd = st.session_state.get("fa_jd_structured")
+    if not form or not final:
+        st.warning("⚠️ 请先完成 Step 1-3。")
+        if st.button("返回 Step 3", key="fa_step4_back3"):
+            st.session_state.fa_step = 3
+            st.rerun()
+        return
+
+    st.markdown('<span class="step-pill">第 4 步</span>一页纸预览 + 瘦身', unsafe_allow_html=True)
+    st.caption("实时估算总高度，超页时按建议精简。")
+
+    # 上一步
+    if st.button("← 返回 Step 3 改写", key="fa_step4_back"):
+        st.session_state.fa_step = 3
+        st.rerun()
+
+    # 实时估算
+    estimate = _estimate_resume(final)
+    _render_one_page_estimate(estimate)
+
+    # 预览（用 document_generator 的 jinja2 模板）
+    if st.session_state.get("fa_step3_mode") == "B":
+        st.caption("📌 模式 B 输出含 AI 模板生成标记")
+
+    if st.button("下一步：导出 Word / PDF →", type="primary", key="fa_step4_next"):
+        st.session_state.fa_step = 5
+        st.rerun()
+
+
+def _estimate_resume(resume: Dict[str, Any]) -> Any:
+    """调 round-1 OnePageEstimator。"""
+    try:
+        from services.one_page_estimator import OnePageEstimator
+        estimator = OnePageEstimator()
+        return estimator.estimate(resume)
+    except Exception as exc:
+        # 估算失败不阻塞主流程，返回一个 fallback PageEstimate
+        from services.one_page_estimator import PageEstimate
+        return PageEstimate(
+            total_mm=0.0, capacity_mm=265.0, total_lines=0, capacity_lines=55,
+            overflow=False, overflow_segments=[], suggestions=[f"估算失败：{exc}"],
+            segment_lines={},
+        )
+
+
+def _render_one_page_estimate(estimate: Any) -> None:
+    """渲染一页纸预估：进度条 + 段行数 + 瘦身建议。"""
+    total = float(getattr(estimate, "total_mm", 0.0))
+    cap = float(getattr(estimate, "capacity_mm", 265.0))
+    overflow = bool(getattr(estimate, "overflow", False))
+    pct = min(1.0, total / cap) if cap > 0 else 0.0
+
+    if overflow:
+        st.error(f"⚠️ 超页：{total:.1f}mm / {cap}mm（已用 {pct * 100:.0f}%）")
+    else:
+        st.success(f"✓ 一页可容纳：{total:.1f}mm / {cap}mm（已用 {pct * 100:.0f}%）")
+    st.progress(pct)
+
+    seg_lines = getattr(estimate, "segment_lines", {}) or {}
+    if seg_lines:
+        with st.expander(f"段行数明细（共 {sum(seg_lines.values())} 行）", expanded=False):
+            for k, v in seg_lines.items():
+                st.write(f"- {k}: {v} 行")
+
+    suggestions = list(getattr(estimate, "suggestions", []) or [])
+    overflow_segments = list(getattr(estimate, "overflow_segments", []) or [])
+    if suggestions:
+        st.markdown("##### 瘦身建议")
+        for s in suggestions:
+            st.markdown(f"- 💡 {s}")
+    if overflow_segments:
+        st.warning(f"超页段：{', '.join(overflow_segments)}")
+
+
+# v3 round-2 Step 5: Word / PDF 导出
+#
+# 设计（update_plan §1.4 + §2.8 + §3.1）：
+# - 调 document_generator（Word + PDF 统一接口）
+# - 严格一页：超页直接报错
+# - 文件命名：{姓名}_{岗位}_{公司}.{ext}
+# - 完成后 → reset flow_a（让用户开始新一轮）
+def render_flow_a_step_5_export() -> None:
+    """v3 Step 5: Word / PDF 导出。"""
+    form = st.session_state.get("fa_step2_form")
+    final = st.session_state.get("fa_step3_final_resume")
+    jd = st.session_state.get("fa_jd_structured")
+    if not form or not final:
+        st.warning("⚠️ 请先完成 Step 1-4。")
+        if st.button("返回 Step 4", key="fa_step5_back4"):
+            st.session_state.fa_step = 4
+            st.rerun()
+        return
+
+    st.markdown('<span class="step-pill">第 5 步</span>导出 Word / PDF', unsafe_allow_html=True)
+    st.caption("文件名：{姓名}_{岗位}_{公司}.{ext}。超页会被拦截。")
+
+    # 上一步
+    if st.button("← 返回 Step 4 预览", key="fa_step5_back"):
+        st.session_state.fa_step = 4
+        st.rerun()
+
+    # 模板选择
+    template = st.radio(
+        "Word 模板",
+        options=["conservative", "modern"],
+        format_func=lambda t: {"conservative": "保守（经典灰）", "modern": "现代（蓝色头部栏）"}[t],
+        horizontal=True,
+        key="fa_step5_template",
+    )
+
+    # 估算 + 严格一页检查
+    estimate = _estimate_resume(final)
+    if getattr(estimate, "overflow", False):
+        st.error("⚠️ 当前简历超出一页纸，请先回 Step 4 瘦身。")
+        if st.button("返回 Step 4 瘦身", key="fa_step5_overflow_back"):
+            st.session_state.fa_step = 4
+            st.rerun()
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("导出 Word (.docx)", type="primary", key="fa_step5_docx"):
+            _handle_export("docx", final, jd, template)
+    with col2:
+        if st.button("导出 PDF", type="primary", key="fa_step5_pdf"):
+            _handle_export("pdf", final, jd, template)
+    with col3:
+        if st.button("导出两者", type="primary", key="fa_step5_both"):
+            _handle_export("docx", final, jd, template)
+            _handle_export("pdf", final, jd, template)
+
+    # 重新开始
+    st.divider()
+    if st.button("🔄 重新开始（清空当前流程）", key="fa_step5_reset"):
+        reset_flow_a_state()
+        st.rerun()
+
+
+def _handle_export(ext: str, resume: Any, jd: Any, template: str) -> None:
+    """调 document_generator，渲染并展示下载按钮。"""
+    try:
+        from services.document_generator import DocumentGenerator
+        gen = DocumentGenerator()
+        method = gen.generate_word if ext == "docx" else gen.generate_pdf
+        result = method(resume, jd=jd, template=template, strict_one_page=True)
+        st.success(
+            f"✅ {ext.upper()} 已生成：{result.filename}（{len(result.content)} bytes）"
+        )
+        st.download_button(
+            label=f"下载 {result.filename}",
+            data=result.content,
+            file_name=result.filename,
+            mime=result.mime_type,
+            key=f"fa_step5_dl_{ext}_{len(result.content)}",
+        )
+    except Exception as exc:
+        st.error(f"导出失败：{exc}")
+
+
+# v3 round-2: 旧 v2.1 flow_a 4 步逻辑（T5/T6/T7/T8 逐步替换为新 UI）
+def render_flow_a_legacy_steps() -> None:
     render_top_nav()
     st.header("从0生成简历")
     st.caption("先确定目标岗位，再按 section 逐步采集信息。")
