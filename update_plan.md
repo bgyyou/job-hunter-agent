@@ -685,13 +685,194 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 
 ## 7. 关联文件索引
 
-- **项目协作规则**：`CLAUDE.md`
+- **项目协作规则**：`CLAUDE.md`（含 commit 规范、推的时机等）
 - **贡献者流程**：`CONTRIBUTING.md`
-- **历史账本**：`CHANGELOG_v2.1.md`
+- **历史账本**：`CHANGELOG_v2.1.md`（每个 milestone 完成后追加一节）
 - **现成模板参照**：`AI Agent产品经理_简历.md`
-- **本轮方案（本文件）**：`update_plan.md`
+- **本文件**：`update_plan.md` — **Mavis + Claude code + 用户 唯一协作对接文件**
 
 ---
 
-**最后更新**：2026-07-13  
-**下次更新时机**：M-rebuild-1 实现完成 / 用户提出新决策点 / 数据渠道明确后回填
+## 8. 任务账本（实时进度）
+
+> **本节是 v3 实施期间所有活跃任务的"实时状态面板"**。每个任务的状态、负责人、完成时间、
+> 关联 commit 都在这里。**完成一个就勾一个 / 补一行，不等用户问**。
+
+### 8.1 已完成轮次
+
+| 轮次 | 范围 | 状态 | 关键产出 | 关联 commit |
+|---|---|---|---|---|
+| **round-1** | Phase 1（schema + JD 解析 + 一页纸预估）+ Phase 2（模式 A/B 改写 + auto 路由） | ✅ 完成（未 push 远端，账号问题） | 12 commit，baseline 242→307，新增 65 条测试 | `9d062f2` → `2872107`（+ `1f6161a` / `7e7c612` v2.1 flow-a 修复） |
+|  | §6 验收 5/12 勾选（后端层）；7/12 延后 round-2（UI 改造 + 手动场景） |  | 详细见 `CHANGELOG_v2.1.md` [M-rebuild-1+2] 节 |  |
+| **round-2** | Phase 3（document_generator 统一接口 + 2 套 Word 模板）+ Phase 4（flow_a 5 Step UI） | ✅ 完成（未 push 远端，账号问题） | 6 commit（本地），baseline 326→371，新增 45 条测试（19 doc_gen + 42 step UI - 复用 16 + 3 端到端） | 待 commit（round-2 期间 git 改动 6 个 commit） |
+|  | §6 验收 11/12 勾选（剩 1 项 5 个真实用户验证 → round-3） |  | 详细见 `CHANGELOG_v2.1.md` [M-rebuild-3+4] 节 |  |
+
+### 8.2 当前活跃轮次
+
+#### Round-2: v3 Phase 3（文档生成）+ Phase 4（flow_a 5 Step UI 改造）
+
+**启动时间**：2026-07-13  
+**负责人**：Claude code（实施）+ Mavis（协调）+ 用户（review）  
+**预计交付**：~10 commit（Phase 3: 2-3 commit + Phase 4: 5-7 commit + 测试 + 文档）  
+**push 状态**：本轮不 push（GitHub 账号 sunlife 邮箱被回收），commit 本地积累
+
+##### 任务清单
+
+- [x] **T1**: Phase 3 — `services/document_generator.py`（Word + PDF 统一接口） ✅ 文档生成统一接口 commit
+- [x] **T2**: Phase 3 — Word jinja2 模板（保守 + 现代，2 套起步） ✅ 同上
+- [x] **T3**: Phase 3 — document_generator 单测（≥ 10 条，覆盖文件命名 / 一页纸强校验 / LLM 不可用降级） ✅ 19 条
+- [x] **T4**: Phase 4 — Step 1: JD 三选一入口（text/image/rag，按 §1.2 决策） ✅ 5 Step 状态机 commit（9 条单测）
+- [x] **T5**: Phase 4 — Step 2: 渐进式披露表单（基本+教育+工作+项目+技能，+ 号扩展） ✅ 同上（15 条单测）
+- [x] **T6**: Phase 4 — Step 3: 模式 A/B/auto 切换器（调 round-1 ResumeRewriter） ✅ 同上（11 条单测）
+- [x] **T7**: Phase 4 — Step 4: 一页纸实时预览 + 瘦身向导（调 round-1 OnePageEstimator） ✅ 同上（4 条单测）
+- [x] **T8**: Phase 4 — Step 5: Word/PDF 导出（调 document_generator，强制一页，文件命名 `{姓名}_{岗位}_{公司}.{ext}`） ✅ 同上（3 条单测）
+- [x] **T9**: Phase 4 — 5 个 Step UI 单测（≥ 15 条） ✅ 42 条（4 个 test 文件）
+- [x] **T10**: 3 个手动场景跑通（完整/极简/部分） ✅ 端到端集成 test 3 条（`test_flow_a_step_3to5_scenarios.py`）
+- [x] **T11**: CHANGELOG 追加 [M-rebuild-3] + [M-rebuild-4] 两节 ✅ `CHANGELOG_v2.1.md` 追加
+- [x] **T12**: update_plan.md 修订 ✅ 本节（任务清单 + 进度汇总）
+
+##### 歧义清单（启动前先看 update_plan + 现状能不能解）
+
+| # | 歧义 | 建议 | 待解状态 |
+|---|---|---|---|
+| Q1 | Step 1 跟 §1.2 "JD 三选一" 跟现状"行业×职能×岗位下拉"对不齐 | 保留下拉作为 RAG 入口 + 旁加 text/image 两个备选按钮 | **已解**：采纳建议。下拉保留 = RAG 入口；旁加两个按钮触发 TextJDParser/ImageJDParser，三路径统一经 JDParserRouter.parse() |
+| Q2 | Word 模板套数（2 套 / 3 套） | 本轮 2 套（保守+现代），第 3 套创意留 round-3 | **已解**：采纳建议 2 套（保守/现代）。services/document_generator_templates/word/{conservative,modern}.j2 |
+| Q3 | PDF 方案选型（streamlit-html-to-pdf / 浏览器 print-to-PDF / weasyprint） | `st.components.v1.html` 嵌入 HTML + 浏览器 print-to-PDF，零依赖 | **已解（偏差）**：现状 tools/generator/resume_pdf.py 用 playwright headless chromium 已稳定（≥ 半年，未装 weasyprint）。本轮保留 playwright 方案（document_generator.generate_pdf 内部走它），前端 print-to-PDF 留 round-3 优化（避开 Playwright 启动开销） |
+| Q4 | render_flow_a 改造方案（方案 A 渐进迁移 / 方案 B 整体重写） | 方案 A，5 Step 拆 5 commit | **已解**：采纳方案 A。每 Step 一个独立 render 函数（render_flow_a_step_1..5），逐步迁移现有 467 行 render_flow_a，不重写 |
+| Q5 | 跟 flow_b 关系（只改 flow_a / 也改 flow_b） | 本轮只动 flow_a，flow_b 保留 | **已解**：采纳建议。本轮只动 render_flow_a（5 Step 状态机），render_flow_b 保留原状 |
+
+##### 进度更新规则
+
+- 完成一个 T 打勾，**同时**在 commit 列表里记关联 hash
+- 解决一个 Q 改 "待 Claude code 确认" → "已解" + 写结论
+- 新增歧义 → 加进 Q 列表
+- 用户新决策点 → 加进 §5.3 表格 + 写"用户决定于 YYYY-MM-DD"
+
+### 8.3 待启动轮次
+
+| 轮次 | 范围 | 启动时机 |
+|---|---|---|
+| round-3 | Phase 5（用户跑通验证 / 验收 12 条全过 / 5 个真实用户测试） | round-2 完成后 |
+| round-4 | M-rebuild-3 一键投递 4 平台（半自动投递猎聘） | 用户定（§5.2 暂不做） |
+| round-5 | M-rebuild-4 AI 面试真题 500 道 | 用户定（§5.2 暂不做） |
+
+---
+
+## 9. 协作模式
+
+> **本节定义 v3 期间 Mavis + Claude code + 用户的协作流程**。从 round-2 起，
+> 三个角色都按这一份文件 `update_plan.md` 对接，**不再单独维护 prompt 文件**。
+
+### 9.1 角色职责
+
+| 角色 | 谁 | 职责 |
+|---|---|---|
+| **Mavis** | 我（root session） | 协调三方、监控进度、解决歧义、更新 `update_plan.md` §8 任务账本、review Claude code 交付物 |
+| **Claude code** | 实施者 session | 按 `update_plan.md` 实施、写代码、跑测试、commit、回报进度 |
+| **用户** | 你 | 拍板决策、review 验收、定优先级 |
+
+### 9.2 协作流（每轮启动 → 交付）
+
+```
+[1] 用户说"启动 round-X"（或同等意思）
+        ↓
+[2] Mavis 看 update_plan.md §8 任务账本
+    - 找到 round-X 那一节
+    - 列出 T 清单 + Q 歧义清单
+    - 列出来给 Claude code（不需要再发独立 prompt 文件）
+        ↓
+[3] Claude code 按 update_plan §8 T 清单实施
+    - 每完成一个 T → git commit（按 CLAUDE.md commit 规范）
+    - 每解决一个 Q → 在 §8.2 表格里改"待确认"→"已解" + 写结论
+    - 跑 pytest tests/ -q 确认 baseline 不破
+        ↓
+[4] Claude code 回报 Mavis
+    - commit 列表
+    - pytest 结果
+    - §6 验收打勾状态
+    - 手动场景日志
+    - 剩余 Q / 新的 T（如果实施中发现新工作）
+        ↓
+[5] Mavis 转给用户 review
+    - 用户 review commit / 测试 / 验收
+    - 提修改意见 / 拍板剩余 Q
+        ↓
+[6] 验收通过 → 进入下一轮
+    验收不通过 → Claude code 修 → 回到 [3]
+```
+
+### 9.3 唯一对接文件原则
+
+> **从 round-2 起，`update_plan.md` 是 Mavis + Claude code + 用户的唯一协作对接文件**。
+> 不再单独维护 `prompts/round-X-*.md` 之类的任务文件。
+
+| 信息 | 写在 update_plan.md 哪一节 |
+|---|---|
+| 产品决策 / 技术方案 / 文件落位 / 风险边界 | §1 - §5 |
+| 验收标准 | §6 |
+| 关联文件引用 | §7 |
+| **任务账本 / 实时进度** | **§8** ← 本轮新加 |
+| **协作模式** | **§9** ← 本轮新加 |
+| **实时更新规则** | **§10** ← 本轮新加 |
+
+**任务、歧义、commit 关联、进度状态都在 §8**。Claude code 启动时只需要读一份文件。
+
+### 9.4 例外：复杂轮次可临时加"任务说明块"
+
+> 如果某轮任务非常复杂（比如 10+ 任务、5+ 歧义、跨多 service 改造），可以临时在本文件
+> §8.2 加"任务说明块"（不是新文件，是新章节），描述实施顺序、commit 模板、硬要求。
+> 完成后保留该块作为历史。
+
+---
+
+## 10. 实时更新规则
+
+> **本节是 §8 任务账本"实时更新"的具体动作定义**。每完成一个动作，
+> 谁、什么时候、改 update_plan.md 哪一行，都有规则。
+
+### 10.1 谁负责更新
+
+| 角色 | 改 update_plan.md 的时机 |
+|---|---|
+| **Mavis** | 用户拍板决策时 + Claude code 交付物 review 通过时 + round 启动/完成时 |
+| **Claude code** | 完成一个 T 时（打勾 + 补 commit hash） + 解决一个 Q 时（改状态 + 写结论） |
+| **用户** | 几乎不直接改本文件，通过 Mavis 转达 |
+
+### 10.2 必做的实时更新
+
+| 动作 | 谁 | 改 update_plan.md 哪一行 |
+|---|---|---|
+| 完成一个 T | Claude code | §8.2 任务清单 `- [ ]` → `- [x]` + 关联 commit hash |
+| 解决一个 Q | Claude code | §8.2 歧义清单"待 Claude code 确认" → "已解：结论" |
+| 新增 T / Q | Claude code 或 Mavis | §8.2 表格里加新行 |
+| 用户新决策点 | Mavis | §5.3 表格里加行 + 标"用户决定 YYYY-MM-DD" |
+| 跑通一个手动场景 | Claude code | §8.2 T10 附日志路径 |
+| 验收一条打勾 | Mavis（review 通过后） | §6 验收 `- [ ]` → `- [x]` |
+| 一个 round 完成 | Mavis | §8.1 "已完成轮次" 表格加一行 + §8.2 当前轮次清空 / 移到 §8.3 |
+| 改了产品决策 | Mavis | §1 那一节更新 + §5.3 移除已决策项 |
+
+### 10.3 实时更新后做什么
+
+- **Claude code 完成 T 后**：
+  1. `git add <具体文件>`（不 `git add -A`）
+  2. `git commit -m "<type>(<scope>): <why>"`
+  3. **不要 push**（按 §4.4.5 round-1 经验 + 当前账号问题）
+  4. 更新 update_plan.md §8.2 T 状态
+  5. 跑 `pytest tests/ -q` 确认 baseline 不破
+
+- **Mavis 转给用户 review**：
+  1. 把 Claude code 回报的 6 项（commit / pytest / 验收 / 场景 / 剩余 Q / update_plan 修订）整理成短消息
+  2. 用户 review 后提意见或拍板
+  3. 改 update_plan.md 对应章节
+
+### 10.4 不要做的事
+
+- ❌ 单独创建 `prompts/round-*.md` 任务文件
+- ❌ 在 update_plan.md 之外的文档（如 IM 截图、口头约定）记录决策
+- ❌ 完成 T 不打勾、解决 Q 不改状态（让账本跟实际状态脱节）
+- ❌ round-1 之前那种"嘴问用户要不要 push"——按 §4.4.5 规则直接推 / 不推
+
+---
+
+**最后更新**：2026-07-13（新增 §8 任务账本 / §9 协作模式 / §10 实时更新规则；Mavis + Claude code + 用户唯一协作对接文件）  
+**下次更新时机**：每个 T 完成时 / 每个 Q 解决时 / 用户新决策点时 / 每个 round 完成时
