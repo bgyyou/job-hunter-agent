@@ -2202,7 +2202,10 @@ def render_flow_a_step_5_export() -> None:
 
 
 def _handle_export(ext: str, resume: Any, jd: Any, template: str) -> None:
-    """调 document_generator，渲染并展示下载按钮。"""
+    """调 document_generator，渲染并展示下载按钮。
+
+    P0-1 闭环：PDF 路径失败时降级到 HTML 下载 + 浏览器打印指引（不静默 st.error 拦死）。
+    """
     try:
         from services.document_generator import DocumentGenerator
         gen = DocumentGenerator()
@@ -2219,7 +2222,61 @@ def _handle_export(ext: str, resume: Any, jd: Any, template: str) -> None:
             key=f"fa_step5_dl_{ext}_{len(result.content)}",
         )
     except Exception as exc:
-        st.error(f"导出失败：{exc}")
+        if ext == "pdf":
+            # P0-1 闭环：PDF 失败（playwright 未装 / chromium 缺失） → 降级到 HTML + 浏览器打印
+            _offer_html_fallback(resume, jd, template, error=str(exc))
+        else:
+            st.error(f"导出失败：{exc}")
+
+
+def _offer_html_fallback(
+    resume: Any, jd: Any, template: str, error: Optional[str] = None,
+) -> None:
+    """P0-1 闭环：PDF 不可用时给用户 HTML 下载 + 浏览器打印指引。
+
+    触发条件：playwright headless chromium 不可用（CI / 镜像 / Windows 无 chromium 等）。
+    不抛异常，不静默 st.error — 让用户仍能把简历导出去。
+    """
+    from services.document_generator import DocumentGenerator, suggest_filename
+    gen = DocumentGenerator()
+    resume_d = gen._to_dict(resume)
+    jd_d = gen._to_dict(jd) if jd is not None else {}
+    try:
+        html_bytes = gen._render_html(resume_d, jd_d, template, for_pdf=True).encode("utf-8")
+    except Exception as exc:
+        st.error(f"HTML 渲染也失败（极端情况）：{exc}")
+        return
+
+    jd_title = jd_d.get("title", "岗位") if jd_d else "通用岗位"
+    company = jd_d.get("company", "公司") if jd_d else "公司"
+    html_name = suggest_filename(
+        name=resume_d.get("name", "简历"),
+        jd_title=jd_title,
+        company=company,
+        ext="html",
+    )
+    if error:
+        st.warning(
+            f"⚠️ PDF 渲染失败（{error}）→ 降级到 **HTML + 浏览器打印** 方案"
+        )
+    else:
+        st.info("📄 提供 HTML 下载（浏览器打开后用 Ctrl/Cmd+P 另存为 PDF）")
+
+    st.download_button(
+        label=f"下载 {html_name}",
+        data=html_bytes,
+        file_name=html_name,
+        mime="text/html",
+        key=f"fa_step5_dl_html_{len(html_bytes)}",
+    )
+    with st.expander("💡 浏览器打印 PDF 步骤", expanded=True):
+        st.markdown(
+            "1. 用浏览器打开下载的 HTML 文件\n"
+            "2. 按 **Ctrl/Cmd + P** 打开打印对话框\n"
+            "3. 目标选 **另存为 PDF**\n"
+            "4. 边距选 **最小**（保证一页纸）\n"
+            "5. 缩放 100%，点保存\n"
+        )
 
 
 # v3 round-2: 旧 v2.1 flow_a 4 步逻辑（T5/T6/T7/T8 逐步替换为新 UI）
