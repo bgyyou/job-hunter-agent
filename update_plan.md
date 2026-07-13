@@ -752,9 +752,36 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 
 | 轮次 | 范围 | 启动时机 |
 |---|---|---|
-| round-3 | Phase 5（用户跑通验证 / 验收 12 条全过 / 5 个真实用户测试） | round-2 完成后 |
+| round-3 | Phase 5（真值闭环 + 真实用户验证 + 验收 12/12 收口） | round-2 完成后（2026-07-13 启动） |
 | round-4 | M-rebuild-3 一键投递 4 平台（半自动投递猎聘） | 用户定（§5.2 暂不做） |
 | round-5 | M-rebuild-4 AI 面试真题 500 道 | 用户定（§5.2 暂不做） |
+
+#### Round-3 任务清单（v3 收口轮）
+
+**目标**：§6 验收 12/12 全过 + v3 重建"事实完工"。
+
+**优先级 P0**（必须做）：
+
+- [ ] **P0-1**: T-extra-3 闭环 — CI 环境 playwright 不可用时 PDF 降级到"提示用户用浏览器打印"（当前直接 st.error，按"上线收费前提 = 真值闭环"是硬伤）
+- [ ] **P0-2**: T-extra-4 闭环 — 真实 LLM 跑一次 3 场景（完整/极简/部分），把 `tests/integration/test_flow_a_step_3to5_scenarios.py` 的 mock LLM 路径补一条真 LLM integration test
+- [ ] **P0-3**: §6 验收最后 1 条 — 3-5 个真实用户试用 + 反馈收集（招募方式 / 反馈表设计 / 数据收集表 / 反馈汇总成 round-3 收口报告）
+
+**优先级 P1**（应该做）：
+
+- [ ] **P1-1**: T-extra-1 闭环 — Step 2 表单加"重置草稿"按钮（清空 v3 + legacy state）
+- [ ] **P1-2**: T-extra-2 闭环 — Step 3 auto 切 B 后"重跑改写"按钮（区分首次跑 / 手动切）
+- [ ] **P1-3**: CHANGELOG_v2.1.md → rename 成 CHANGELOG.md（v3 内容已占主体，文件名不一致影响 review）
+
+**收口验证**：
+
+- [ ] pytest tests/ -q ≥ 371 + 新增 ≥ 10（真 LLM test 至少 3 条 + 真实用户场景 test）
+- [ ] §6 验收 12/12 全勾
+- [ ] round-3 收口报告写到 `update_plan.md §8.1` 加新行
+- [ ] CHANGELOG 追加 [M-rebuild-5] 节（v3 收口）
+
+**push 状态**：本轮 commit 仍本地积累（账号问题未解），不强行推。
+
+**预计 commit 数**：5-7 个（P0-1/2/3 各 1 commit + P1 合并 1-2 commit + 文档 1 commit）
 
 ---
 
