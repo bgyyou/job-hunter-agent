@@ -174,3 +174,126 @@ class _FakeSession(dict):
         return self.get(k)
     def __setattr__(self, k, v):
         self[k] = v
+
+
+# ============================================================
+# _offer_html_fallback  (P0-1 PDF 降级 HTML)
+# ============================================================
+
+class TestOfferHtmlFallback:
+    def test_renders_html_bytes(self, web_app_mod, monkeypatch):
+        """PDF 失败 → 降级 HTML 时返回有效字节（HTML doctype + 中文字符）。"""
+        from tests.conftest import _StubEverything
+        monkeypatch.setattr(web_app_mod.st, "info", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "warning", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "download_button", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "error", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "expander", lambda *a, **kw: _StubEverything())
+        monkeypatch.setattr(web_app_mod.st, "markdown", lambda *a, **kw: None)
+
+        resume = {"name": "张三", "phone": "138", "email": "a@a.com",
+                  "experience": [{"company": "字节", "title": "PM",
+                                  "description": "做 RAG", "achievements": ["DAU 1000"]}]}
+        jd = {"title": "AI 产品经理", "company": "字节跳动"}
+        web_app_mod._offer_html_fallback(resume, jd, "conservative", error="chromium not found")
+        # 不抛异常，st.download_button / st.warning 都被调过即可
+
+    def test_filename_uses_name_position_company(self, web_app_mod, monkeypatch):
+        """HTML 文件名遵循 {姓名}_{岗位}_{公司}.{ext} 约定。"""
+        from tests.conftest import _StubEverything
+        monkeypatch.setattr(web_app_mod.st, "info", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "warning", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "error", lambda *a, **kw: None)
+
+        captured = {}
+        def _capture_dl(*a, **kw):
+            captured["file_name"] = kw.get("file_name") or (a[2] if len(a) > 2 else None)
+            return None
+
+        monkeypatch.setattr(web_app_mod.st, "download_button", _capture_dl)
+        monkeypatch.setattr(web_app_mod.st, "expander", lambda *a, **kw: _StubEverything())
+        monkeypatch.setattr(web_app_mod.st, "markdown", lambda *a, **kw: None)
+
+        resume = {"name": "李四", "phone": "1", "email": "l@l.com"}
+        jd = {"title": "数据分析师", "company": "Acme"}
+        web_app_mod._offer_html_fallback(resume, jd, "modern", error="playwright missing")
+
+        assert captured["file_name"] is not None
+        assert captured["file_name"].endswith(".html")
+        assert "李四" in captured["file_name"]
+        assert "数据分析师" in captured["file_name"]
+        assert "Acme" in captured["file_name"]
+
+    def test_handles_missing_jd(self, web_app_mod, monkeypatch):
+        """jd=None 时仍能渲染（空 jd_d = {}）。"""
+        from tests.conftest import _StubEverything
+        monkeypatch.setattr(web_app_mod.st, "info", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "download_button", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "expander", lambda *a, **kw: _StubEverything())
+        monkeypatch.setattr(web_app_mod.st, "markdown", lambda *a, **kw: None)
+
+        resume = {"name": "王五", "phone": "1", "email": "w@w.com"}
+        # jd=None 不抛
+        web_app_mod._offer_html_fallback(resume, None, "conservative", error="x")
+
+    def test_html_render_exception_falls_back_to_error(self, web_app_mod, monkeypatch):
+        """_render_html 也失败时 → st.error，不抛。"""
+        from tests.conftest import _StubEverything
+        captured = {"errors": []}
+        monkeypatch.setattr(web_app_mod.st, "error",
+                            lambda msg: captured["errors"].append(str(msg)))
+        monkeypatch.setattr(web_app_mod.st, "download_button", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "expander", lambda *a, **kw: _StubEverything())
+        monkeypatch.setattr(web_app_mod.st, "markdown", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "info", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "warning", lambda *a, **kw: None)
+
+        from services import document_generator as dg
+        fake_gen = MagicMock()
+        fake_gen._to_dict.side_effect = lambda x: x
+        fake_gen._render_html.side_effect = RuntimeError("html boom")
+        monkeypatch.setattr(dg, "DocumentGenerator", lambda: fake_gen)
+
+        web_app_mod._offer_html_fallback(
+            {"name": "X"}, {"title": "T", "company": "C"}, "conservative", error="pdf boom"
+        )
+        assert any("HTML 渲染也失败" in e for e in captured["errors"])
+
+    def test_handle_export_pdf_failure_calls_html_fallback(self, web_app_mod, monkeypatch):
+        """_handle_export('pdf', ...) 失败 → 调 _offer_html_fallback（不静默 st.error）。"""
+        from tests.conftest import _StubEverything
+        captured = {"called": False, "warnings": [], "downloads": 0}
+        monkeypatch.setattr(web_app_mod.st, "warning",
+                            lambda msg: captured["warnings"].append(str(msg)))
+        monkeypatch.setattr(web_app_mod.st, "download_button",
+                            lambda *a, **kw: captured.__setitem__("downloads", captured["downloads"] + 1))
+        monkeypatch.setattr(web_app_mod.st, "error", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "success", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "expander", lambda *a, **kw: _StubEverything())
+        monkeypatch.setattr(web_app_mod.st, "markdown", lambda *a, **kw: None)
+        monkeypatch.setattr(web_app_mod.st, "info", lambda *a, **kw: None)
+
+        # 让 _offer_html_fallback 标记被调
+        original_offer = web_app_mod._offer_html_fallback
+        def _spy_offer(resume, jd, template, error=None):
+            captured["called"] = True
+            return original_offer(resume, jd, template, error)
+        monkeypatch.setattr(web_app_mod, "_offer_html_fallback", _spy_offer)
+
+        # 让 generate_pdf 抛异常
+        from services import document_generator as dg
+        fake_gen = MagicMock()
+        fake_gen.generate_pdf.side_effect = RuntimeError("chromium not installed")
+        # _to_dict 必须返回真 dict（不要 MagicMock），否则 suggest_filename 内部 sub 会炸
+        fake_gen._to_dict.side_effect = lambda x: dict(x) if isinstance(x, dict) else {}
+        # _render_html 返回有效字节
+        fake_gen._render_html.return_value = "<!doctype html><html><body>简历</body></html>"
+        monkeypatch.setattr(dg, "DocumentGenerator", lambda: fake_gen)
+
+        web_app_mod._handle_export(
+            "pdf",
+            {"name": "张三", "phone": "1", "email": "z@z.com"},
+            {"title": "AI PM", "company": "字节"},
+            "conservative",
+        )
+        assert captured["called"], "PDF 失败时应触发 _offer_html_fallback"

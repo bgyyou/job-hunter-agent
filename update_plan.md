@@ -762,7 +762,8 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 
 **优先级 P0**（必须做）：
 
-- [ ] **P0-1**: T-extra-3 闭环 — CI 环境 playwright 不可用时 PDF 降级到"提示用户用浏览器打印"（当前直接 st.error，按"上线收费前提 = 真值闭环"是硬伤）
+- [x] **P0-1**: T-extra-3 闭环 — CI 环境 playwright 不可用时 PDF 降级到"提示用户用浏览器打印"（当前直接 st.error，按"上线收费前提 = 真值闭环"是硬伤）
+  - ✅ `web_app._handle_export` PDF 失败时调 `_offer_html_fallback`，渲染 HTML + 浏览器打印指引，5 条新单测覆盖
 - [ ] **P0-2**: T-extra-4 闭环 — 真实 LLM 跑一次 3 场景（完整/极简/部分），把 `tests/integration/test_flow_a_step_3to5_scenarios.py` 的 mock LLM 路径补一条真 LLM integration test
 - [ ] **P0-3**: §6 验收最后 1 条 — 3-5 个真实用户试用 + 反馈收集（招募方式 / 反馈表设计 / 数据收集表 / 反馈汇总成 round-3 收口报告）
 
