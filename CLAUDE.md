@@ -59,6 +59,6 @@ GitHub Actions 会自动跑 `tests` + `secret-scan`。如果失败：
 - 不擅自调高 `CRAWLER_DAILY_LIMIT`，遵守目标站 robots.txt。
 
 ## 7. 治理入口
-- 完整变更账本：`CHANGELOG_v2.1.md`（每个里程碑/批次追加一节）
+- 完整变更账本：`CHANGELOG.md`（每个里程碑/批次追加一节）
 - 升级 schema：在 `database/migrations/` 新增编号文件
 - 贡献者流程：`CONTRIBUTING.md`

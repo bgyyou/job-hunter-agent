@@ -82,6 +82,6 @@ scope 用模块名（`crawler` / `rag` / `web_app` / `repository` 等），不�
 
 ## 7. 长程演进
 
-每个里程碑都追加在 `CHANGELOG_v2.1.md`，对照修订 README 里的项目结构图。schema 变更走 `database/migrations/` 编号文件，不要直接改 `schema_pg.sql`。
+每个里程碑都追加在 `CHANGELOG.md`，对照修订 README 里的项目结构图。schema 变更走 `database/migrations/` 编号文件，不要直接改 `schema_pg.sql`。
 
 有问题先翻 `CLAUDE.md` 的"第一性原理"原则——不知道为什么要做的事，就不要做。
