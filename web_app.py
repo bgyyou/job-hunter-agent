@@ -736,7 +736,28 @@ def reset_flow_a_state() -> None:
             else False if key == "fa_jd_review_done"
             else None
         )
+    # v3 round-3 P1-1: 重置 Step 2-5 表单 / 改写 / 预览 / 导出相关 state
+    for key in [
+        "fa_step2_form",        # 表单数据（dict）
+        "fa_step3_rewrites",    # 改写结果（list）
+        "fa_step3_final_resume",# 最终简历（dict）
+    ]:
+        st.session_state[key] = None
+    st.session_state.fa_step3_mode = "auto"
+    st.session_state.fa_step3_first_run = True  # P1-2：区分首次跑 / 手动重跑
     st.session_state.fa_step = 1
+
+
+def reset_flow_a_v3_step_state() -> None:
+    """P1-1：仅重置 v3 Step 2-5 state，保留 Step 1 的 JD 选择。
+
+    用途：Step 2 / 3 / 4 表格填了一半想清空，但保留 JD。
+    不动 fa_jd_structured / fa_position 等 Step 1 state。
+    """
+    for key in ["fa_step2_form", "fa_step3_rewrites", "fa_step3_final_resume"]:
+        st.session_state[key] = None
+    st.session_state.fa_step3_mode = "auto"
+    st.session_state.fa_step3_first_run = True
 
 
 def reset_flow_b_state() -> None:
@@ -1496,13 +1517,20 @@ def render_flow_a_step_2_form() -> None:
     st.caption(f"目标岗位：{target} — 填一次表，能产出多份匹配不同岗位的简历。")
 
     # 上一步 / 重置
-    op_back, op_reset, _ = st.columns([1, 1, 4])
+    op_back, op_reset_draft, op_reset_all, _ = st.columns([1, 1, 1, 3])
     with op_back:
         if st.button("← 返回 Step 1 改 JD", key="fa_step2_back"):
             st.session_state.fa_step = 1
             st.rerun()
-    with op_reset:
-        if st.button("重新开始", key="fa_step2_reset"):
+    with op_reset_draft:
+        # P1-1：只清空 Step 2-5 表单数据，保留 Step 1 的 JD 选择
+        if st.button("🗑 重置草稿", key="fa_step2_reset_draft",
+                     help="只清空 Step 2-5 表单 / 改写 / 预览 / 导出，保留 Step 1 的 JD 选择"):
+            reset_flow_a_v3_step_state()
+            st.rerun()
+    with op_reset_all:
+        if st.button("重新开始", key="fa_step2_reset",
+                     help="彻底清空（连 JD 选择一起）"):
             reset_flow_a_state()
             st.rerun()
 

@@ -179,6 +179,102 @@ class TestFlowAStepDispatch:
 
 
 # ============================================================
+# P1-1: reset_flow_a_v3_step_state — 只清 Step 2-5，保留 JD
+# ============================================================
+
+class TestResetV3StepState:
+    def test_function_exists(self, web_app_mod):
+        """P1-1 新增函数应存在。"""
+        assert hasattr(web_app_mod, "reset_flow_a_v3_step_state"), (
+            "P1-1: web_app 应有 reset_flow_a_v3_step_state 函数"
+        )
+
+    def test_clears_step2_form(self, web_app_mod, monkeypatch):
+        """reset_flow_a_v3_step_state 清空 fa_step2_form。"""
+        state = _FakeSession()
+        state["fa_step2_form"] = {"basic": {"name": "张三"}}
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+
+        web_app_mod.reset_flow_a_v3_step_state()
+        assert state["fa_step2_form"] is None
+
+    def test_clears_step3_rewrites(self, web_app_mod, monkeypatch):
+        """reset_flow_a_v3_step_state 清空 fa_step3_rewrites。"""
+        state = _FakeSession()
+        state["fa_step3_rewrites"] = [{"original": "原段", "rewritten": "改写段"}]
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+
+        web_app_mod.reset_flow_a_v3_step_state()
+        assert state["fa_step3_rewrites"] is None
+
+    def test_clears_step3_final_resume(self, web_app_mod, monkeypatch):
+        """reset_flow_a_v3_step_state 清空 fa_step3_final_resume。"""
+        state = _FakeSession()
+        state["fa_step3_final_resume"] = {"name": "张三"}
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+
+        web_app_mod.reset_flow_a_v3_step_state()
+        assert state["fa_step3_final_resume"] is None
+
+    def test_resets_step3_mode_to_auto(self, web_app_mod, monkeypatch):
+        """reset_flow_a_v3_step_state 重置 fa_step3_mode='auto' + fa_step3_first_run=True。"""
+        state = _FakeSession()
+        state["fa_step3_mode"] = "B"
+        state["fa_step3_first_run"] = False
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+
+        web_app_mod.reset_flow_a_v3_step_state()
+        assert state["fa_step3_mode"] == "auto"
+        assert state["fa_step3_first_run"] is True
+
+    def test_preserves_jd_state(self, web_app_mod, monkeypatch):
+        """P1-1 关键：reset_flow_a_v3_step_state 不动 Step 1 JD state。"""
+        state = _FakeSession()
+        jd = {"title": "AI 产品经理", "company": "字节跳动"}
+        state["fa_jd_structured"] = jd
+        state["fa_position"] = "AI 产品经理"
+        state["fa_jd_industry"] = "互联网"
+        state["fa_jd_function"] = "产品"
+        state["fa_jd_level"] = "mid"
+        state["fa_jd_input_mode"] = "text"
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+
+        web_app_mod.reset_flow_a_v3_step_state()
+        # JD 状态全部保留
+        assert state["fa_jd_structured"] is jd
+        assert state["fa_position"] == "AI 产品经理"
+        assert state["fa_jd_industry"] == "互联网"
+        assert state["fa_jd_function"] == "产品"
+        assert state["fa_jd_level"] == "mid"
+        assert state["fa_jd_input_mode"] == "text"
+
+    def test_full_reset_clears_everything(self, web_app_mod, monkeypatch):
+        """reset_flow_a_state (P1-1 增强版) 也清 Step 2-5 state + 重置 fa_step=1。"""
+        state = _FakeSession()
+        state["fa_step2_form"] = {"basic": {"name": "X"}}
+        state["fa_step3_rewrites"] = [{"a": 1}]
+        state["fa_step3_final_resume"] = {"b": 2}
+        state["fa_step"] = 3
+        state["fa_jd_structured"] = {"title": "AI PM"}
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+
+        # 让 draft abandon 不抛
+        monkeypatch.setattr(web_app_mod, "current_user_id", lambda: "u_test")
+        from services.flow_a_draft_service import FlowADraftService
+        monkeypatch.setattr(FlowADraftService, "__init__", lambda *a, **kw: None)
+        monkeypatch.setattr(FlowADraftService, "abandon_draft", lambda *a, **kw: None)
+
+        web_app_mod.reset_flow_a_state()
+        # 全部清空
+        assert state["fa_step2_form"] is None
+        assert state["fa_step3_rewrites"] is None
+        assert state["fa_step3_final_resume"] is None
+        assert state["fa_step"] == 1
+        assert state["fa_step3_mode"] == "auto"
+        assert state["fa_step3_first_run"] is True
+
+
+# ============================================================
 # helpers
 # ============================================================
 
