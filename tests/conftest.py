@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import types
 from pathlib import Path
@@ -19,6 +20,15 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# v3 round-3 P0-2 闭环：conftest 是 pytest 最早执行的代码（早于 test module 顶部 load_dotenv），
+# 在此处加载 .env 让所有 test（包括 skipif 评估）都能读到 LLM_API_KEY。
+# 跟 test_flow_a_real_llm_3_scenarios.py 自己的 load_dotenv 双保险；不进 commit 任何 secrets。
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass  # 没装 dotenv 就靠 shell env，CI 不挂
 
 
 # ---------------------------------------------------------------------------
