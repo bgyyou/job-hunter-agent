@@ -708,6 +708,7 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 |  | §6 验收 11/12 勾选（剩 1 项 5 个真实用户验证 → round-3） |  | 详细见 `CHANGELOG.md` [M-rebuild-3+4] 节 |  |
 | **round-3** | P0-1 PDF fallback + P0-2 真 LLM 3 场景 test + P0-3 用户试用工具链 + P1-1 Step 2 重置草稿 + P1-2 Step 3 重跑改写 + P1-3 CHANGELOG rename | ✅ AI 交付物全部完成；⏳ 真用户招募待用户启动 | 6 commit（本地），baseline 371→396 mock-only + 3 真 LLM test | `750a986` / `0784cb2` / `74ff23f` / `3921b25` / `5031629` / `1495399` |
 |  | §6 验收 11/12 → 11/12（最后 1 条待真用户跑通；AI 已交付招募工具链） |  | 详细见 `CHANGELOG.md` [M-rebuild-5] 节 |  |
+| **round-3 hotfix** | Mavis 自验发现 conftest 缺 load_dotenv 导致 P0-2 真 LLM test 被误 skip；Mavis 直接修 conftest 让 P0-2 真闭环（清 cache 后 132.75s 跑完 3 场景） | ✅ 完成 | 1 commit（`a937a44`），baseline 396+3 真 LLM=399，pytest in 46.41s | `a937a44` |
 
 ### 8.2 当前活跃轮次
 
