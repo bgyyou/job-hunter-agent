@@ -186,26 +186,33 @@ class OnePageEstimator:
             return False
         return True
 
+    @staticmethod
+    def _get_field(resume: Any, key: str, default: Any = None) -> Any:
+        """统一从 dict / dataclass / Pydantic 读字段（duck-type）。"""
+        if isinstance(resume, dict):
+            return resume.get(key, default)
+        return getattr(resume, key, default)
+
     def _header_lines(self, resume: Any) -> int:
         """个人信息区行数（≥1）。"""
         n_fields = sum(
             1
-            for f in [getattr(resume, "name", None),
-                     getattr(resume, "phone", None),
-                     getattr(resume, "email", None),
-                     getattr(resume, "target_roles", None),
-                     getattr(resume, "preferred_locations", None)]
+            for f in [self._get_field(resume, "name"),
+                     self._get_field(resume, "phone"),
+                     self._get_field(resume, "email"),
+                     self._get_field(resume, "target_roles"),
+                     self._get_field(resume, "preferred_locations")]
             if self._has_value(f)
         )
         return max(1, (n_fields + 1) // 2)  # 一行两字段
 
     def _education_lines(self, resume: Any) -> int:
-        edu = getattr(resume, "education", []) or []
+        edu = self._get_field(resume, "education", []) or []
         return len(edu)
 
     def _experience_lines(self, resume: Any) -> int:
         """工作经历总行数：每段 = 1 行(标题) + description_chars/30 + achievements_count"""
-        exp = getattr(resume, "experience", None)
+        exp = self._get_field(resume, "experience")
         if exp is None:
             return 0
         total = 0
@@ -219,7 +226,7 @@ class OnePageEstimator:
         return total
 
     def _project_lines(self, resume: Any) -> int:
-        proj = getattr(resume, "projects", None) or []
+        proj = self._get_field(resume, "projects", []) or []
         total = 0
         for p in proj:
             desc = p.get("description", "") if isinstance(p, dict) else getattr(p, "description", "")
@@ -231,7 +238,7 @@ class OnePageEstimator:
         return total
 
     def _skill_lines(self, resume: Any) -> int:
-        skills = getattr(resume, "skills", None) or []
+        skills = self._get_field(resume, "skills", []) or []
         if isinstance(skills, dict):
             # 分类技能：technical/soft
             total_chars = sum(len(v) for v in skills.values() if isinstance(v, list))
@@ -240,7 +247,7 @@ class OnePageEstimator:
         return max(1, (total_chars + 8) // 8)  # 一行 8 个技能
 
     def _achievement_lines(self, resume: Any) -> int:
-        achv = getattr(resume, "achievements", None) or []
+        achv = self._get_field(resume, "achievements", []) or []
         return len(achv)
 
     def _build_suggestions(self, resume: Any, overflow_segments: List[str]) -> List[str]:
@@ -248,7 +255,7 @@ class OnePageEstimator:
         suggestions: List[str] = []
 
         # GPA 偏低：建议删除
-        edu = getattr(resume, "education", []) or []
+        edu = self._get_field(resume, "education", []) or []
         for e in edu:
             gpa = e.get("gpa") if isinstance(e, dict) else getattr(e, "gpa", None)
             if gpa is not None:
@@ -263,7 +270,7 @@ class OnePageEstimator:
                     pass
 
         # 短期实习 < 3 月
-        exp = getattr(resume, "experience", []) or []
+        exp = self._get_field(resume, "experience", []) or []
         for e in exp:
             duration = e.get("duration") if isinstance(e, dict) else getattr(e, "duration", None)
             if duration and self._is_short_internship(duration):
@@ -272,7 +279,7 @@ class OnePageEstimator:
                 )
 
         # 重复技能
-        skills = getattr(resume, "skills", None) or []
+        skills = self._get_field(resume, "skills", []) or []
         if isinstance(skills, list):
             counts = Counter(skills)
             repeats = {k: v for k, v in counts.items() if v >= self.REPEAT_SKILL_THRESHOLD}

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{{ resume.name or '简历' }} - {{ jd.title or '通用岗位' }}</title>
+<style>{{ styles }}</style>
+</head>
+<body>
+<div style="display:flex; justify-content:space-between; align-items:flex-end;">
+  <h1 style="margin:0;">{{ resume.name or '姓名' }}</h1>
+  <div class="contact" style="text-align:right;">
+  {%- if resume.phone %}<div>📱 {{ resume.phone }}</div>{%- endif %}
+  {%- if resume.email %}<div>✉️ {{ resume.email }}</div>{%- endif %}
+  {%- if resume.target_roles %}<div>🎯 {{ resume.target_roles | join(' / ') }}</div>{%- endif %}
+  </div>
+</div>
+<hr>
+
+{%- if jd.title %}
+<p style="background:#eff6ff; padding:6px 10px; border-left:3px solid #2563eb;">
+  <strong>目标岗位：</strong>{{ jd.title }}{% if jd.company %} @ {{ jd.company }}{% endif %}
+</p>
+{%- endif %}
+
+{%- if resume.summary %}
+<h2>个人陈述</h2>
+<p>{{ resume.summary }}</p>
+{%- endif %}
+
+{%- if resume.experience %}
+<h2>工作经历</h2>
+{%- for exp in resume.experience %}
+<h3>{{ exp.company or '公司' }} · {{ exp.title or '岗位' }} <span style="font-weight:normal; color:#888;">| {{ exp.start_date or '' }}{% if exp.start_date or exp.end_date %} - {% endif %}{{ exp.end_date or '至今' }}</span></h3>
+{%- if exp.description %}<p>{{ exp.description }}</p>{%- endif %}
+{%- if exp.achievements %}
+<ul>
+{%- for a in exp.achievements %}<li>{{ a }}</li>{%- endfor %}
+</ul>
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
+{%- if resume.projects %}
+<h2>项目经历</h2>
+{%- for p in resume.projects %}
+<h3>{{ p.name or '项目' }} · {{ p.role or '角色' }}</h3>
+{%- if p.description %}<p>{{ p.description }}</p>{%- endif %}
+{%- if p.achievements %}
+<ul>
+{%- for a in p.achievements %}<li>{{ a }}</li>{%- endfor %}
+</ul>
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+
+{%- if resume.achievements %}
+<h2>核心成果</h2>
+<ul>
+{%- for a in resume.achievements %}<li>{{ a }}</li>{%- endfor %}
+</ul>
+{%- endif %}
+
+{%- if resume.skills %}
+<h2>技能</h2>
+<p>
+{%- if resume.skills is mapping -%}
+{%- for k, v in resume.skills.items() -%}
+<strong>{{ k }}：</strong>{{ v | join('、') }}{% if not loop %}；{% endif %}
+{%- endfor -%}
+{%- else -%}
+{{ resume.skills | join('、') }}
+{%- endif %}
+</p>
+{%- endif %}
+
+{%- if resume.education %}
+<h2>教育背景</h2>
+{%- for edu in resume.education %}
+<p><strong>{{ edu.school or '学校' }}</strong> · {{ edu.degree or '' }} · {{ edu.major or '' }} · {{ edu.start_year or '' }}-{{ edu.end_year or '' }}</p>
+{%- endfor %}
+{%- endif %}
+</body>
+</html>
