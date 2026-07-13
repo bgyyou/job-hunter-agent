@@ -186,10 +186,11 @@ for _m in ("requests", "httpx"):
         mod.Session = _fake_session
         mod.Response = _FakeResponse
         sys.modules[_m] = mod
-# lxml: HTML 解析底层，bs4 警告链可能拉
-if "lxml" not in sys.modules:
-    sys.modules["lxml"] = types.ModuleType("lxml")
-    sys.modules["lxml.html"] = types.ModuleType("lxml.html")
+# lxml: HTML 解析底层，bs4 警告链可能拉。
+# 注意：不要 stub lxml.etree，否则会触发 __mro_entries__ 元类协议错误，
+# python-docx 需要真实的 lxml.etree。CI 默认装 lxml + python-docx，
+# 测试环境若无 lxml 需 `pip install lxml` 才能跑 test_document_generator。
+# （保留 lxml 父模块 stub 是为了其他测试不依赖 html 解析时仍可 import。）
 
 # fake_useragent：仅在 import 时构造 UserAgent 实例
 class _FakeUserAgent:
