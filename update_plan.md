@@ -776,7 +776,12 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
   - ✅ `web_app.reset_flow_a_v3_step_state()` 只清 fa_step2_form / fa_step3_rewrites / fa_step3_final_resume + 重置 fa_step3_mode='auto' + fa_step3_first_run=True，**保留 fa_jd_structured / fa_position 等 Step 1 JD state**
   - ✅ Step 2 UI 加"🗑 重置草稿"按钮（在"← 返回 Step 1"与"重新开始"中间），`reset_flow_a_state()` 同步清 Step 2-5
   - ✅ 7 条新单测覆盖：函数存在 / 清 3 个 form 数据 / 重置 mode+first_run / 保留 JD / 全 reset 也清
-- [ ] **P1-2**: T-extra-2 闭环 — Step 3 auto 切 B 后"重跑改写"按钮（区分首次跑 / 手动切）
+- [x] **P1-2**: T-extra-2 闭环 — Step 3 auto 切 B 后"重跑改写"按钮（区分首次跑 / 手动切）
+  - ✅ 新增 `fa_step3_first_run` session state：True=首次，按钮"🚀 改写 / 生成"；False=已跑过，按钮分两种文案：
+    - 选了不同模式 → "🔁 切换为 模式 X 重跑"（带 help 提示上次跑了啥）
+    - 选了同模式 → "🔁 用 模式 X 重跑"
+  - ✅ `reset_flow_a_state` / `reset_flow_a_v3_step_state` 同步重置 fa_step3_first_run=True
+  - ✅ 4 条新单测覆盖：默认 True / reset_v3 复位 / full_reset 复位 / render 含 first_run + 3 种文案
 - [ ] **P1-3**: CHANGELOG_v2.1.md → rename 成 CHANGELOG.md（v3 内容已占主体，文件名不一致影响 review）
 
 **收口验证**：
