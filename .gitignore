@@ -43,6 +43,9 @@ ENV/
 internal_keys.json
 data/internal_keys.json
 
+# round-3 真实用户反馈（含使用数据；不进 git）
+data/round3_feedback.jsonl
+
 # 日志
 logs/
 *.log

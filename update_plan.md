@@ -766,7 +766,9 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
   - ✅ `web_app._handle_export` PDF 失败时调 `_offer_html_fallback`，渲染 HTML + 浏览器打印指引，5 条新单测覆盖
 - [x] **P0-2**: T-extra-4 闭环 — 真实 LLM 跑一次 3 场景（完整/极简/部分），把 `tests/integration/test_flow_a_step_3to5_scenarios.py` 的 mock LLM 路径补一条真 LLM integration test
   - ✅ 新增 `tests/integration/test_flow_a_real_llm_3_scenarios.py`：3 条真 LLM 端到端 test，pytest -m real_llm 跑全过 184s；断言保留原数字 200/120/18 + 模式 B 不含字节/阿里/腾讯/复旦/清华/北大 + 超页瘦身后导出；CI 用 -m "not real_llm" 跳过
-- [ ] **P0-3**: §6 验收最后 1 条 — 3-5 个真实用户试用 + 反馈收集（招募方式 / 反馈表设计 / 数据收集表 / 反馈汇总成 round-3 收口报告）
+- [x] **P0-3**: §6 验收最后 1 条 — 3-5 个真实用户试用 + 反馈收集（招募方式 / 反馈表设计 / 数据收集表 / 反馈汇总成 round-3 收口报告）
+  - ✅ AI 交付物：`docs/round3_user_trial.md`（招募话术 + 8 题反馈表 + JSONL schema + 收口模板）+ `scripts/aggregate_round3_feedback.py`（自动汇总 + Markdown 报告）+ 9 条单测全过；`.gitignore` 加 `data/round3_feedback.jsonl` 保护用户数据
+  - ⏳ 用户责任：招募 3-5 个朋友 → 跑全流程 → 收集 JSONL → 跑汇总脚本 → 填到 `§8.1 round-3 收口报告`
 
 **优先级 P1**（应该做）：
 
