@@ -625,9 +625,9 @@ class PostgresBackend(BaseBackend):
             INSERT INTO llm_calls
                 (request_id, model, endpoint, operation, prompt_tokens,
                  completion_tokens, total_tokens, latency_ms, status,
-                 error_type, error_message, metadata)
+                 error_type, error_message, metadata, user_id)
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -643,9 +643,24 @@ class PostgresBackend(BaseBackend):
                 data.get("error_type"),
                 data.get("error_message"),
                 self._json_serialize(data.get("metadata", {})),
+                data.get("user_id", "default"),
             ),
         )
         return rows[0]["id"] if rows else 0
+
+    def get_llm_usage_today(self, user_id: Optional[str] = None) -> Dict[str, int]:
+        sql = (
+            "SELECT COUNT(*) AS calls, "
+            "COALESCE(SUM(total_tokens), 0) AS tokens "
+            "FROM llm_calls WHERE created_at::date = CURRENT_DATE"
+        )
+        params: List[Any] = []
+        if user_id is not None:
+            sql += " AND user_id = %s"
+            params.append(user_id)
+        rows = self._fetchall(sql, params)
+        row = rows[0] if rows else {"calls": 0, "tokens": 0}
+        return {"calls": int(row["calls"]), "tokens": int(row["tokens"])}
 
     def list_llm_calls(self, model: Optional[str] = None,
                        operation: Optional[str] = None,

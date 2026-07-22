@@ -116,6 +116,18 @@ class SqliteBackend(BaseBackend):
             "CREATE INDEX IF NOT EXISTS idx_jds_quality_score ON jds(quality_score)"
         )
 
+        # v4 T1.4: llm_calls.user_id 配额统计维度 + (user_id, created_at) 复合索引
+        # （013 迁移的 SQLite 实际落地处；schema.sql 里 llm_calls 无此列，
+        #  PRAGMA 检查保证幂等，编号迁移文件仅作 schema_version 标记）
+        llm_calls_cols = {r[1] for r in conn.execute("PRAGMA table_info(llm_calls)").fetchall()}
+        if "user_id" not in llm_calls_cols:
+            conn.execute("ALTER TABLE llm_calls ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default'")
+            logger.info("migration: added llm_calls.user_id column")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_llm_calls_user_created_at "
+            "ON llm_calls(user_id, created_at)"
+        )
+
         # 编号迁移文件：database/migrations/NNN_description.sql
         mig_dir = Path(__file__).parent.parent.parent / "database" / "migrations"
         if not mig_dir.exists():
@@ -826,9 +838,9 @@ class SqliteBackend(BaseBackend):
                 INSERT INTO llm_calls
                     (request_id, model, endpoint, operation, prompt_tokens,
                      completion_tokens, total_tokens, latency_ms, status,
-                     error_type, error_message, metadata, created_at)
+                     error_type, error_message, metadata, user_id, created_at)
                 VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 """,
                 (
                     data.get("request_id"),
@@ -843,10 +855,28 @@ class SqliteBackend(BaseBackend):
                     data.get("error_type"),
                     data.get("error_message"),
                     self._json_serialize(data.get("metadata")),
+                    data.get("user_id", "default"),
                 ),
             )
             conn.commit()
             return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_llm_usage_today(self, user_id: Optional[str] = None) -> Dict[str, int]:
+        conn = self._get_conn()
+        try:
+            sql = (
+                "SELECT COUNT(*) AS calls, "
+                "COALESCE(SUM(total_tokens), 0) AS tokens "
+                "FROM llm_calls WHERE date(created_at) = date('now')"
+            )
+            params: List[Any] = []
+            if user_id is not None:
+                sql += " AND user_id = ?"
+                params.append(user_id)
+            row = conn.execute(sql, params).fetchone()
+            return {"calls": int(row["calls"]), "tokens": int(row["tokens"])}
         finally:
             conn.close()
 

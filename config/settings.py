@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     max_context_tokens: int = Field(100000, env="MAX_CONTEXT_TOKENS")
     context_compress_threshold: int = Field(80000, env="CONTEXT_COMPRESS_THRESHOLD")
 
+    # ==================== LLM 用量配额（v4 T1.4） ====================
+    # 公网多用户 + 平台统一出 LLM key，防重度用户烧穿平台额度。
+    # 统计口径：llm_calls 表当天记录（见 services/quota_service.py）。
+    llm_user_daily_call_limit: int = Field(50, env="LLM_USER_DAILY_CALL_LIMIT")
+    llm_global_daily_call_limit: int = Field(2000, env="LLM_GLOBAL_DAILY_CALL_LIMIT")
+
     # ==================== 数据库配置 ====================
     db_path: str = Field(
         str(PROJECT_ROOT / "data" / "jobhunter_v2.db"),
