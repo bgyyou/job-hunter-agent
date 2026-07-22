@@ -1,0 +1,28 @@
+# 版本控制 / CI
+.git
+.github
+.pytest_cache
+
+# 本地环境
+venv/
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# 运行时数据（容器内走 volume，不打进镜像）
+data/
+logs/
+
+# 构建产物
+dist/
+build/
+coverage.xml
+.coverage
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 测试不进生产镜像
+tests/
