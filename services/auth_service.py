@@ -21,6 +21,12 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_RE = re.compile(r"^\+?\d{6,20}$")
 _PBKDF2_ITERATIONS = 200_000
 
+# v4 T1.5：登录失败锁定。针对已存在账号的密码爆破：
+# 同一 user_id 在 _LOCKOUT_WINDOW_MINUTES 内失败 _LOCKOUT_MAX_FAILURES 次即临时锁定。
+# 计数依赖 audit_logs（user.login.failure 行），无需 schema 变更。
+_LOCKOUT_MAX_FAILURES = 5
+_LOCKOUT_WINDOW_MINUTES = 15
+
 
 class AuthError(ValueError):
     """Raised when auth input is invalid or credentials are rejected."""
@@ -102,6 +108,20 @@ class AuthService:
                 details={"identifier": ident[:80]},
             )
             raise AuthError("账号或密码不正确")
+        if self._is_locked_out(user["id"]):
+            log_action(
+                self.db,
+                user_id=user["id"],
+                action="user.login.locked",
+                target_table="users",
+                target_id=user["id"],
+                status="failure",
+                error_message="locked_out",
+                details={"identifier": ident[:80]},
+            )
+            raise AuthError(
+                f"登录失败次数过多，账号已临时锁定，请 {_LOCKOUT_WINDOW_MINUTES} 分钟后再试"
+            )
         stored = self._get_user_secret(user["id"])
         if not stored or not self._verify_password(password, stored["password_salt"], stored["password_hash"]):
             log_action(
@@ -162,6 +182,23 @@ class AuthService:
             return dict(row) if row else None
         finally:
             conn.close()
+
+    def _is_locked_out(self, user_id: str) -> bool:
+        """v4 T1.5：窗口内失败次数达上限即锁定。audit 查询失败时放行（不锁死合法用户）。"""
+        try:
+            conn = self.db._get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM audit_logs "
+                    "WHERE user_id = ? AND action = 'user.login.failure' "
+                    f"AND created_at >= datetime('now', '-{_LOCKOUT_WINDOW_MINUTES} minutes')",
+                    (user_id,),
+                ).fetchone()
+                return int(row[0]) >= _LOCKOUT_MAX_FAILURES
+            finally:
+                conn.close()
+        except Exception:
+            return False
 
     @staticmethod
     def _normalize_email(email: Optional[str]) -> Optional[str]:

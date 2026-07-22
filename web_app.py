@@ -33,9 +33,11 @@ load_dotenv()
 from agents.coordinator import CoordinatorAgent
 from agents.resume_flow_a import ResumeFlowA, SECTIONS
 from config.settings import settings
-from database.backends.sqlite_backend import SqliteBackend
 from database.classifier import Classifier
+from database.factory import get_db
 from services.audit_service import log_action
+from services.auth_service import AuthError, AuthService
+from services.quota_service import QuotaExceededError, QuotaService
 from services.flow_a_draft_service import (
     FlowADraftService,
     missing_fields_label,
@@ -74,7 +76,8 @@ settings.setup_logging()
 
 LLM_COLLECT_SECTION_KEYS = {"experience", "projects"}
 
-# 登录系统后期再加，当前用固定 user_id 写库
+# v4 T1.1：登录门已接线 AuthService；主流程必须登录。
+# ANONYMOUS_USER_ID 仅作未登录兜底（landing / privacy / terms 等公开页不写库）。
 ANONYMOUS_USER_ID = "anonymous"
 
 st.set_page_config(
@@ -578,6 +581,9 @@ def parse_languages(text: str) -> List[Dict[str, str]]:
 
 
 def run_async(coro):
+    """跑异步 LLM 调用。v4 T1.4：所有用户触发的 LLM 动作都经此漏斗，
+    配额检查在这里统一执行（超限 → 友好提示 + st.stop 中止本次动作）。"""
+    _check_llm_quota_or_stop()
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
@@ -586,9 +592,26 @@ def run_async(coro):
         loop.close()
 
 
+def _check_llm_quota_or_stop() -> None:
+    """v4 T1.4：LLM 动作前查配额。配额服务自身故障不阻塞业务（debug 日志）。"""
+    try:
+        db = st.session_state.get("db")
+        if not db:
+            return
+        QuotaService(db).check_quota(current_user_id())
+    except QuotaExceededError as exc:
+        st.warning(str(exc))
+        st.stop()
+    except Exception as exc:
+        logger.debug(f"quota check skipped: {exc}")
+
+
 def init_session_state() -> None:
     defaults = {
         "app_route": "landing",
+        # v4 T1.1：登录态。None = 未登录（只能看 landing / privacy / terms）
+        "user_id": None,
+        "user_display_name": None,
         "services_ready": False,
         "llm_init_error": None,
         "llm_client": None,
@@ -659,7 +682,8 @@ def init_session_state() -> None:
 
 def init_app_services() -> None:
     if st.session_state.db is None:
-        st.session_state.db = SqliteBackend(db_path=settings.db_path)
+        # v4 T1.1：走 factory，DATABASE_URL=postgresql:// 时自动切 PG 后端
+        st.session_state.db = get_db()
         try:
             ensure_public_seed_jds(st.session_state.db)
         except Exception as exc:
@@ -680,6 +704,7 @@ def init_app_services() -> None:
             model=settings.llm_model,
             is_coding_api=False,
             use_anthropic_format=settings.llm_use_anthropic_format,
+            user_id=current_user_id(),  # v4 T1.4：llm_calls 埋点归属到具体用户（配额统计口径）
         )
         st.session_state.llm_client = llm_client
         st.session_state.agent = CoordinatorAgent(llm_client=llm_client)
@@ -691,7 +716,87 @@ def init_app_services() -> None:
 
 
 def current_user_id() -> str:
-    return ANONYMOUS_USER_ID
+    """v4 T1.1：返回当前登录用户 id；未登录兜底 anonymous。
+
+    登录门（文件尾部路由分发处）保证业务页面只在登录后渲染，
+    所以业务写库路径拿到的都是真实 user_id。
+    """
+    return st.session_state.get("user_id") or ANONYMOUS_USER_ID
+
+
+def _auth_service() -> AuthService:
+    return AuthService(st.session_state.db)
+
+
+def _apply_login_session(user: Dict[str, Any]) -> None:
+    """登录/注册成功后写身份态。v4 T1.4：同时把 llm_client 的埋点归属切到真实用户。"""
+    st.session_state.user_id = user["id"]
+    st.session_state.user_display_name = user.get("name") or user.get("email") or user.get("phone")
+    st.session_state.app_route = "mode_select"
+    if st.session_state.get("llm_client") is not None:
+        st.session_state.llm_client.user_id = user["id"]
+
+
+def logout_user() -> None:
+    """登出：清身份态，回 landing。业务草稿 state 保留在服务端 session，下次登录还在。"""
+    for key in ["user_id", "user_display_name"]:
+        st.session_state[key] = None
+    st.session_state.app_route = "landing"
+
+
+def render_auth_page() -> None:
+    """v4 T1.1：登录 / 注册页。未登录访问任何业务路由时渲染。"""
+    st.markdown("<h2 style='text-align:center;margin-top:3rem;'>登录 JobHunter</h2>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='text-align:center;color:#94a3b8;'>登录后你的简历、JD 库和改写历史只对你可见</p>",
+        unsafe_allow_html=True,
+    )
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        tab_login, tab_register = st.tabs(["登录", "注册"])
+
+        with tab_login:
+            with st.form("login_form"):
+                identifier = st.text_input("邮箱或手机号", key="login_identifier")
+                password = st.text_input("密码", type="password", key="login_password")
+                submitted = st.form_submit_button("登录", use_container_width=True)
+            if submitted:
+                try:
+                    user = _auth_service().login_user(identifier=identifier, password=password)
+                    _apply_login_session(user)
+                    st.rerun()
+                except AuthError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    logger.warning(f"login failed unexpectedly: {exc}")
+                    st.error("登录服务暂时不可用，请稍后再试。")
+
+        with tab_register:
+            with st.form("register_form"):
+                reg_name = st.text_input("昵称（可选）", key="reg_name")
+                reg_email = st.text_input("邮箱", key="reg_email")
+                reg_phone = st.text_input("手机号（可选，与邮箱至少填一个）", key="reg_phone")
+                reg_password = st.text_input("密码（至少 8 位）", type="password", key="reg_password")
+                reg_password2 = st.text_input("确认密码", type="password", key="reg_password2")
+                reg_submitted = st.form_submit_button("注册并登录", use_container_width=True)
+            if reg_submitted:
+                if reg_password != reg_password2:
+                    st.error("两次输入的密码不一致")
+                else:
+                    try:
+                        user = _auth_service().register_user(
+                            password=reg_password,
+                            email=reg_email or None,
+                            phone=reg_phone or None,
+                            name=reg_name,
+                        )
+                        _apply_login_session(user)
+                        st.rerun()
+                    except AuthError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        logger.warning(f"register failed unexpectedly: {exc}")
+                        st.error("注册服务暂时不可用，请稍后再试。")
 
 
 def require_services() -> bool:
@@ -938,7 +1043,7 @@ def _apply_flow_a_section_extracted(
 
 
 def render_top_nav() -> None:
-    left, spacer, resume_col, jd_col, home_col = st.columns([3, 5, 1, 1, 1])
+    left, spacer, resume_col, jd_col, home_col, logout_col = st.columns([3, 4, 1, 1, 1, 1])
     with left:
         st.markdown('<div class="topnav-title">JobHunter</div>', unsafe_allow_html=True)
     with resume_col:
@@ -952,6 +1057,11 @@ def render_top_nav() -> None:
     with home_col:
         if st.button("首页", use_container_width=True):
             st.session_state.app_route = "landing"
+            st.rerun()
+    with logout_col:
+        display = st.session_state.get("user_display_name") or "用户"
+        if st.button(f"退出({display[:6]})", key="nav_logout", use_container_width=True):
+            logout_user()
             st.rerun()
     # PR4 (M11): 数据活水面 — 仅在非 landing 路由，避免和 hero 重复
     if st.session_state.get("app_route") and st.session_state.app_route != "landing":
@@ -3737,7 +3847,10 @@ def render_jd_library() -> None:
 init_session_state()
 init_app_services()
 
-if st.session_state.app_route == "landing":
+# v4 T1.1 登录门：landing（含 privacy/terms）公开，其余路由必须登录
+if st.session_state.app_route != "landing" and not st.session_state.get("user_id"):
+    render_auth_page()
+elif st.session_state.app_route == "landing":
     render_landing()
 elif st.session_state.app_route == "flow_a":
     render_flow_a()

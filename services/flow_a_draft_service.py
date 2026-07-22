@@ -119,7 +119,11 @@ class FlowADraftService:
     def get_draft(self, draft_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not draft_id:
             return None
-        return self.db.get_flow_a_draft(draft_id)
+        draft = self.db.get_flow_a_draft(draft_id)
+        # v4 T1.2：归属校验 — 知道 draft_id 也不能读别人的草稿（防 ID 枚举，返回 None 而非报错）
+        if draft and draft.get("user_id") != self.user_id:
+            return None
+        return draft
 
     def get_latest_recoverable_draft(self) -> Optional[Dict[str, Any]]:
         return self.db.get_latest_flow_a_draft(
@@ -128,6 +132,10 @@ class FlowADraftService:
         )
 
     def abandon_draft(self, draft_id: str) -> None:
+        # v4 T1.2：归属校验 — 非本人草稿静默跳过，不删别人的数据
+        draft = self.db.get_flow_a_draft(draft_id)
+        if not draft or draft.get("user_id") != self.user_id:
+            return
         self.db.abandon_flow_a_draft(draft_id)
 
     def save_runtime_state(

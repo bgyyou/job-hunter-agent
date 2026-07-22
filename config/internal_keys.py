@@ -80,9 +80,13 @@ def is_internal_beta_active() -> bool:
     """判断 internal beta 模式是否启用。
 
     返回 True 当且仅当：
+    - 非 production 环境（v4 T1.6：生产环境强制禁用，防明文 key 路径泄露到公网）
     - internal_keys.json 文件存在且包含有效 api_key
     - LLM_API_KEY 环境变量还没被设置（避免覆盖用户的真实配置）
     """
+    if (os.environ.get("ENV") or "").strip().lower() == "production":
+        return False
+
     # 已经配过 → 不是"internal fallback"场景
     existing = (os.environ.get("LLM_API_KEY") or "").strip()
     if existing and existing != "your_api_key_here":
