@@ -234,7 +234,7 @@ class LLMClient(ABC):
                 "error_type": "api_error" if error else None,
                 "error_message": error,
                 "metadata": {"cache_hit": cache_hit},
-                "user_id": "default",
+                "user_id": getattr(self, "user_id", "default"),
             })
         except Exception as exc:
             # 埋点失败绝不影响业务
@@ -294,7 +294,8 @@ class OpenAICompatibleClient(LLMClient):
         cache_dir: str = "data/llm_cache",
         pricing: Optional[Dict[str, float]] = None,
         is_coding_api: bool = False,
-        use_anthropic_format: bool = False
+        use_anthropic_format: bool = False,
+        user_id: str = "default"
     ):
         """
         初始化 OpenAI 兼容客户端
@@ -307,6 +308,7 @@ class OpenAICompatibleClient(LLMClient):
             pricing: 自定义定价（元/千tokens）
             is_coding_api: 历史保留参数（早期火山 Coding API 使用），不影响当前路径
             use_anthropic_format: 是否使用 Anthropic 格式（默认 False，设为 True 以使用 Claude Code 相同的方式）
+            user_id: 调用方用户标识，写入 llm_calls.user_id 供配额统计（v4 T1.4）
         """
         super().__init__(model, cache_dir)
         self.api_key = api_key
@@ -314,6 +316,7 @@ class OpenAICompatibleClient(LLMClient):
         self.pricing = pricing
         self.is_coding_api = is_coding_api
         self.use_anthropic_format = use_anthropic_format
+        self.user_id = user_id
         # Root fix: transient provider/network failures should not kill a Flow A turn.
         # Tests may set this to (0, 0) for fast deterministic retry checks.
         self.retry_delays = (1.2, 2.0, 3.0)

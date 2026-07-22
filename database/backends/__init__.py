@@ -222,9 +222,19 @@ class BaseBackend(ABC):
         Required: ``model``, ``operation``. Optional: ``request_id``,
         ``endpoint``, ``prompt_tokens``, ``completion_tokens``, ``total_tokens``,
         ``latency_ms``, ``status`` (``'success'``/``'error'``/``'cache_hit'``),
-        ``error_type``, ``error_message``, ``metadata`` (Dict).
+        ``error_type``, ``error_message``, ``metadata`` (Dict),
+        ``user_id`` (default ``'default'``, v4 T1.4 配额统计维度).
 
         Returns the autoincrement integer id.
+        """
+
+    @abstractmethod
+    def get_llm_usage_today(self, user_id: Optional[str] = None) -> Dict[str, int]:
+        """当天 LLM 用量汇总：``{"calls": int, "tokens": int}``。
+
+        ``user_id`` 为 ``None`` 时统计全局（所有用户），否则只统计该用户。
+        当天口径：SQLite ``date(created_at) = date('now')``，
+        PG ``created_at::date = CURRENT_DATE``。
         """
 
     @abstractmethod
