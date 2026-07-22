@@ -20,6 +20,13 @@ def test_pg_migrations_directory_exists():
     assert len(files) >= 2  # 002 + 003 at minimum
 
 
+def test_pg_migrations_numbering_contiguous():
+    """migrations_pg 编号不得断档（runner 按文件名排序执行，缺号会导致断档难察觉）"""
+    d = Path(__file__).parent.parent.parent / "database" / "migrations_pg"
+    nums = sorted(int(f.name.split("_")[0]) for f in d.glob("*.sql"))
+    assert nums == list(range(nums[0], nums[0] + len(nums))), f"编号断档: {nums}"
+
+
 def test_pg_migration_002_contains_composite_index():
     f = Path(__file__).parent.parent.parent / "database" / "migrations_pg" / "002_composite_indexes.sql"
     sql = f.read_text(encoding="utf-8")
@@ -37,6 +44,25 @@ def test_pg_migration_003_contains_hnsw():
     assert "vector_cosine_ops" in sql
     assert "m = 16" in sql
     assert "ef_construction = 64" in sql
+
+
+def test_pg_migration_005_contains_users():
+    f = Path(__file__).parent.parent.parent / "database" / "migrations_pg" / "005_users.sql"
+    sql = f.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS users" in sql
+    assert "idx_users_provider_subject" in sql
+    assert "UPDATE schema_version" in sql
+    assert "datetime('now')" not in sql  # SQLite-only 语法不得混入 PG 迁移
+
+
+def test_pg_migration_006_contains_skeleton_cache():
+    f = Path(__file__).parent.parent.parent / "database" / "migrations_pg" / "006_skeleton_cache.sql"
+    sql = f.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS skeleton_cache" in sql
+    assert "SERIAL PRIMARY KEY" in sql
+    assert "idx_skeleton_cache_lookup" in sql
+    assert "UPDATE schema_version" in sql
+    assert "AUTOINCREMENT" not in sql  # SQLite-only 语法不得混入 PG 迁移
 
 
 def test_pg_migration_007_contains_llm_calls():
