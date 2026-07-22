@@ -105,3 +105,39 @@ def test_login_unknown_user_writes_audit_log(tmp_db):
     assert len(failure_rows) == 1
     assert failure_rows[0]["error_message"] == "user_not_found"
 
+
+
+class TestLoginLockout:
+    """v4 T1.5：同一账号 15 分钟内失败 5 次即临时锁定。"""
+
+    def _fail_n_times(self, auth, identifier, n):
+        for _ in range(n):
+            with pytest.raises(AuthError):
+                auth.login_user(identifier=identifier, password="wrongpass")
+
+    def test_fifth_failure_locks_account(self, tmp_db):
+        auth = AuthService(tmp_db)
+        auth.register_user(email="a@example.com", password="password123")
+
+        self._fail_n_times(auth, "a@example.com", 5)
+
+        # 第 6 次即使密码正确也被锁定
+        with pytest.raises(AuthError, match="锁定"):
+            auth.login_user(identifier="a@example.com", password="password123")
+
+    def test_under_threshold_not_locked(self, tmp_db):
+        auth = AuthService(tmp_db)
+        auth.register_user(email="a@example.com", password="password123")
+
+        self._fail_n_times(auth, "a@example.com", 4)
+        assert auth.login_user(identifier="a@example.com", password="password123")["id"]
+
+    def test_lockout_is_per_account(self, tmp_db):
+        auth = AuthService(tmp_db)
+        auth.register_user(email="a@example.com", password="password123")
+        auth.register_user(email="b@example.com", password="password123")
+
+        self._fail_n_times(auth, "a@example.com", 5)
+
+        # b 账号不受影响
+        assert auth.login_user(identifier="b@example.com", password="password123")["id"]

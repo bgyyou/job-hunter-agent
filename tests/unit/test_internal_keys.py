@@ -125,3 +125,21 @@ def test_defaults_when_partial_json(monkeypatch, tmp_path):
     # 默认值兜底
     assert "LLM_BASE_URL" in os.environ
     assert "LLM_MODEL" in os.environ
+
+
+class TestProductionGuard:
+    """v4 T1.6：ENV=production 时 internal beta 强制禁用（防明文 key 上公网）。"""
+
+    def test_production_disables_internal_beta(self, monkeypatch, fake_internal_keys):
+        from config.internal_keys import is_internal_beta_active
+
+        monkeypatch.setenv("JOBHUNTER_INTERNAL_KEYS", str(fake_internal_keys))
+        monkeypatch.setenv("ENV", "production")
+        assert is_internal_beta_active() is False
+
+    def test_non_production_still_active(self, monkeypatch, fake_internal_keys):
+        from config.internal_keys import is_internal_beta_active
+
+        monkeypatch.setenv("JOBHUNTER_INTERNAL_KEYS", str(fake_internal_keys))
+        monkeypatch.setenv("ENV", "development")
+        assert is_internal_beta_active() is True
