@@ -10,6 +10,16 @@ PROJECT_ROOT = Path(__file__).parent.parent
 class Settings(BaseSettings):
     """配置管理 - 支持从 .env 文件加载"""
 
+    # ==================== 运行环境（v4 T0.4） ====================
+    # development（默认，本地开发）/ production（公网部署）。
+    # production 分支的加固点：JSON 结构化日志（docker logs 可采集）、
+    # internal_keys.json 机制禁用（Phase 1 T1.6 落地）。
+    env: str = Field("development", env="ENV")
+
+    @property
+    def is_production(self) -> bool:
+        return self.env.strip().lower() == "production"
+
     # ==================== LLM API 配置（OpenAI 兼容协议）====================
     # 当前接 Agnes（apihub.agnes-ai.com）。代码协议 provider-neutral，
     # 切回火山引擎 / OpenAI / DeepSeek 只需改 .env 三个变量。
@@ -142,13 +152,14 @@ class Settings(BaseSettings):
         - 文件按 LOG_ROTATION 大小轮转（默认 20 MB）
         - 保留 LOG_RETENTION（默认 7 天）
         - 同时保留 stderr 输出，便于开发观察
+        - production 模式输出 JSON（loguru serialize），docker logs 直接可采集
         """
         from loguru import logger
         import sys
 
         Path(self.log_dir).mkdir(parents=True, exist_ok=True)
         logger.remove()
-        logger.add(sys.stderr, level=self.log_level)
+        logger.add(sys.stderr, level=self.log_level, serialize=self.is_production)
         logger.add(
             self.log_path,
             level=self.log_level,
@@ -156,6 +167,7 @@ class Settings(BaseSettings):
             retention=self.log_retention,
             encoding="utf-8",
             enqueue=True,
+            serialize=self.is_production,
         )
 
 # 全局配置实例
