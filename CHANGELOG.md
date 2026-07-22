@@ -1638,3 +1638,47 @@ pytest tests/integration/test_flow_a_real_llm_3_scenarios.py -v -m real_llm
 - **P0-3 真用户招募**：招募 3-5 个朋友跑全流程 → 收集 JSONL → 跑 `scripts/aggregate_round3_feedback.py` → 汇总到 `update_plan.md §8.1 round-3 收口报告`
 - **§6 验收最后 1 条**（5 个真实用户跑通）：依赖用户真实社交网络，AI 无法独立完成
 - **一键投递 / 面试真题库** 等 v3 round-4/5 功能：见 update_plan.md §5.2
+
+---
+
+## [M-v4-0] 工程级上线 Phase 0：部署面（2026-07-22）
+
+### 范围
+
+v4 目标：本地单机工具 → 国内公网多用户 Web 服务（内测 50-200 人）。
+需求已与用户拍板：平台统一出 LLM key（配额+熔断）/ 功能含 Flow A+B+JD 库爬虫（一键投递本期不做）/
+前端两阶段（Streamlit 加固 → React+FastAPI 单独立项）/ 国内云+ICP 备案+PIPL 合规。
+Phase 0 只解决"应用能容器化一键起全套"，不动业务逻辑。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 部署 | `Dockerfile`：python:3.11-slim + requirements.lock 全量锁定；torch 走 CPU-only wheel（PEP 440 `==2.12.0` 匹配 `2.12.0+cpu`，避免 2GB+ CUDA 依赖）；playwright chromium 装到 `/ms-playwright` 共享路径；非 root `jobhunter` 用户运行；HEALTHCHECK 打 Streamlit 内置 `/healthz` | `Dockerfile` |
+| 部署 | `.dockerignore`：排除 data/logs/venv/tests/.env*（白名单两个 example 模板） | `.dockerignore` |
+| 部署 | `docker-compose.prod.yml`：app + postgres(pg16+pgvector) + caddy 三服务；postgres 不暴露宿主端口；`--env-file .env.production` 提供插值变量（`POSTGRES_PASSWORD`） | `docker-compose.prod.yml` |
+| 部署 | `deploy/Caddyfile`：反代 app:8501 + 自动 HTTPS（`SITE_ADDRESS` 环境变量切域名/自签）+ 安全头（nosniff/X-Frame-Options/Referrer-Policy；不加 CSP，Streamlit 动态资源多，留给 React 阶段） | `deploy/Caddyfile` |
+| 配置 | `deploy/env.production.example`：生产配置模板（ENV/POSTGRES_PASSWORD/平台 LLM key/爬虫内测保守限额 50/天） | `deploy/env.production.example` |
+| 配置 | `config/settings.py` 新增 `ENV` 字段 + `is_production` property；production 下 loguru `serialize=True`（JSON 日志，docker logs 可采集） | `config/settings.py` |
+| 测试 | 5 条单测：默认 development / production 判定 / 大小写空白容忍 / staging 非 production / production JSON 日志落盘验证 | `tests/unit/test_settings_production.py` |
+| CI | 新增 `docker-build.yml`：buildx + build-push-action（push: false），gha 缓存，仅验证镜像可构建 | `.github/workflows/docker-build.yml` |
+
+### 偏差记录
+
+- **T0.5**：原计划"st.query_params 自建 /healthz"，实际用 Streamlit tornado 层内置 `/healthz`（无需应用代码、登录门之前可探测），Dockerfile HEALTHCHECK 直接打它。
+- **本地镜像构建未验**：本机 Docker Desktop 手动代理（127.0.0.1:7890）未运行，无法拉基础镜像；compose 配置已 `config -q` 验证通过，镜像构建验证交给 CI `docker-build.yml`（push 后跑）。
+
+### 验证
+
+```bash
+python -m pytest tests/ -q -m "not real_llm"
+# → 401 passed（baseline 396 + 新增 5）, 3 deselected (real_llm), 39.06s
+
+docker compose --env-file .env.production -f docker-compose.prod.yml config -q
+# → COMPOSE_OK
+```
+
+### 阻塞项
+
+- **T0.1（用户操作）**：GitHub 账号问题未解，本地 30+ commit 未推远端；CI（含 docker-build 验证）要等 push 后才能跑。
+- 本机 `venv/` 已损坏（缺 pyvenv.cfg），当前用系统 Python 3.11.9 跑测试，建议择期重建。
