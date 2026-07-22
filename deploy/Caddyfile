@@ -1,0 +1,19 @@
+# JobHunter 生产入口（v4 Phase 0 / T0.3）
+# SITE_ADDRESS 在 .env.production 里设置：
+#   - 备案完成前：填服务器 IP 或 localhost（Caddy 用内部 CA 自签证书，浏览器会有警告）
+#   - 备案完成后：填正式域名（如 jobhunter.example.com），Caddy 自动申请/续期证书
+
+{$SITE_ADDRESS:localhost} {
+	reverse_proxy app:8501
+
+	encode gzip
+
+	# 安全响应头。不加 CSP：Streamlit 前端动态加载资源较多，
+	# 严格 CSP 需要按版本逐一放行，留给 React 重构阶段统一做。
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

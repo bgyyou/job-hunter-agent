@@ -1,0 +1,75 @@
+# ============================================================
+# JobHunter 生产部署（v4 Phase 0 / T0.3）
+# 用法：
+#   1. cp deploy/env.production.example .env.production  # 填真实值，不进 git
+#   2. docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+# 注意：--env-file 不能省 —— POSTGRES_PASSWORD 的 compose 插值只读
+# shell 环境或 --env-file 指定的文件，不读 service 级的 env_file。
+# 三个服务：app（Streamlit）+ postgres（数据）+ caddy（HTTPS 入口）
+# postgres 不暴露宿主端口，只在 internal 网络内可达。
+# ============================================================
+name: jobhunter-prod
+
+services:
+  app:
+    build: .
+    image: jobhunter:latest
+    container_name: jobhunter-app
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql://jobhunter:${POSTGRES_PASSWORD:?must be set in .env.production}@postgres:5432/jobhunter
+      # 日志落 data volume，容器重建不丢
+      LOG_DIR: /app/data/logs
+    volumes:
+      - appdata:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: jobhunter-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jobhunter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?must be set in .env.production}
+      POSTGRES_DB: jobhunter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobhunter -d jobhunter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: jobhunter-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  appdata:
+  pgdata:
+  caddy_data:
+  caddy_config:
