@@ -712,6 +712,34 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 
 ### 8.2 当前活跃轮次
 
+#### v4：工程级上线（本地工具 → 公网多用户 Web 服务）
+
+**启动时间**：2026-07-22
+**需求对齐**：公网 Web 多用户 / 国内云+ICP 备案 / 平台统一出 LLM key（配额+熔断）/ 功能含 Flow A+B+JD 库爬虫（一键投递本期不做）/ 前端两阶段（Streamlit 加固 → React+FastAPI 单独立项）/ 内测 50-200 人 / 四项工程标准全要
+**完整方案**：见根目录 plan 文件（jean-grey-impulse-ghost-rider.md，已批准）
+
+##### Phase 0：远端纪律 + 部署面
+
+- [ ] **T0.1**: 解决 GitHub 账号问题，推 30 个本地 commit 上远端 —— **用户操作，阻塞 CI/CD**
+- [x] **T0.2**: Dockerfile（python:3.11-slim + requirements.lock + playwright chromium）✅ torch CPU-only wheel；本地构建受 Docker 代理未运行阻塞，验证交 CI
+- [x] **T0.3**: docker-compose.prod.yml（app + postgres + caddy）+ Caddyfile（自动 HTTPS + 安全头）✅ `config -q` 验证通过；`--env-file` 插值坑已写进文件头注释
+- [x] **T0.4**: 配置外置 + `config/settings.py` production 分支（ENV=production + JSON 日志）✅ 5 条单测
+- [x] **T0.5**: /healthz 健康检查 ✅ 偏差：用 Streamlit 内置 /healthz（tornado 层），不自建路由；Dockerfile HEALTHCHECK 已接
+- [x] **T0.6**: CI 增补 docker build job（仅验证能 build，不推镜像仓库）✅ `.github/workflows/docker-build.yml`
+- 验收：`docker compose --env-file .env.production -f docker-compose.prod.yml config -q` 通过；pytest **401 passed**（baseline 396 + 新增 5）；镜像构建验证待 push 后 CI 跑
+- baseline（2026-07-22 实测）：**396 passed → 401 passed, 3 deselected (real_llm), 39.06s**
+- 注意：本地 `venv/` 已损坏（缺 pyvenv.cfg），当前用系统 Python 3.11.9 跑测试，建议用户择期重建 venv
+
+##### Phase 1-5 概览（详见 plan 文件）
+
+- Phase 1 多用户化 + 配额护栏（登录门接线 AuthService / user_id 数据隔离 / PG 迁移补 005+006 / 013_usage_quota / 登录锁定 / internal_keys 生产禁用）
+- Phase 2 稳定不崩（LLM 统一超时重试降级 / 全局兜底错误页 / 爬虫低频保守 / playwright 降级 / PG 备份恢复脚本）
+- Phase 3 可观测（JSON 日志 / 运维看板 / webhook 告警 / uptime 监控）
+- Phase 4 合规+发布纪律（账号注销 / 数据导出 / 隐私政策多用户版 / ICP 备案=用户并行提交 / 分支保护+tag）
+- Phase 5 灰度上线（云采购部署 / SQLite→PG 数据迁移 / 10→50→200 放量 / round-3 真用户验收并入灰度）
+
+---
+
 #### Round-2: v3 Phase 3（文档生成）+ Phase 4（flow_a 5 Step UI 改造）
 
 **启动时间**：2026-07-13  
