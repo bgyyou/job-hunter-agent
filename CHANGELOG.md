@@ -1682,3 +1682,46 @@ docker compose --env-file .env.production -f docker-compose.prod.yml config -q
 
 - **T0.1（用户操作）**：GitHub 账号问题未解，本地 30+ commit 未推远端；CI（含 docker-build 验证）要等 push 后才能跑。
 - 本机 `venv/` 已损坏（缺 pyvenv.cfg），当前用系统 Python 3.11.9 跑测试，建议择期重建。
+
+---
+
+## [M-v4-1] 工程级上线 Phase 1：多用户化 + 配额护栏（2026-07-22）
+
+### 范围
+
+公网多用户的核心一刀：登录门接线 + 全量数据按 user_id 隔离 + 平台 LLM 成本护栏。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 登录门 | `web_app.py` 新增 `render_auth_page()`（登录/注册双 Tab，接线 `AuthService`）；路由分发加登录门：landing（含 privacy/terms）公开，其余路由未登录一律重定向到登录页 | `web_app.py` |
+| 登录门 | `current_user_id()` 从固定 `"anonymous"` 改为读 `st.session_state.user_id`；新增 `_apply_login_session()` / `logout_user()`；顶栏加"退出"按钮 | `web_app.py` |
+| 登录门 | `init_app_services` 的 db 初始化从硬编码 `SqliteBackend` 切到 `database.factory.get_db()`（`DATABASE_URL=postgresql://` 时自动走 PG，公网上线的隐藏前提） | `web_app.py` |
+| 数据隔离 | **修复真越权漏洞**：`FlowADraftService.get_draft()` 原来只按 draft_id 查库，知道 ID 即可读/删他人草稿；`get_draft`/`abandon_draft` 补 user_id 归属校验（防枚举：返回 None/静默跳过，不报错） | `services/flow_a_draft_service.py` |
+| 数据隔离 | 10 条隔离测试：简历库/私有 JD/草稿三条路径，用户 B 对 A 的数据不可见、不可改、不可删；公共 JD 双方可见 | `tests/unit/test_user_data_isolation.py` |
+| 配额 | 新迁移 013：`llm_calls` 加 `user_id` 列 + `(user_id, created_at)` 复合索引。SQLite 沿用 012 先例（PRAGMA 检查内联 ALTER，编号迁移仅作版本标记）；PG 为真迁移（`ADD COLUMN IF NOT EXISTS`） | `database/migrations{,_pg}/013_usage_quota.sql`、`sqlite_backend.py` |
+| 配额 | `services/quota_service.py`：`QuotaService.check_quota(user_id)` 双档限额——用户日限（`LLM_USER_DAILY_CALL_LIMIT` 默认 50）+ 全局熔断（`LLM_GLOBAL_DAILY_CALL_LIMIT` 默认 2000，全局优先）；超限抛 `QuotaExceededError`（带 scope），文案区分用户档/全局档 | `services/quota_service.py`、`config/settings.py` |
+| 配额 | `OpenAICompatibleClient` 支持 `user_id` 参数，`_record_llm_call` 埋点归属到真实用户（修复原硬编码 `"default"` 且被 insert 列清单静默丢弃的问题）；两 backend `insert_llm_call` 加 user_id 列 + 新增 `get_llm_usage_today()` | `tools/llm.py`、`database/backends/*` |
+| 配额 | web_app 接线：`run_async` 是所有 LLM 动作的唯一漏斗，配额检查在漏斗入口统一执行（超限 → st.warning + st.stop）；登录/注册成功时把 llm_client 埋点归属切到真实用户 | `web_app.py` |
+| 会话安全 | 登录锁定：同一账号 15 分钟内失败 5 次临时锁定（基于 audit_logs 计数，零 schema 变更）；锁定期即使密码正确也拒绝 | `services/auth_service.py` |
+| 会话安全 | `ENV=production` 时 internal beta（internal_keys.json 明文 key）强制禁用 | `config/internal_keys.py` |
+| PG 迁移 | 补 `migrations_pg/005_users.sql`（users 表 PG 方言版）+ `006_skeleton_cache.sql`（SERIAL/JSONB/TIMESTAMPTZ 对齐现有 PG 迁移风格）；PG 从零建库迁移链不再断档 | `database/migrations_pg/` |
+| 测试 | 新增 37 条：登录门 9（auth_gate）+ 隔离 10 + 配额 10 + 锁定 3 + internal_keys 2 + PG 迁移 3 | tests/ |
+
+### 已知边界
+
+- 配额计数含 cache_hit（实现最简单；cache 命中不烧钱，后续可按 status 细分）
+- 存量本地数据的 user_id 是 `"anonymous"`/`"default"`，登录门上线后对任何账号不可见——生产为全新库，无影响；本地老数据如需保留要手动改库
+- `data/schema_pg.sql` 无 users 表（PG 全新部署靠 005 迁移建，链路已通；是否补进 baseline schema 留待后续）
+
+### 验证
+
+```bash
+python -m pytest tests/ -q -m "not real_llm"
+# → 438 passed（baseline 401 + 新增 37）, 3 deselected (real_llm), 45.45s
+```
+
+### 事故记录
+
+并行子代理（T1.3）验证预存失败时执行 `git stash -u` + `stash pop`，与并发写入冲突，工作区一度半恢复；已由该代理合并各方增量修复，主会话复核 diff + 全量测试 438 passed 确认无残留，遗留 `stash@{0}` 已 drop。

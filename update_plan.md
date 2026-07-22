@@ -738,6 +738,16 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 - Phase 4 合规+发布纪律（账号注销 / 数据导出 / 隐私政策多用户版 / ICP 备案=用户并行提交 / 分支保护+tag）
 - Phase 5 灰度上线（云采购部署 / SQLite→PG 数据迁移 / 10→50→200 放量 / round-3 真用户验收并入灰度）
 
+##### Phase 1：多用户化 + 配额护栏
+
+- [x] **T1.1**: 登录门接线 AuthService（登录/注册页 + 路由门 + current_user_id 读 session + 退出按钮 + db 切 get_db() factory）✅ 9 条测试
+- [x] **T1.2**: 数据归属排查 ✅ 修好 FlowADraftService.get_draft 越权真漏洞；10 条隔离测试（简历/JD/草稿三路径）
+- [x] **T1.3**: PG 迁移补 005_users + 006_skeleton_cache ✅ runner 按文件名序自动拾取，无需改代码；3 条 PG 迁移测试（含编号连续性防断档）
+- [x] **T1.4**: 配额系统 ✅ 013 迁移（llm_calls.user_id + 复合索引）+ QuotaService 双档（用户日限 50 / 全局熔断 2000）+ run_async 漏斗统一检查；10 条测试
+- [x] **T1.5**: 会话安全 ✅ 登录锁定（5 次/15 分钟，基于 audit_logs）；3 条测试
+- [x] **T1.6**: internal_keys 生产禁用 ✅ ENV=production 强制关闭；2 条测试
+- 验收：pytest **438 passed**（401 + 新增 37）；已知边界见 CHANGELOG [M-v4-1]（cache_hit 计配额 / 存量 anonymous 数据不可见 / schema_pg.sql 无 users 表）
+
 ---
 
 #### Round-2: v3 Phase 3（文档生成）+ Phase 4（flow_a 5 Step UI 改造）
