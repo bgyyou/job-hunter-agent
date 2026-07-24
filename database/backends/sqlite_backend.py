@@ -2,59 +2,122 @@
 
 import json
 import sqlite3
+import struct
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from loguru import logger
 
 from database.backends import BaseBackend
 
 
+# v4 P0-模块 3: BGE-small-zh-v1.5 固定 512 维，vec0 虚拟表 schema 对齐这个常量
+_BGE_DIM = 512
+
+# v4 P0-模块 3: vec0 虚拟表名；knowledge_chunks_vec 的 rowid == knowledge_chunks.rowid
+_VEC0_TABLE = "knowledge_chunks_vec"
+
+
 class SqliteBackend(BaseBackend):
-    """SQLite implementation of the database backend."""
+    """SQLite implementation of the database database (sqlite-vec enhanced)."""
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
             db_path = str(Path(__file__).parent.parent.parent / "data" / "jobhunter_v2.db")
         self.db_path = db_path
+        # v4 P0-模块 3: 标记 sqlite-vec 是否可用；vector_search 据此选择 vec0 路径或 numpy fallback
+        self._sqlite_vec_available: bool = False
         self._init_db()
 
-    # v2.1 M3.3: 嵌入向量 ↔ BLOB 互转
+    # ------------------------------------------------------------------
+    # v4 P0-模块 3: 嵌入向量 ↔ float32 binary BLOB 互转（替代旧 json 格式）
+    # ------------------------------------------------------------------
+    #
+    # 旧格式 (v2.1 M3.3)：json.dumps(list(embedding)) → 11KB/条
+    # 新格式 (v4 P0-模块 3)：numpy.float32() → 2KB/条（5x 压缩）
+    #
+    # _blob_to_embedding 同时支持两种格式以保证向后读取旧数据；
+    # 但 _embedding_to_blob 只写新格式（CLAUDE.md "不做向后兼容 hack"）。
     @staticmethod
     def _embedding_to_blob(embedding) -> Optional[bytes]:
+        """list[float] / numpy.ndarray → float32 LE bytes (2KB @ 512-dim)."""
         if embedding is None:
             return None
         if isinstance(embedding, (bytes, bytearray)):
+            # 已序列化的 BLOB：按 float32 binary 解析（vec0 写入路径会用 numpy 数组，
+            # 此分支主要服务 numpy → .tobytes() 的等价路径）
             return bytes(embedding)
         try:
-            return json.dumps(list(embedding)).encode("utf-8")
+            import numpy as np
+            arr = np.asarray(embedding, dtype=np.float32)
+            return arr.tobytes()
         except (TypeError, ValueError):
             return None
 
     @staticmethod
     def _blob_to_embedding(blob) -> Optional[List[float]]:
+        """bytes → list[float]；兼容旧 json.dumps 格式（仅读取期）。"""
         if blob is None:
             return None
-        if isinstance(blob, (bytes, bytearray)):
-            try:
-                return json.loads(bytes(blob).decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                return None
-        if isinstance(blob, str):
-            try:
-                return json.loads(blob)
-            except json.JSONDecodeError:
-                return None
         if isinstance(blob, list):
             return blob
-        return None
+        raw = bytes(blob) if isinstance(blob, (bytes, bytearray)) else (
+            blob.encode("utf-8") if isinstance(blob, str) else None
+        )
+        if raw is None:
+            return None
+        # 新格式：长度是 4 的倍数（即 float32 binary，对齐 512-dim → 2048 bytes）
+        n = len(raw)
+        if n > 0 and n % 4 == 0:
+            try:
+                import numpy as np
+                arr = np.frombuffer(raw, dtype=np.float32)
+                # 合理性检查：所有元素都是有限数（NaN / inf 不是合法 BGE 输出）
+                if arr.size > 0 and np.all(np.isfinite(arr)):
+                    return arr.tolist()
+            except (ValueError, TypeError):
+                pass
+        # 旧格式：json.dumps（首字节是 '{'、'['、'-' 或数字），失败则 None
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
+    # ------------------------------------------------------------------
+    # v4 P0-模块 3: vec0 探测与 schema_version 帮助方法
+    # ------------------------------------------------------------------
+    def _vec0_available(self, conn: sqlite3.Connection) -> bool:
+        """vec0 虚拟表存在 + sqlite-vec 扩展已加载 → 走 vec0 路径。"""
+        if not self._sqlite_vec_available:
+            return False
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (_VEC0_TABLE,),
+        ).fetchone()
+        return row is not None
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        # v4 P0-模块 3: 加载 sqlite-vec 扩展。**每个 conn 都必须 load**（sqlite-vec
+        # load 是 per-connection state，不是进程全局），self._sqlite_vec_available
+        # 仅作"环境能力探测"标志，不作"已 load"标志。
+        try:
+            conn.enable_load_extension(True)
+            import sqlite_vec  # local import 避免 CI minimal-deps 缺包时崩
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            self._sqlite_vec_available = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"sqlite-vec not loaded, vector_search will use numpy fallback: {exc}")
+            try:
+                conn.enable_load_extension(False)
+            except Exception:
+                pass
+            self._sqlite_vec_available = False
         return conn
 
     def _init_db(self):
@@ -62,7 +125,9 @@ class SqliteBackend(BaseBackend):
         if not schema_path.exists():
             logger.error(f"Schema file not found: {schema_path}")
             return
-        with sqlite3.connect(self.db_path) as conn:
+        # v4 P0-模块 3: 用 _get_conn 让 sqlite-vec 扩展先加载，保证 migration 014
+        # 的 CREATE VIRTUAL TABLE USING vec0 能成功
+        with self._get_conn() as conn:
             conn.executescript(schema_path.read_text(encoding="utf-8"))
             self._apply_idempotent_migrations(conn)
         logger.info(f"SQLite backend initialized: {self.db_path}")
@@ -548,7 +613,7 @@ class SqliteBackend(BaseBackend):
             emb_dim = len(data["embedding"])
         conn = self._get_conn()
         try:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO knowledge_chunks
                    (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
                     keywords, embedding, embedding_dim, context, heading_path)
@@ -560,6 +625,8 @@ class SqliteBackend(BaseBackend):
                  emb_blob, emb_dim,
                  data.get("context", ""), self._json_serialize(data.get("heading_path", []))),
             )
+            # v4 P0-模块 3: 同步写入 vec0 索引（仅 512 维 BGE 向量）
+            self._maybe_insert_into_vec0(conn, cur.lastrowid, emb_blob, emb_dim)
             conn.commit()
         finally:
             conn.close()
@@ -569,6 +636,7 @@ class SqliteBackend(BaseBackend):
         ids = []
         conn = self._get_conn()
         try:
+            vec0_writes: List[Tuple[int, Optional[bytes], Optional[int]]] = []
             for i, chunk in enumerate(chunks):
                 chunk["jd_id"] = jd_id
                 chunk["chunk_index"] = i
@@ -577,7 +645,7 @@ class SqliteBackend(BaseBackend):
                 emb_dim = chunk.get("embedding_dim")
                 if emb_dim is None and isinstance(chunk.get("embedding"), (list, tuple)):
                     emb_dim = len(chunk["embedding"])
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO knowledge_chunks
                        (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
                         keywords, embedding, embedding_dim, context, heading_path)
@@ -589,10 +657,50 @@ class SqliteBackend(BaseBackend):
                      chunk.get("context", ""), self._json_serialize(chunk.get("heading_path", []))),
                 )
                 ids.append(chunk_id)
+                vec0_writes.append((cur.lastrowid, emb_blob, emb_dim))
+            # v4 P0-模块 3: 一次性把 512 维 chunk 写进 vec0
+            self._bulk_insert_into_vec0(conn, vec0_writes)
             conn.commit()
         finally:
             conn.close()
         return ids
+
+    # ------------------------------------------------------------------
+    # v4 P0-模块 3: vec0 双写辅助
+    # ------------------------------------------------------------------
+    def _maybe_insert_into_vec0(self, conn: sqlite3.Connection, rowid: int,
+                                emb_blob: Optional[bytes], emb_dim: Optional[int]) -> None:
+        """单 chunk 写 vec0；dim 不匹配或 vec0 不可用时静默跳过。"""
+        if emb_blob is None or emb_dim != _BGE_DIM:
+            return
+        if not self._vec0_available(conn):
+            return
+        try:
+            conn.execute(
+                f"INSERT OR REPLACE INTO {_VEC0_TABLE}(rowid, embedding) VALUES (?, ?)",
+                (rowid, emb_blob),
+            )
+        except sqlite3.Error as exc:
+            logger.warning(f"vec0 insert skipped (rowid={rowid}): {exc}")
+
+    def _bulk_insert_into_vec0(self, conn: sqlite3.Connection,
+                                writes: List[Tuple[int, Optional[bytes], Optional[int]]]) -> None:
+        """批量 chunks 写 vec0；静默跳过 dim 不匹配 / vec0 不可用。"""
+        if not writes or not self._vec0_available(conn):
+            return
+        try:
+            payloads: List[Tuple[int, bytes]] = []
+            for rowid, blob, dim in writes:
+                if blob is None or dim != _BGE_DIM:
+                    continue
+                payloads.append((rowid, blob))
+            if payloads:
+                conn.executemany(
+                    f"INSERT OR REPLACE INTO {_VEC0_TABLE}(rowid, embedding) VALUES (?, ?)",
+                    payloads,
+                )
+        except sqlite3.Error as exc:
+            logger.warning(f"vec0 bulk insert skipped: {exc}")
 
     def get_chunks_by_jd(self, jd_id: str) -> List[Dict]:
         conn = self._get_conn()
@@ -658,7 +766,11 @@ class SqliteBackend(BaseBackend):
                       filter_chunk_type: Optional[str] = None,
                       user_id: Optional[str] = None,
                       filter_position: Optional[str] = None) -> List[Dict]:
-        """Pure numpy cosine over knowledge_chunks. No re-weighting / filtering.
+        """v4 P0-模块 3: vec0 MATCH fast-path + numpy fallback.
+
+        Selection rule:
+        - vec0 虚拟表存在 + sqlite-vec 扩展已加载 + query 是 512-dim → vec0 path
+        - 否则 → numpy 全表扫描（mock 测试 / 早期非 512 维 chunk / vec0 不可用）
 
         Chunk_type weighting + min_similarity cutoff live in
         ``services.retrieval_service.RetrievalService``. ``filter_position`` is a
@@ -669,29 +781,142 @@ class SqliteBackend(BaseBackend):
 
         conn = self._get_conn()
         try:
-            conditions = ["kc.deleted_at IS NULL", "kc.embedding IS NOT NULL", "kc.legacy = 0"]
-            params: list = []
-            if filter_chunk_type:
-                conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
-            if user_id:
-                conditions.append("kc.user_id = ?"); params.append(user_id)
-            if filter_position:
-                conditions.append("j.position_tag = ?"); params.append(filter_position)
-            query = (
-                "SELECT kc.*, j.industry_tag AS jd_industry_tag, "
-                "j.function_tag AS jd_function_tag, j.position_tag AS jd_position_tag "
-                "FROM knowledge_chunks kc "
-                "LEFT JOIN jds j ON j.id = kc.jd_id "
-                "WHERE " + " AND ".join(conditions)
+            # ---- 决定走 vec0 还是 numpy ----
+            use_vec0 = (
+                self._vec0_available(conn)
+                and query_embedding is not None
+                and len(query_embedding) == _BGE_DIM
             )
-            rows = conn.execute(query, params).fetchall()
+
+            if use_vec0:
+                return self._vector_search_vec0(
+                    conn, query_embedding, top_k,
+                    filter_chunk_type=filter_chunk_type,
+                    user_id=user_id,
+                    filter_position=filter_position,
+                )
+            return self._vector_search_numpy(
+                conn, query_embedding, top_k,
+                filter_chunk_type=filter_chunk_type,
+                user_id=user_id,
+                filter_position=filter_position,
+            )
         finally:
             conn.close()
+
+    # ------------------------------------------------------------------
+    # v4 P0-模块 3: vector_search vec0 fast-path
+    # ------------------------------------------------------------------
+    def _vector_search_vec0(self, conn: sqlite3.Connection, query_embedding: List[float],
+                             top_k: int, filter_chunk_type: Optional[str] = None,
+                             user_id: Optional[str] = None,
+                             filter_position: Optional[str] = None) -> List[Dict]:
+        """vec0 MATCH → top-K rowids → JOIN knowledge_chunks + jds → Python 端过滤 → top_k.
+
+        过取倍数：max(top_k * 20, 200)。vec0 MATCH 跟外层 WHERE 互斥，所以过滤必须放在
+        vec0 召回之后。倍数是经验值，可调。
+        """
+        import sqlite_vec
+        import numpy as np
+
+        q_arr = np.asarray(query_embedding, dtype=np.float32)
+        q_blob = sqlite_vec.serialize_float32(q_arr)
+
+        # 1) vec0 过取 top-N
+        overfetch = max(top_k * 20, 200)
+        rows = conn.execute(
+            f"SELECT rowid, distance FROM {_VEC0_TABLE} "
+            "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+            (q_blob, overfetch),
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        # vec0 cosine distance ∈ [0, 2]；similarity = 1 - distance
+        rowids: List[int] = []
+        dist_map: Dict[int, float] = {}
+        for rid, dist in rows:
+            rowids.append(int(rid))
+            dist_map[int(rid)] = float(dist)
+
+        # 2) JOIN 主表 + jds；WHERE 过滤（deleted_at / embedding / legacy / chunk_type / user_id / position）
+        placeholders = ",".join("?" * len(rowids))
+        conditions = [
+            "kc.rowid IN (" + placeholders + ")",
+            "kc.deleted_at IS NULL",
+            "kc.embedding IS NOT NULL",
+            "kc.legacy = 0",
+        ]
+        params: List[Any] = list(rowids)
+        if filter_chunk_type:
+            conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
+        if user_id:
+            conditions.append("kc.user_id = ?"); params.append(user_id)
+        if filter_position:
+            conditions.append("j.position_tag = ?"); params.append(filter_position)
+        sql = (
+            "SELECT kc.rowid AS kc_rowid, kc.*, j.industry_tag AS jd_industry_tag, "
+            "j.function_tag AS jd_function_tag, j.position_tag AS jd_position_tag "
+            "FROM knowledge_chunks kc "
+            "LEFT JOIN jds j ON j.id = kc.jd_id "
+            "WHERE " + " AND ".join(conditions)
+        )
+        rows_meta = conn.execute(sql, params).fetchall()
+
+        # 3) 按 similarity 排序（vec0 已 distance ASC，但 JOIN + WHERE 后顺序可能变），取 top_k
+        scored: List[Tuple[float, sqlite3.Row]] = []
+        for row in rows_meta:
+            rid = row["kc_rowid"]
+            if rid not in dist_map:
+                continue
+            sim = 1.0 - dist_map[rid]
+            scored.append((sim, row))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        scored = scored[:top_k]
+
+        results: List[Dict] = []
+        for sim, row in scored:
+            d = self._row_to_dict(row)
+            d["keywords"] = self._json_deserialize(d.get("keywords"))
+            d["heading_path"] = self._json_deserialize(d.get("heading_path", "[]"))
+            d["embedding"] = None
+            d["similarity"] = round(sim, 4)
+            d.setdefault("metadata", {})
+            results.append(d)
+        return results
+
+    # ------------------------------------------------------------------
+    # v4 P0-模块 3: vector_search numpy fallback（vec0 不可用时）
+    # ------------------------------------------------------------------
+    def _vector_search_numpy(self, conn: sqlite3.Connection, query_embedding: List[float],
+                             top_k: int, filter_chunk_type: Optional[str] = None,
+                             user_id: Optional[str] = None,
+                             filter_position: Optional[str] = None) -> List[Dict]:
+        """numpy cosine 全表扫描；保持 v2.1 行为不变以兼容非 512-dim / 老 chunk。"""
+        import numpy as np
+
+        conditions = ["kc.deleted_at IS NULL", "kc.embedding IS NOT NULL", "kc.legacy = 0"]
+        params: List[Any] = []
+        if filter_chunk_type:
+            conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
+        if user_id:
+            conditions.append("kc.user_id = ?"); params.append(user_id)
+        if filter_position:
+            conditions.append("j.position_tag = ?"); params.append(filter_position)
+        sql = (
+            "SELECT kc.rowid AS kc_rowid, kc.*, j.industry_tag AS jd_industry_tag, "
+            "j.function_tag AS jd_function_tag, j.position_tag AS jd_position_tag "
+            "FROM knowledge_chunks kc "
+            "LEFT JOIN jds j ON j.id = kc.jd_id "
+            "WHERE " + " AND ".join(conditions)
+        )
+        rows = conn.execute(sql, params).fetchall()
 
         q = np.asarray(query_embedding, dtype=np.float32)
         q_norm = float(np.linalg.norm(q)) or 1.0
 
-        scored: List[tuple] = []
+        scored: List[Tuple[float, Dict]] = []
         for row in rows:
             d = self._row_to_dict(row)
             vec = self._blob_to_embedding(d.get("embedding"))

@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import pytest
+
 
 def _sample_resume():
     return {
@@ -170,7 +172,9 @@ class TestChunks:
         types = {r["chunk_type"] for r in rows}
         assert types == {"responsibility", "requirement"}
         emb0 = [r for r in rows if r["chunk_type"] == "responsibility"][0]["embedding"]
-        assert emb0 == [0.1, 0.2, 0.3, 0.4]
+        # v4 P0-模块 3: embedding 现以 float32 binary 存储（sqlite-vec/vec0 的事实标准），
+        # 0.1 在 float32 里就是 0.10000000149011612，无法精确等于；用 approx 表达。
+        assert emb0 == pytest.approx([0.1, 0.2, 0.3, 0.4], abs=1e-6)
 
     def test_soft_delete_jd_cascades(self, tmp_db):
         jid = tmp_db.insert_jd(_sample_jd())
