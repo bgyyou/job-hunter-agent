@@ -140,7 +140,7 @@ docs(M-rebuild-3+4): CHANGELOG 追加 [M-rebuild-3] + [M-rebuild-4] 两节
 4. 改了 `requirements.in` → `pip-compile` 生成 `requirements.lock` 同步推
 5. `git log -1 --format='%an %ae'` 确认是本机作者
 
-**注意**：本轮 GitHub 远端推不上去（`haowenzheng-art` 账号 sunlife 邮箱被回收），commit 都在本地积累。**用户在 user message 里说了"先不考虑 push 的事情"**——所以本轮 commit 不 push，按 4.4.5 规则"本地积累" 等账号问题解决再批量推。
+**注意**：本轮因账号迁移（旧账号已找不回），commit 在本地积累。**用户在 user message 里说了"先不考虑 push 的事情"**——所以本轮 commit 不 push，按 4.4.5 规则"本地积累" 等账号迁移完成再批量推。
 
 ## 已知歧义 / 需要用户拍板
 
