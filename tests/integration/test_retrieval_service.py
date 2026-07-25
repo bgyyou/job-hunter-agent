@@ -40,7 +40,9 @@ def test_retrieve_falls_back_to_like_when_embedder_unavailable():
     assert out and out[0]["chunk_text"] == "x"
 
 
-def test_retrieve_filters_below_min_similarity():
+def test_retrieve_filters_below_min_similarity(monkeypatch):
+    """P3-1 旧行为：rerank OFF 时 min_similarity 仍是有效过滤（rerank ON 时被旁路）。"""
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
     rows = [
         {"chunk_text": "high", "chunk_type": "full", "similarity": 0.8},
         {"chunk_text": "low",  "chunk_type": "full", "similarity": 0.3},
@@ -53,7 +55,9 @@ def test_retrieve_filters_below_min_similarity():
     assert out[0]["chunk_text"] == "high"
 
 
-def test_retrieve_normalizes_output_fields():
+def test_retrieve_normalizes_output_fields(monkeypatch):
+    """rerank OFF 时 ranked_score = sim × chunk_type_weight（legacy 公式）。"""
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
     rows = [{"chunk_text": "t", "chunk_type": "requirement", "similarity": 0.9,
              "context": "ctx", "heading_path": ["A", "B"]}]
     db = _mock_db(rows)
@@ -69,7 +73,21 @@ def test_retrieve_normalizes_output_fields():
 
 
 def test_retrieve_overfetches_candidate_k():
-    """传给 backend.vector_search 的 top_k 应该是 service top_k * 3（用于重排）。"""
+    """P1-模块 5：rerank 默认开启 → top_k 传给 backend = max(top_k*5, 50)。"""
+    rows = []
+    db = _mock_db(rows)
+    with patch("tools.embedder.Embedder") as MockEmb, \
+         patch("tools.reranker.CrossEncoderReranker") as MockRR:
+        MockEmb.return_value.embed.return_value = [0.1] * 8
+        MockRR.return_value.rerank.return_value = rows
+        RetrievalService(db=db).retrieve("q", top_k=4)
+    _args, kwargs = db.vector_search.call_args
+    assert kwargs["top_k"] == 50  # max(4*5, 50)
+
+
+def test_retrieve_overfetches_legacy_when_rerank_disabled(monkeypatch):
+    """RERANKER_ENABLED=false → 退回 max(top_k*3, top_k)。"""
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
     rows = []
     db = _mock_db(rows)
     with patch("tools.embedder.Embedder") as MockEmb:
@@ -77,3 +95,45 @@ def test_retrieve_overfetches_candidate_k():
         RetrievalService(db=db).retrieve("q", top_k=4)
     _args, kwargs = db.vector_search.call_args
     assert kwargs["top_k"] == 12  # 4 * 3
+
+
+def test_retrieve_rerank_reorders_candidates():
+    """rerank 重排后取 rerank_score_norm 主导，softmax-style。"""
+    # mock reranker：把"second"的 rerank 拉到最高
+    rows = [
+        {"chunk_text": "first",  "chunk_type": "full", "similarity": 0.9},
+        {"chunk_text": "second", "chunk_type": "requirement", "similarity": 0.5},
+        {"chunk_text": "third",  "chunk_type": "full", "similarity": 0.6},
+    ]
+    reranked = [
+        {**rows[1], "rerank_score": 9.0,  "rerank_score_norm": 0.999},
+        {**rows[2], "rerank_score": 3.0,  "rerank_score_norm": 0.953},
+        {**rows[0], "rerank_score": -5.0, "rerank_score_norm": 0.007},
+    ]
+    db = _mock_db(rows)
+    with patch("tools.embedder.Embedder") as MockEmb, \
+         patch("tools.reranker.CrossEncoderReranker") as MockRR:
+        MockEmb.return_value.embed.return_value = [0.1] * 8
+        MockRR.return_value.rerank.return_value = reranked
+        out = RetrievalService(db=db).retrieve("q", top_k=3, min_similarity=0.0)
+    # reranker 重排后即便 similarity 低也应排第一
+    assert out[0]["chunk_text"] == "second"
+    assert out[0]["rerank_score"] == 9.0
+
+
+def test_retrieve_rerank_skips_min_similarity():
+    """rerank ON 时 sim < min_similarity 不再丢弃（rerank_score 替代评估）。"""
+    rows = [
+        # cosine 极低但 rerank 高 → 应被保留
+        {"chunk_text": "x", "chunk_type": "full", "similarity": 0.01},
+    ]
+    reranked = [
+        {**rows[0], "rerank_score": 7.0, "rerank_score_norm": 0.999},
+    ]
+    db = _mock_db(rows)
+    with patch("tools.embedder.Embedder") as MockEmb, \
+         patch("tools.reranker.CrossEncoderReranker") as MockRR:
+        MockEmb.return_value.embed.return_value = [0.1] * 8
+        MockRR.return_value.rerank.return_value = reranked
+        out = RetrievalService(db=db).retrieve("q", top_k=1, min_similarity=0.5)
+    assert len(out) == 1

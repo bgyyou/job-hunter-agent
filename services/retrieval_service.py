@@ -66,21 +66,30 @@ class RetrievalService:
         filter_position: Optional[str] = None,
         boost_industry: Optional[str] = None,
     ) -> List[Dict]:
-        """Return up to `top_k` chunks ranked by cosine × chunk_type weight × industry boost.
+        """Return up to `top_k` chunks ranked by cross-encoder (rerank) × chunk_type × industry.
+
+        P1-模块 5（2026-07-25）接入 cross-encoder 精排：
+        - vector_search over-fetch 50 → cross-encoder rerank → top-20 (跨 encoder 精确打分)
+        - rerank 主导（70%），chunk_type × industry 软加权（30%）
+        - 失败 graceful fallback：原样返回，retrieval 不被打断
 
         - ``filter_position``: hard JOIN on ``jds.position_tag``. Same position
           across all industries is co-retrieved (e.g. "产品经理" in both 互联网 and 快消).
         - ``boost_industry``: soft rerank — chunks from JDs in this industry get
           ``INDUSTRY_BOOST_SAME`` multiplier, others ``INDUSTRY_BOOST_CROSS``.
         - Falls back to LIKE search when the embedder cannot produce a vector.
-        - Results with ``similarity < min_similarity`` are dropped after ranking.
+        - Results with ``similarity < min_similarity`` are dropped after ranking
+          (only when rerank is OFF; rerank ON 时 rerank_score 替代 similarity 评估）。
         """
+        from tools.reranker import CrossEncoderReranker, _is_enabled as _reranker_enabled
+
         db = self._get_db()
         q_vec = self._embed_query(query)
         if q_vec is None:
             return self._fallback(db, query, top_k, filter_chunk_type, user_id, filter_position)
 
-        candidate_k = max(top_k * 3, top_k)
+        rerank_on = _reranker_enabled()
+        candidate_k = max(top_k * 5, 50) if rerank_on else max(top_k * 3, top_k)
         try:
             candidates = db.vector_search(
                 query_embedding=q_vec,
@@ -93,20 +102,32 @@ class RetrievalService:
             logger.warning(f"vector_search failed, falling back to LIKE: {exc}")
             return self._fallback(db, query, top_k, filter_chunk_type, user_id, filter_position)
 
+        if rerank_on and candidates:
+            # cross-encoder 精排：top-N → top-K (K ≈ top_k * 4，至少 20 候选)
+            candidates = CrossEncoderReranker().rerank(
+                query, candidates, top_k=max(top_k * 4, 20)
+            )
+
         scored: List[tuple] = []
         for row in candidates:
             sim = float(row.get("similarity", 0.0) or 0.0)
+            rr_norm = row.get("rerank_score_norm")  # [0,1] only when reranker ran
             ct = row.get("chunk_type") or "full"
             type_w = CHUNK_TYPE_WEIGHT.get(ct, 1.0)
             ind_w = self._industry_weight(row.get("jd_industry_tag"), boost_industry)
-            ranked = sim * type_w * ind_w
-            scored.append((ranked, sim, ct, type_w, ind_w, row))
+            if rr_norm is not None:
+                # P1-模块 5: rerank 主导，chunk_type × industry 软加权
+                ranked = 0.7 * rr_norm + 0.3 * sim * type_w * ind_w
+            else:
+                ranked = sim * type_w * ind_w
+            scored.append((ranked, sim, rr_norm, ct, type_w, ind_w, row))
 
         scored.sort(key=lambda t: t[0], reverse=True)
 
         normalized: List[Dict] = []
-        for ranked, sim, ct, type_w, ind_w, row in scored[:top_k]:
-            if sim < min_similarity:
+        for ranked, sim, rr_norm, ct, type_w, ind_w, row in scored[:top_k]:
+            # rerank ON 时跳过 min_similarity 阈值（rerank_score 替代 similarity）
+            if rr_norm is None and sim < min_similarity:
                 continue
             normalized.append({
                 "chunk_text": row.get("chunk_text", ""),
@@ -122,13 +143,14 @@ class RetrievalService:
                     "jd_position_tag": row.get("jd_position_tag"),
                 },
                 "similarity": round(sim, 4),
+                "rerank_score": round(row.get("rerank_score", 0.0), 4) if rr_norm is not None else None,
                 "ranked_score": round(ranked, 4),
             })
 
         logger.info(
             f"RetrievalService: returned {len(normalized)}/{len(candidates)} results "
             f"for '{query[:50]}...' (top_k={top_k}, min_sim={min_similarity}, "
-            f"position={filter_position}, boost={boost_industry})"
+            f"position={filter_position}, boost={boost_industry}, rerank={rerank_on})"
         )
         return normalized
 
