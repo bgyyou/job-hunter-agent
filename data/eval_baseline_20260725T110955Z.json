@@ -1,0 +1,1099 @@
+{
+  "timestamp": "2026-07-25T11:09:55.083422+00:00",
+  "judge_model": "agnes-2.0-flash",
+  "judge_is_mock": true,
+  "judge_strategy": "batch_per_query",
+  "judge_api_calls": 50,
+  "judge_candidate_scores": 500,
+  "judge_real_scores": 420,
+  "judge_mock_fallbacks": 8,
+  "top_k": 10,
+  "num_queries": 50,
+  "n_zero_relevant_in_top10": 15,
+  "queries_by_source": {
+    "jobsdb_batch": 17,
+    "51job_batch": 20,
+    "cross": 5,
+    "liepin_batch": 8
+  },
+  "queries_by_form": {
+    "medium": 18,
+    "long": 16,
+    "short": 16
+  },
+  "queries_by_type": {
+    "self_retrieval": 45,
+    "cross_domain": 5
+  },
+  "ndcg_at_10": 0.5379,
+  "recall_at_10": 0.362,
+  "mrr": 0.4601,
+  "hit_rate": 0.7,
+  "n_queries": 50,
+  "sample_failures": [
+    {
+      "query_id": "q0084",
+      "query": "集团招聘经理（coe） 岗位，要求标题:集团招聘经理（coe） 薪资:1.5-2.5万 公司:深圳市德保膳食管理有限公司 地点:深圳·龙华区 标签:招聘 人力资源管理 日常管理 pmp 招聘管理",
+      "form": "long",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "e6346148-43d3-460c-a8bf-319a1923e0ca",
+      "origin_source": "51job_batch",
+      "recalled_titles": [
+        "Personal Assistant to the Managing Partner",
+        "Personal Assistant to the Managing Partner",
+        "Personal Assistant to the Managing Partner",
+        "Personal Assistant to the Managing Partner",
+        "Executive Assistant",
+        "Executive Assistant",
+        "Sales Manager (Food Service)",
+        "Sales Manager (Food Service)",
+        "Assistant Manager, Talent & Learning Development",
+        "Assistant Manager, Talent & Learning Development"
+      ],
+      "recalled_jd_ids": [
+        "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+        "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+        "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+        "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+        "93b43644-5b51-4480-b548-9ec6c707a467",
+        "93b43644-5b51-4480-b548-9ec6c707a467",
+        "74fe266d-d41d-4373-9ad8-c6281b948946",
+        "74fe266d-d41d-4373-9ad8-c6281b948946",
+        "0fb49619-f740-49ff-bc0c-05892966fd42",
+        "0fb49619-f740-49ff-bc0c-05892966fd42"
+      ]
+    },
+    {
+      "query_id": "q0162",
+      "query": "产品助理（底薪8K起，产品经理一对一带）",
+      "form": "short",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "c22ba6ec-1b61-49ff-a28a-a0cfa2894468",
+      "origin_source": "51job_batch",
+      "recalled_titles": [
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "Product Manager",
+        "Product Manager",
+        "Product Manager",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）"
+      ],
+      "recalled_jd_ids": [
+        "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+        "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+        "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+        "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+        "65fc4824-2807-4444-8a56-c90629b1a997"
+      ]
+    },
+    {
+      "query_id": "q0096",
+      "query": "外贸业务员（俄语） 岗位，要求标题:外贸业务员（俄语） 薪资:1-2万 公司:深圳市康唯普科技有限公司 地点:深圳·宝安区 标签:销售 市场推广 俄语 开车 渠道铺货 开拓新市场 品牌曝光度",
+      "form": "long",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "8acab866-fad0-43ac-9d41-1ea6d79ef430",
+      "origin_source": "51job_batch",
+      "recalled_titles": [
+        "Operation & Logistics Clerk 文員",
+        "Operation & Logistics Clerk 文員",
+        "銷售代表 Sales Executive",
+        "銷售代表 Sales Executive",
+        "銷售代表 Sales Executive",
+        "銷售代表 Sales Executive",
+        "Senior IT Project Manager (Insurance experience)",
+        "Senior IT Project Manager (Insurance experience)",
+        "Senior IT Project Manager (Insurance experience)",
+        "Senior IT Project Manager (Insurance experience)"
+      ],
+      "recalled_jd_ids": [
+        "e0db659c-e50c-4d72-a236-39b0d9b20e83",
+        "e0db659c-e50c-4d72-a236-39b0d9b20e83",
+        "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+        "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+        "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+        "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+        "e57b9f0e-66ec-4359-936b-6b38a88fd4d1",
+        "e57b9f0e-66ec-4359-936b-6b38a88fd4d1",
+        "e57b9f0e-66ec-4359-936b-6b38a88fd4d1",
+        "e57b9f0e-66ec-4359-936b-6b38a88fd4d1"
+      ]
+    },
+    {
+      "query_id": "q0017",
+      "query": "高级储能系统工程师",
+      "form": "short",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "cff763ad-b4a4-4083-983d-d607d85efeb6",
+      "origin_source": "51job_batch",
+      "recalled_titles": [
+        "Application Support Engineer (Cloud/API) - Contract",
+        "Application Support Engineer (Cloud/API) - Contract",
+        "(Assistant) Production Manager",
+        "Personal Assistant to the Managing Partner",
+        "Personal Assistant to the Managing Partner",
+        "Accounting Manager, Finance",
+        "Accounting Manager, Finance",
+        "Accounting Manager, Finance",
+        "Accounting Manager, Finance",
+        "Supply Chain Specialist"
+      ],
+      "recalled_jd_ids": [
+        "44589a38-43c9-47bd-b1e9-4e752492b68b",
+        "44589a38-43c9-47bd-b1e9-4e752492b68b",
+        "2dd3f3a9-db56-429d-9890-1fa3e939010f",
+        "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+        "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+        "09186e54-2395-4843-8549-ca3bedee1ac8",
+        "f295c8c9-21bf-43b2-b44e-13cbe892b606",
+        "09186e54-2395-4843-8549-ca3bedee1ac8",
+        "f295c8c9-21bf-43b2-b44e-13cbe892b606",
+        "85181b2f-0dbd-4234-91a7-a2e5e473a88b"
+      ]
+    },
+    {
+      "query_id": "q0138",
+      "query": "AI算法工程师（多模态时序预测） 职位介绍",
+      "form": "medium",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "e2bbeff0-83be-4c50-abb9-afeafcbca271",
+      "origin_source": "liepin_batch",
+      "recalled_titles": [
+        "AI Engineer",
+        "AI Engineer",
+        "AI Engineer",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "培训产品经理（AI+）",
+        "Sales Manager (Food Service)",
+        "Sales Manager (Food Service)"
+      ],
+      "recalled_jd_ids": [
+        "fd3b79c2-333c-4481-8ff1-1bd2b9f82de0",
+        "fd3b79c2-333c-4481-8ff1-1bd2b9f82de0",
+        "fd3b79c2-333c-4481-8ff1-1bd2b9f82de0",
+        "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "65fc4824-2807-4444-8a56-c90629b1a997",
+        "74fe266d-d41d-4373-9ad8-c6281b948946",
+        "74fe266d-d41d-4373-9ad8-c6281b948946"
+      ]
+    }
+  ],
+  "per_query_summary": [
+    {
+      "query_id": "q0082",
+      "query": "URGENT - Social Media Copywriter Skip to content",
+      "scores": [
+        1,
+        1,
+        5,
+        5,
+        2,
+        2,
+        1,
+        1,
+        1,
+        1
+      ],
+      "rank_of_first_relevant": 3,
+      "n_relevant_in_top_k": 2,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "c7b8b714-e215-4142-b59c-ace52bf3be0e",
+          "title": "Marketing Executive",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "c7b8b714-e215-4142-b59c-ace52bf3be0e",
+          "title": "Marketing Executive",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "268b3c53-5f85-41b6-b54c-41dcb34750d2",
+          "title": "URGENT - Social Media Copywriter",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "268b3c53-5f85-41b6-b54c-41dcb34750d2",
+          "title": "URGENT - Social Media Copywriter",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "500949e0-0b93-46e0-bc34-9dff24d31443",
+          "title": "HK Marketing and Enrollment Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "500949e0-0b93-46e0-bc34-9dff24d31443",
+          "title": "HK Marketing and Enrollment Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "72f28e58-b05d-4421-8fa6-76fd1ec72200",
+          "title": "video editor / online post-production diector",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "72f28e58-b05d-4421-8fa6-76fd1ec72200",
+          "title": "video editor / online post-production diector",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "72f28e58-b05d-4421-8fa6-76fd1ec72200",
+          "title": "video editor / online post-production diector",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "72f28e58-b05d-4421-8fa6-76fd1ec72200",
+          "title": "video editor / online post-production diector",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0038",
+      "query": "课程顾问（可就近安排校区） 岗位，要求标题:课程顾问（可就近安排校区） 薪资:1-1.5万 公司:广州市卓越里程教育科技有限公司 地点:深圳·福田区 标签:销售 家长沟通 教育行业 客户维护 客户资",
+      "scores": [
+        2,
+        1,
+        1,
+        3,
+        3,
+        1,
+        1,
+        1,
+        1,
+        4
+      ],
+      "rank_of_first_relevant": 4,
+      "n_relevant_in_top_k": 3,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "08df4d45-130e-401a-a15a-887c1194424a",
+          "title": "Education Consultant/ Senior Education Consultant",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "3125f370-0f4e-4818-9609-cac8ce2c8f81",
+          "title": "Customer Service Representative",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "3125f370-0f4e-4818-9609-cac8ce2c8f81",
+          "title": "Customer Service Representative",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "500949e0-0b93-46e0-bc34-9dff24d31443",
+          "title": "HK Marketing and Enrollment Manager",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "500949e0-0b93-46e0-bc34-9dff24d31443",
+          "title": "HK Marketing and Enrollment Manager",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "d309877e-e208-4421-8303-37df12e36caa",
+          "title": "Assistant Finance Manager / Finance Manager – Hong Kong & Macau",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "d309877e-e208-4421-8303-37df12e36caa",
+          "title": "Assistant Finance Manager / Finance Manager – Hong Kong & Macau",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "0da6a505-6887-4196-a371-74302382d1aa",
+          "title": "Marketing Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "0da6a505-6887-4196-a371-74302382d1aa",
+          "title": "Marketing Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "740e460a-8293-4c0c-8743-047fe83ce9e1",
+          "title": "Admissions and Recruitment Executive",
+          "score": 4,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0154",
+      "query": "Accountant Skip to content",
+      "scores": [
+        5,
+        5,
+        4,
+        4,
+        4,
+        4,
+        3,
+        3,
+        2,
+        2
+      ],
+      "rank_of_first_relevant": 1,
+      "n_relevant_in_top_k": 8,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "3a290255-49a5-4bec-870c-9e5f9299c3a2",
+          "title": "Accountant",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "3a290255-49a5-4bec-870c-9e5f9299c3a2",
+          "title": "Accountant",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "e4e1a773-8a70-4427-9608-9a250bab3b5e",
+          "title": "Accountant / Assistant Accountant",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "e4e1a773-8a70-4427-9608-9a250bab3b5e",
+          "title": "Accountant / Assistant Accountant",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "abf91e64-05de-4138-a3f9-e2ec1c3897ff",
+          "title": "Assistant Accountant / Accountant",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "abf91e64-05de-4138-a3f9-e2ec1c3897ff",
+          "title": "Assistant Accountant / Accountant",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "959f54d2-aa7e-4989-b1fb-7ed64807c11d",
+          "title": "Senior Accountant – Audit & Assurance",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "959f54d2-aa7e-4989-b1fb-7ed64807c11d",
+          "title": "Senior Accountant – Audit & Assurance",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "b711be59-9e8e-4ea4-967b-7d58b85bc3e4",
+          "title": "Senior Finance Accountant",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "b711be59-9e8e-4ea4-967b-7d58b85bc3e4",
+          "title": "Senior Finance Accountant",
+          "score": 2,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0084",
+      "query": "集团招聘经理（coe） 岗位，要求标题:集团招聘经理（coe） 薪资:1.5-2.5万 公司:深圳市德保膳食管理有限公司 地点:深圳·龙华区 标签:招聘 人力资源管理 日常管理 pmp 招聘管理",
+      "scores": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2
+      ],
+      "rank_of_first_relevant": null,
+      "n_relevant_in_top_k": 0,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+          "title": "Personal Assistant to the Managing Partner",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+          "title": "Personal Assistant to the Managing Partner",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+          "title": "Personal Assistant to the Managing Partner",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+          "title": "Personal Assistant to the Managing Partner",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "93b43644-5b51-4480-b548-9ec6c707a467",
+          "title": "Executive Assistant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "93b43644-5b51-4480-b548-9ec6c707a467",
+          "title": "Executive Assistant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "74fe266d-d41d-4373-9ad8-c6281b948946",
+          "title": "Sales Manager (Food Service)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "74fe266d-d41d-4373-9ad8-c6281b948946",
+          "title": "Sales Manager (Food Service)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "0fb49619-f740-49ff-bc0c-05892966fd42",
+          "title": "Assistant Manager, Talent & Learning Development",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "0fb49619-f740-49ff-bc0c-05892966fd42",
+          "title": "Assistant Manager, Talent & Learning Development",
+          "score": 2,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0162",
+      "query": "产品助理（底薪8K起，产品经理一对一带）",
+      "scores": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        1,
+        1
+      ],
+      "rank_of_first_relevant": null,
+      "n_relevant_in_top_k": 0,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+          "title": "Product Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+          "title": "Product Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+          "title": "Product Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0172",
+      "query": "（外包）Compliance Assistant – Trust and Corporate Service 岗位，要求Skip to content Jobsdb Job search People search Career advic",
+      "scores": [
+        5,
+        5,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "rank_of_first_relevant": 1,
+      "n_relevant_in_top_k": 2,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "93e36e52-56cf-4fbb-a794-0744ea5f0b26",
+          "title": "（外包）Compliance Assistant – Trust and Corporate Service",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "93e36e52-56cf-4fbb-a794-0744ea5f0b26",
+          "title": "（外包）Compliance Assistant – Trust and Corporate Service",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "c970460c-514a-43e5-8d88-544b7178900e",
+          "title": "Customer Service Officer/Marketing Executive(17-28K,️ ️️️️5️⃣⭐️BENEFITS/️5 Days)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "c970460c-514a-43e5-8d88-544b7178900e",
+          "title": "Customer Service Officer/Marketing Executive(17-28K,️ ️️️️5️⃣⭐️BENEFITS/️5 Days)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "2964f281-3177-4c11-a6d8-9022360ab2af",
+          "title": "Customer Service Officer / Receptionist",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "2e68ce45-d05c-45b5-9e04-4bed83d26bdf",
+          "title": "Executive Associate (Clinical and Research Operations)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "2d599c13-d650-44a8-a948-27737fb84fcd",
+          "title": "Training Manager (Professional Development) - Training & Development",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "2d599c13-d650-44a8-a948-27737fb84fcd",
+          "title": "Training Manager (Professional Development) - Training & Development",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "77a73c3b-6e4c-4533-a7d2-1edaf91b0218",
+          "title": "Unknown Position",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "982937d0-3c4a-45ab-8ad4-6917716d3dd5",
+          "title": "Front-end/Back-end developer",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0029",
+      "query": "供应链 采购 物流管理",
+      "scores": [
+        4,
+        4,
+        1,
+        1,
+        5,
+        5,
+        2,
+        2,
+        1,
+        1
+      ],
+      "rank_of_first_relevant": 1,
+      "n_relevant_in_top_k": 4,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "350e703a-b10a-4180-bea8-6b353f7d7318",
+          "title": "区域营运经理（Regional Operations Manager）",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "350e703a-b10a-4180-bea8-6b353f7d7318",
+          "title": "区域营运经理（Regional Operations Manager）",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "b4f58d87-1483-4678-b410-01c1ccd946f9",
+          "title": "Marketing & E-commerce Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "b4f58d87-1483-4678-b410-01c1ccd946f9",
+          "title": "Marketing & E-commerce Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "9939b2f4-d62f-4e1b-9b8d-65db649fda18",
+          "title": "Procurement Officer",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "9939b2f4-d62f-4e1b-9b8d-65db649fda18",
+          "title": "Procurement Officer",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "350e703a-b10a-4180-bea8-6b353f7d7318",
+          "title": "区域营运经理（Regional Operations Manager）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "350e703a-b10a-4180-bea8-6b353f7d7318",
+          "title": "区域营运经理（Regional Operations Manager）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+          "title": "Personal Assistant to the Managing Partner",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "e7a909f6-a6d1-4db7-9b57-e06a341ff599",
+          "title": "Personal Assistant to the Managing Partner",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0055",
+      "query": "AI应用工程师 岗位，要求职位介绍 AI应用工程师 岗位职责 一、业务分析与需求定义 1.深入理解公司S2B2C商业模式及B端渠道用户画像，识别业务链路中可AI提效的关键环节。 2.结合",
+      "scores": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        4
+      ],
+      "rank_of_first_relevant": 10,
+      "n_relevant_in_top_k": 1,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "75e54698-7d5f-40a1-8123-679d7493b6d3",
+          "title": "AI Engineer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "75e54698-7d5f-40a1-8123-679d7493b6d3",
+          "title": "AI Engineer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "75e54698-7d5f-40a1-8123-679d7493b6d3",
+          "title": "AI Engineer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "b4650223-540d-48d4-a18d-74f737d814f7",
+          "title": "AI产品经理",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "200b4f16-a163-45d8-94db-25e492b8ff63",
+          "title": "AI 應用專員（AI Application Specialist）",
+          "score": 4,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0028",
+      "query": "电商平面设计师 标题:电商平面设计师(J10108) 薪资:1",
+      "scores": [
+        2,
+        2,
+        3,
+        3,
+        4,
+        4,
+        1,
+        1,
+        2,
+        2
+      ],
+      "rank_of_first_relevant": 3,
+      "n_relevant_in_top_k": 4,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "541fab41-b8a3-4849-b75b-390b8beeceb2",
+          "title": "Product & Graphic Designer",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "541fab41-b8a3-4849-b75b-390b8beeceb2",
+          "title": "Product & Graphic Designer",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "35375439-9fd2-4a7d-9b3f-f6ad1c512017",
+          "title": "Senior Designer",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "35375439-9fd2-4a7d-9b3f-f6ad1c512017",
+          "title": "Senior Designer",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "a75587fb-2d26-4f2a-93a4-81463385b4ec",
+          "title": "Multimedia Designer / Content Designer",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "a75587fb-2d26-4f2a-93a4-81463385b4ec",
+          "title": "Multimedia Designer / Content Designer",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "115bf40c-0e68-4e1e-8098-c8222419e74c",
+          "title": "Product Designer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "115bf40c-0e68-4e1e-8098-c8222419e74c",
+          "title": "Product Designer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "541fab41-b8a3-4849-b75b-390b8beeceb2",
+          "title": "Product & Graphic Designer",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "541fab41-b8a3-4849-b75b-390b8beeceb2",
+          "title": "Product & Graphic Designer",
+          "score": 2,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0175",
+      "query": "税务会计",
+      "scores": [
+        2,
+        2,
+        3,
+        3,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "rank_of_first_relevant": 3,
+      "n_relevant_in_top_k": 2,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "c066b084-07ab-4eff-a3a9-70c2b9f5d0a7",
+          "title": "Accounting Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "c066b084-07ab-4eff-a3a9-70c2b9f5d0a7",
+          "title": "Accounting Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "c4d7a889-1ba0-4bc9-a275-c79f9d0ca502",
+          "title": "Semi-Senior / Senior 中級 / 高級 審計人員",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "c4d7a889-1ba0-4bc9-a275-c79f9d0ca502",
+          "title": "Semi-Senior / Senior 中級 / 高級 審計人員",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "af3ad4e9-e0e9-4188-9fcf-23c1edf7624d",
+          "title": "Finance Manager/ Assistant Finance Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "af3ad4e9-e0e9-4188-9fcf-23c1edf7624d",
+          "title": "Finance Manager/ Assistant Finance Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "18fddbb5-67df-43e2-a450-490f1bf824a1",
+          "title": "AUDIT STAFF –ASSOCIATES/MANAGER",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "18fddbb5-67df-43e2-a450-490f1bf824a1",
+          "title": "AUDIT STAFF –ASSOCIATES/MANAGER",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "804a59c0-51cc-4027-bae5-7af2cc36549b",
+          "title": "Financial Analyst / Senior Financial Analyst",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "804a59c0-51cc-4027-bae5-7af2cc36549b",
+          "title": "Financial Analyst / Senior Financial Analyst",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    }
+  ],
+  "queries_source": "eval\\baseline_50_queries.jsonl",
+  "all_per_query": []
+}
