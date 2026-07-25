@@ -1725,3 +1725,71 @@ python -m pytest tests/ -q -m "not real_llm"
 ### 事故记录
 
 并行子代理（T1.3）验证预存失败时执行 `git stash -u` + `stash pop`，与并发写入冲突，工作区一度半恢复；已由该代理合并各方增量修复，主会话复核 diff + 全量测试 438 passed 确认无残留，遗留 `stash@{0}` 已 drop。
+
+---
+
+## [M-v4-2] P0 工程：评测体系 + sqlite-vec 索引（2026-07-25）
+
+> **背景**：RAG 路线图 7 模块重构（用户 + 主 agent 2026-07-24 讨论结论）的 P0（评测 + 索引）地基。没有 ground truth = 后续所有改动没回归保障；没有 vec0 索引 = 24k+ chunks 已 O(N) 全表扫描，到 100k 量级直接崩。两件事相互放大，必须先做。
+>
+> 路线图完整文档：Claude 系统内部 `.claude/plans/rag-agent-polymorphic-otter.md`（不入 git，仅 Claude 内部长寿记录）。
+
+### 范围
+
+把 v4 路线图 P0（评测体系 + 索引与召回率）落地：评测 + 索引先做，其余 5 个模块（数据清洗 / chunk 切分 / query 改写 / rerank / 工程债）排在 P1-P2。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 索引 | migration 014：vec0 虚拟表（distance_metric=cosine，BGE-small-zh 512-dim） | `database/migrations/014_embedding_binary_vec0.sql` |
+| 索引 | 一次性迁移脚本：JSON (11KB/条) → float32 binary BLOB (2KB/条, 5x 压缩)，vec0 INSERT OR REPLACE；支持 `--dry-run` / `--rollback` / `--no-rewrite-blob` | `scripts/migrate_embeddings_to_binary.py` |
+| 索引 | `sqlite_backend.py` 重构：`_embedding_to_blob` 改 float32 binary / `_blob_to_embedding` 兼容 float32 binary + JSON fallback / `_get_conn` 每次连接 load sqlite-vec（per-connection state 不能 cache）/ `vector_search` vec0 MATCH fast-path + numpy fallback / `insert_chunk` 与 `insert_chunks_batch` 加 vec0 sync 双写 (`_maybe_insert_into_vec0` + `_bulk_insert_into_vec0`) | `database/backends/sqlite_backend.py` |
+| 索引 | sqlite3.Row 不暴露隐式 rowid → SQL 改 `SELECT kc.rowid AS kc_rowid`，Python 用 `row["kc_rowid"]` | 同上 |
+| 索引 | 单测：float32 精度（0.1 → 0.10000000149…）改 `pytest.approx([0.1, 0.2, 0.3, 0.4], abs=1e-6)` | `tests/unit/test_repository.py` |
+| 评测 | baseline set：50 query 采样（51job 20 / jobsdb 17 / liepin 8 / cross_domain 5），含 self_retrieval 45 + cross_domain 5 | `eval/baseline_50_queries.jsonl`、`eval/baseline_50_results.jsonl` |
+| 评测 | 评测脚本：LLM-as-judge（`agnes-2.0-flash`，batch per query 打分）+ NDCG@10 / Recall@10 / MRR / Hit Rate 指标 | `tests/unit/test_eval_baseline.py`、`data/eval_baseline_*.json` |
+| 评测 | sqlite-vec validation：smoke / synthetic 24k×512d / real DB 24k chunks / consistency（top-10 overlap）4 阶段 | `eval/sqlite_vec_perf.py`、`data/sqlite_vec_validation.json` |
+| 文档 | sqlite-vec 设计 + Windows wheel 兼容 + fallback 策略 + 版本钉死策略 | `docs/sqlite_vec_validation.md` |
+| 仓库 | 迁移到 GitHub 新账号 `bgyyou/job-hunter-agent`：旧账号已被所属方回收无法登回；130 commit author 用 `git filter-branch --env-filter` 全重写 `→ bgyyou <bgyyou99@163.com>` + worktree 4 文件清理旧字面引用 + `git push --force origin main` | `git history`、`landing.html`、`prompts/round-2-phase3-4.md`、`AI Agent产品经理_简历.md`（untracked） |
+
+### 验收
+
+```bash
+python -m pytest tests/ -q -m "not real_llm"
+# → 458 passed（baseline 401 → 438 M-v4-1 → 458 M-v4-2）, 3 deselected (real_llm)
+```
+
+**50 query 评测（M0 → M-v4-2 后）**
+
+| 指标 | baseline | **v4-2 后** | 变化 |
+|---|---|---|---|
+| NDCG@10 | 0.4625 | **0.4791** | +3.6% ↑ |
+| Recall@10 | 0.304 | **0.334** | +10% ↑ |
+| MRR | 0.3337 | **0.3798** | +13.8% ↑ |
+| Hit Rate | 0.68 | 0.68 | 持平 |
+| retrieval 总耗时 | 264s | **41s** | **6.4x ↑** |
+
+**性能子测（`eval/sqlite_vec_perf.py`）**
+
+| 场景 | json_scan_ms | vec0_ms | speedup |
+|---|---|---|---|
+| Synthetic 24k×512d | 5643 | **19** | **270-348x** |
+| Real DB 18465 chunks（含 JOIN） | 6334 | **67** | **94x** |
+
+### 已知边界
+
+- **18465/24482 chunks 迁移**（6017 schema drift 跳过）：老 embedder/mock 残留 `embedding_dim=512` 但实际 ~2820-dim，强迁会污染 vec0；解决方案：`LENGTH(embedding) = 2048`（严格 float32 binary 512-dim 长度 = 2KB）筛除
+- **per-connection sqlite_vec.load**：第一次 cache 尝试导致后续连接 vec0 silent miss（`no such module: vec0`），后来改成每次 `_get_conn` 都 load，per-conn state 不能跨连接共享
+- **numpy fallback 保留**：vec0 不可用 / 多维度 chunk（schema drift）走 numpy 路径，未来如果改 embedder 切换维度 + vec0 schema 重构都不会断
+- **golden 校准集未完成**：P0-模块 6 子任务 2（30-50 条人工标 `relevant_jd_ids`）交用户手动——LLM-as-judge 与人工 golden 校准相关系数 ≥ 0.8 是评测体系健康门槛，golden 没完成 = 健康门槛没法测
+- **batch per query judge 有 rate limit** 风险：50 query baseline 评测有 10/50 走 mock fallback（429 限流），commit message / CHANGELOG 里看清楚；NDCG 数字仍 ≥ 旧 baseline 但量化有噪音，后续考虑改 batch 全 query 一起打分或换重试
+
+### 事故记录
+
+- **sqlite3.Row 不暴露隐式 rowid**：第一次写 vector_search 用 `row["rowid"]` IndexError，必须 SQL 显式 `SELECT rowid AS kc_rowid`
+- **Edit 工具有 whitespace quirk**：多行 Edit 时 `old_string` 末尾偶尔被加 `       emb0` 类尾字符，绕回用 Python heredoc + Path.replace
+- **migrate 脚本 TypeError "tuple indices must be integers"**：缺 `conn.row_factory = sqlite3.Row`，加到 `_connect_with_vec0` 启动处
+- **Phase 3 perf UnicodeDecodeError on 0x86**：老代码 `json.loads(bytes(r["embedding"]).decode())` 假设 JSON，新数据是 float32 binary；加 `_decode` 函数二选一
+- **Phase 3 perf inhomogeneous shape**：6017 行 schema drift（embedding_dim=512 但 ~2820-dim），`np.array(...).shape` 列对齐失败；用 `LENGTH(embedding)=2048` 严格筛 float32 binary
+- **`no such module: vec0` 间歇**：sqlite-vec load 状态在 SQLite 是 per-connection，不缓存到 self，第一次尝试用 `self._sqlite_vec_available` cache 导致部分连接 vec0 silent miss —— 移除 cache，强制每次 `_get_conn` 都 load

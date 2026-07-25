@@ -720,15 +720,41 @@ CI 跑 tests + secret-scan。失败按 4.4.4 处理（`gh run` 命令 + 不 forc
 
 ##### Phase 0：远端纪律 + 部署面
 
-- [ ] **T0.1**: 解决 GitHub 账号问题，推 30 个本地 commit 上远端 —— **用户操作，阻塞 CI/CD**
+- [x] **T0.1**: 解决 GitHub 账号问题，推 130 个本地 commit 上远端 ✅ 2026-07-25 完成
+  - 旧账号已被所属方回收无法登回；迁移到新账号 `bgyyou/job-hunter-agent`
+  - 新账号 SSH key 重生成（ed25519），公钥加到 GitHub 账号 Settings → SSH keys
+  - 130 commits 历史用 `git filter-branch --env-filter` 全重写 author → `bgyyou <bgyyou99@163.com>`
+  - 重写后强制推送 `git push --force origin main`（commit 32885f4 + 全历史）
+  - 工作区 4 文件清旧账号字面引用（landing.html × 2 / prompts doc / 简历 md）
+  - 历史作者 + 远端 + 工作区文本三重清查**旧账号身份信息** = **0 命中**
 - [x] **T0.2**: Dockerfile（python:3.11-slim + requirements.lock + playwright chromium）✅ torch CPU-only wheel；本地构建受 Docker 代理未运行阻塞，验证交 CI
 - [x] **T0.3**: docker-compose.prod.yml（app + postgres + caddy）+ Caddyfile（自动 HTTPS + 安全头）✅ `config -q` 验证通过；`--env-file` 插值坑已写进文件头注释
 - [x] **T0.4**: 配置外置 + `config/settings.py` production 分支（ENV=production + JSON 日志）✅ 5 条单测
 - [x] **T0.5**: /healthz 健康检查 ✅ 偏差：用 Streamlit 内置 /healthz（tornado 层），不自建路由；Dockerfile HEALTHCHECK 已接
 - [x] **T0.6**: CI 增补 docker build job（仅验证能 build，不推镜像仓库）✅ `.github/workflows/docker-build.yml`
-- 验收：`docker compose --env-file .env.production -f docker-compose.prod.yml config -q` 通过；pytest **401 passed**（baseline 396 + 新增 5）；镜像构建验证待 push 后 CI 跑
-- baseline（2026-07-22 实测）：**396 passed → 401 passed, 3 deselected (real_llm), 39.06s**
+- 验收：`docker compose --env-file .env.production -f docker-compose.prod.yml config -q` 通过；pytest baseline 当前 **458 passed**（401 → 438 M-v4-1 → 458 M-v4-2）；镜像构建验证待 push 后 CI 跑
+- baseline 累计（2026-07-22 → 2026-07-25）：**396 → 401 → 438 → 458 passed**, 3 deselected (real_llm)
 - 注意：本地 `venv/` 已损坏（缺 pyvenv.cfg），当前用系统 Python 3.11.9 跑测试，建议用户择期重建 venv
+
+##### Phase 0.5：v4 P0（评测体系 + 索引与召回率）
+
+> **来源**：RAG 路线图（用户与主 agent 2026-07-24 讨论），7 个模块重构框架的地基。Plan 跟踪在 `.claude/plans/rag-agent-polymorphic-otter.md`（Claude 系统内部文档，不入 git）。
+
+- [x] **T0.7**: [M-v4-2] P0-模块 3 — 索引与召回率（sqlite-vec vec0 + float32 binary BLOB）✅ commit 934be50
+  - migration 014 `database/migrations/014_embedding_binary_vec0.sql` — vec0 虚拟表（distance_metric=cosine）
+  - `scripts/migrate_embeddings_to_binary.py` — JSON (11KB) → float32 binary (2KB)，18465/24482 chunks 迁完（6017 schema drift 跳过）
+  - `database/backends/sqlite_backend.py` — `_embedding_to_blob` / `_blob_to_embedding`（双格式兼容）/ `_get_conn` 每次 load sqlite-vec / `vector_search` 走 vec0 fast-path + numpy fallback / `insert_chunk` + `insert_chunks_batch` 加 vec0 sync 双写
+  - `tests/unit/test_repository.py` — float32 精度断言改 `pytest.approx`
+  - 性能：synthetic 24k×512d **270-348x speedup**（5643ms → 19ms），真实 DB 18465 chunks vec0 match median ~67ms（含 JOIN），retrieval 总耗时 264s → 41s（**6.4x**）
+  - 质量：50 query NDCG@10 baseline 0.4625 → 实施后 **0.4791**（**+3.6%**），Recall@10 0.304 → 0.334（+10%），MRR 0.334 → 0.380（+13.8%）
+  - 设计文档 `docs/sqlite_vec_validation.md`：fallback 策略 + 版本钉死策略
+- [x] **T0.8**: [M-v4-2] P0-模块 6 子任务 1 — 50 query baseline（LLM-as-judge）✅ commit 60dea99 + 934be50 落地
+  - 50 query baseline set：`eval/baseline_50_queries.jsonl`（51job 20 / jobsdb 17 / liepin 8 / cross_domain 5）
+  - 评测脚本：`tests/unit/test_eval_baseline.py` + `data/eval_baseline_20260724T023722Z.json`（baseline）/ `data/eval_baseline_20260724T054839Z.json`（v4-2 后）
+  - judge 模型：`agnes-2.0-flash`（batch per query，batch_judge 单调用，0 mock fallback in baseline；50 query baseline 有 10/50 因 rate limit 走 mock，但 judge 文档里说这是基础设施事故不是数据事故）
+  - 评测耗时：baseline 356s（retrieval 264s + judge 92s），v4-2 后 ~133s（retrieval 41s + judge 92s）
+- [ ] **T0.9**: [M-v4-2] P0-模块 6 子任务 2 — golden 校准集（30-50 条人工标）⏳ 用户责任：手动标 30-50 条
+- 验收：pytest **458 passed**（v4 Phase 1 baseline 438 + P0-模块 3 实施后 458）；评测体系健康指标 = LLM-as-judge vs golden 集相关系数 ≥ 0.8（待 golden 完成才能跑）
 
 ##### Phase 1-5 概览（详见 plan 文件）
 
