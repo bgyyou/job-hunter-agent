@@ -202,9 +202,21 @@ class SqliteBackend(BaseBackend):
         jds_cols = {r[1] for r in conn.execute("PRAGMA table_info(jds)").fetchall()}
         has_legacy_jd_fields = "requirements" in jds_cols
 
+        current_version = conn.execute(
+            "SELECT version FROM schema_version WHERE id = 1"
+        ).fetchone()[0]
         for mig_file in sorted(mig_dir.glob("*.sql")):
-            # 004 幂等防护：jds 已迁移过就直接跳过
-            if not has_legacy_jd_fields and "004_" in mig_file.name:
+            migration_version = int(mig_file.name.split("_", 1)[0])
+            if migration_version <= current_version:
+                continue
+            # 004 幂等防护：jds 已迁移过就直接标记完成
+            if not has_legacy_jd_fields and migration_version == 4:
+                conn.execute(
+                    "UPDATE schema_version SET version = 4, "
+                    "description = 'JD schema already converged', "
+                    "applied_at = datetime('now') WHERE id = 1"
+                )
+                current_version = 4
                 logger.info(f"migration: skip {mig_file.name} (jds already on v3 schema)")
                 continue
             logger.info(f"migration: applying {mig_file.name}")
@@ -212,6 +224,9 @@ class SqliteBackend(BaseBackend):
             # 半成品落地；幂等防御只能写在每个 .sql 内部（如 004 顶部的
             # DROP TABLE IF EXISTS jds_v3）。
             conn.executescript(mig_file.read_text(encoding="utf-8"))
+            current_version = conn.execute(
+                "SELECT version FROM schema_version WHERE id = 1"
+            ).fetchone()[0]
 
     def _row_to_dict(self, row: sqlite3.Row) -> Optional[Dict]:
         return dict(row) if row else None
