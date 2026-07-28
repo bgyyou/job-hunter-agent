@@ -2153,7 +2153,6 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - **30 query 串行评测 ≈ 5 分钟**：30 LLM call × 平均 ~10s（含 thinking model reasoning）；比 concurrency=2 慢约 1×。换 provider / 切 fast model 可压回 1-2 分钟，本任务不优化
 - **mock fallback 标签化**（`429_RATE_LIMIT` / `OTHER_ERROR`）只在 `_judge_query_batch` 末尾设置；未来 `eval/miss_analysis.py` 可按这个标签分类失败原因（不在本任务范围）
 - **如果未来要切到非 thinking model**（如 `gpt-4o-mini`），单 call 时间可压到 2-3s，concurrency=2 的 mock fallback rate 可能也 <3%，到时候再权衡串行 vs 并发（不在本任务范围）
-<<<<<<< HEAD
 
 ## [M-v4-1 golden 校准] golden 30 校准集 PRELIMINARY + Spearman 验证脚本 — 2026-07-28
 
@@ -2196,7 +2195,6 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - **跑 `verify_golden_spearman.py --regenerate-judge` 强制重跑 judge**：默认复用 jsonl 里的 `llm_judge_score`（快速）；CI 跑校验时建议 `--regenerate-judge` 强制拿新鲜分数
 - **golden_30_to_annotate.jsonl 是"真人工标"目标文件**：每个 candidate 的 `human_label` 字段填 1-5（不是 0/1）；填完后用 `verify_golden_spearman.py --input eval/golden_30_to_annotate.jsonl` 算 ρ（前提是 `human_label` 改为 1-5 + 加一个 `human_label_binary` 字段，或改 verify 脚本适配 1-5；本任务不做，留给真人工标那一步）
 - **LLM judge 50 query 健康门槛**：等真人工标完后，50 query 都标完才能下"LLM judge ρ ≥ 0.8 可替代人工"的结论
-=======
 
 ---
 
