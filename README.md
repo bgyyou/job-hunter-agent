@@ -135,7 +135,7 @@ python crawler/run_crawler.py --site liepin --keyword "AI产品经理" --limit 1
 
 ```bash
 pytest tests/ --cov=database --cov=services --cov=agents --cov=tools --cov=crawler
-# 基线：461 passed / 3 skipped（共 464 collected），耗时约 65s
+# 基线：481 passed（主仓库），耗时约 56s；worktree 子 agent 环境会看到 461 passed / 3 skipped（缺 LLM key 致 LLM 集成测试 skip）
 # 测试分层：tests/unit + tests/integration 两层
 ```
 
