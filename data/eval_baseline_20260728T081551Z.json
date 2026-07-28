@@ -1,0 +1,1003 @@
+{
+  "timestamp": "2026-07-28T08:15:51.900597+00:00",
+  "judge_model": "MiniMax-M3",
+  "judge_is_mock": false,
+  "judge_strategy": "batch_per_query",
+  "judge_api_calls": 50,
+  "judge_candidate_scores": 500,
+  "judge_real_scores": 500,
+  "judge_mock_fallbacks": 0,
+  "top_k": 10,
+  "num_queries": 50,
+  "n_zero_relevant_in_top10": 2,
+  "queries_by_source": {
+    "jobsdb_batch": 17,
+    "51job_batch": 20,
+    "cross": 5,
+    "liepin_batch": 8
+  },
+  "queries_by_form": {
+    "medium": 18,
+    "long": 16,
+    "short": 16
+  },
+  "queries_by_type": {
+    "self_retrieval": 45,
+    "cross_domain": 5
+  },
+  "ndcg_at_10": 0.646,
+  "recall_at_10": 0.538,
+  "mrr": 0.4419,
+  "hit_rate": 0.96,
+  "n_queries": 50,
+  "sample_failures": [
+    {
+      "query_id": "q0027",
+      "query": "海外销售 岗位，要求标题:海外销售 薪资:1.1-2万 公司:深圳市爱都科技有限公司 地点:深圳·龙华区 标签:通勤班车 周末双休 下午茶 氛围好 生日会 早九晚六 五险一金 免费",
+      "form": "long",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "d4718144-7bf5-4a82-a38c-a4aac5ca8e11",
+      "origin_source": "51job_batch",
+      "recalled_titles": [
+        "HK Marketing and Enrollment Manager",
+        "Inside Sales Executive (B2B Sales - Aviation Supplies)",
+        "Inside Sales Executive (B2B Sales - Aviation Supplies)",
+        "Sales and Marketing Executive",
+        "HK Marketing and Enrollment Manager",
+        "銷售經理 Sales Manager (Hong Kong Area)",
+        "銷售經理 Sales Manager (Hong Kong Area)",
+        "銷售代表 Sales Executive",
+        "銷售代表 Sales Executive",
+        "Assistant Sales Manager"
+      ],
+      "recalled_jd_ids": [
+        "500949e0-0b93-46e0-bc34-9dff24d31443",
+        "d9e90fc5-da36-4742-8679-d681e801b7ce",
+        "d9e90fc5-da36-4742-8679-d681e801b7ce",
+        "d601221f-446f-4e8c-b8cc-db5f54a9f08b",
+        "500949e0-0b93-46e0-bc34-9dff24d31443",
+        "8a9f493a-b389-4304-b5db-3452d2d8b546",
+        "8a9f493a-b389-4304-b5db-3452d2d8b546",
+        "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+        "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+        "41272880-1d2c-4182-b784-40c53f6db2ef"
+      ]
+    },
+    {
+      "query_id": "q0179",
+      "query": "Senior Quantitative Analyst 岗位，要求Skip to content Jobsdb Job search People search Career advice Companies English",
+      "form": "long",
+      "query_type": "self_retrieval",
+      "origin_jd_id": "0bd56bb7-bf1d-43c0-8081-f00b0b69b0e3",
+      "origin_source": "jobsdb_batch",
+      "recalled_titles": [
+        "Ai Associate",
+        "Ai Associate",
+        "Sales Executive / Business Development Executive (Toys Industry)",
+        "Senior Accountant – Audit & Assurance",
+        "Legal Counsel (Commercial) / Contract Specialist",
+        "Principal Customer Success Account Manager",
+        "URGENT - Social Media Copywriter",
+        "Web Frontend Developer",
+        "Leading_HK_Bank: Content Designer (25-35K, 12month contract)",
+        "Program Manager (Insurance)"
+      ],
+      "recalled_jd_ids": [
+        "84b9062f-25af-4a4c-8978-e20ee0181e32",
+        "84b9062f-25af-4a4c-8978-e20ee0181e32",
+        "409054d1-2b2e-4d9f-a0ee-7dbdc6b96622",
+        "959f54d2-aa7e-4989-b1fb-7ed64807c11d",
+        "c2a798d6-545c-458a-851f-ef6f2db247f0",
+        "fa984fec-2311-4519-9b0c-e096677282a1",
+        "268b3c53-5f85-41b6-b54c-41dcb34750d2",
+        "b1aff66c-4cd5-4a4a-9660-7fc94da84bd4",
+        "c27b0562-3c8c-4cdc-8268-73c3274dc75f",
+        "3f503735-1390-45e3-8a46-aa7d9c7676dd"
+      ]
+    }
+  ],
+  "per_query_summary": [
+    {
+      "query_id": "q0082",
+      "query": "URGENT - Social Media Copywriter Skip to content",
+      "scores": [
+        1,
+        2,
+        2,
+        5,
+        3,
+        2,
+        5,
+        4,
+        1,
+        5
+      ],
+      "rank_of_first_relevant": 4,
+      "n_relevant_in_top_k": 5,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "72f28e58-b05d-4421-8fa6-76fd1ec72200",
+          "title": "video editor / online post-production diector",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "78041bca-f68b-4eb5-bdb5-1abbaf03cef6",
+          "title": "Senior Copywriter/Copywriter (Social media)",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "78041bca-f68b-4eb5-bdb5-1abbaf03cef6",
+          "title": "Senior Copywriter/Copywriter (Social media)",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "ac0fa0cd-a88a-4504-a9ad-17ccbb797ec4",
+          "title": "Onsite IT Support Engineer - Perm",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "45fad81c-cfd0-4b76-b172-ce2816afbca4",
+          "title": "Junior Algo Trader",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "b63044b7-cf81-4192-9c00-e6c09eb938ba",
+          "title": "Assistant Project Manager (ICT Integration)",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "b63044b7-cf81-4192-9c00-e6c09eb938ba",
+          "title": "Assistant Project Manager (ICT Integration)",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "b8f91ebf-1515-4811-bf63-7e60c8169754",
+          "title": "Executive Office Manager / Personal Assistant to President",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "780bf0a9-e8a4-4275-93fc-20a5b84c1517",
+          "title": "Customer Success Specialist",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "72f28e58-b05d-4421-8fa6-76fd1ec72200",
+          "title": "video editor / online post-production diector",
+          "score": 5,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0038",
+      "query": "课程顾问（可就近安排校区） 岗位，要求标题:课程顾问（可就近安排校区） 薪资:1-1.5万 公司:广州市卓越里程教育科技有限公司 地点:深圳·福田区 标签:销售 家长沟通 教育行业 客户维护 客户资",
+      "scores": [
+        1,
+        1,
+        5,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "rank_of_first_relevant": 3,
+      "n_relevant_in_top_k": 1,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "08df4d45-130e-401a-a15a-887c1194424a",
+          "title": "Education Consultant/ Senior Education Consultant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "78b91923-9281-498f-b6fd-2bd10bed7b35",
+          "title": "Recruitment Consultant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "265307fb-86d3-4acf-a761-c338b01700d5",
+          "title": "Recruitment Consultant",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "ce5cb58d-a037-4c89-b654-9cbf05482a2c",
+          "title": "Senior Training Officer / Training Officer (Ref. 26061801)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "a0b5154a-e3da-4fe4-b8ad-fe7e67bb3639",
+          "title": "Account Manager – Enterprise Solution",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "a0b5154a-e3da-4fe4-b8ad-fe7e67bb3639",
+          "title": "Account Manager – Enterprise Solution",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "af818943-c286-4338-a96b-b4288481de43",
+          "title": "Recruitment Manager / Senior Recruitment Consultant (High Commission Scheme)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "af818943-c286-4338-a96b-b4288481de43",
+          "title": "Recruitment Manager / Senior Recruitment Consultant (High Commission Scheme)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "90dd9e00-1e20-4065-bfdf-f8e72882b82c",
+          "title": "Sales Manager - Wholesales Carrier, International Business",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "90dd9e00-1e20-4065-bfdf-f8e72882b82c",
+          "title": "Sales Manager - Wholesales Carrier, International Business",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0154",
+      "query": "Accountant Skip to content",
+      "scores": [
+        1,
+        1,
+        2,
+        1,
+        3,
+        1,
+        4,
+        1,
+        5,
+        5
+      ],
+      "rank_of_first_relevant": 5,
+      "n_relevant_in_top_k": 4,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "ae28fdda-a280-4290-88cf-79e49ac86f73",
+          "title": "Technology Manager (Insurance)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "ae28fdda-a280-4290-88cf-79e49ac86f73",
+          "title": "Technology Manager (Insurance)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "ac0fa0cd-a88a-4504-a9ad-17ccbb797ec4",
+          "title": "Onsite IT Support Engineer - Perm",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "08df4d45-130e-401a-a15a-887c1194424a",
+          "title": "Education Consultant/ Senior Education Consultant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "3a290255-49a5-4bec-870c-9e5f9299c3a2",
+          "title": "Accountant",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "aed42b86-fb38-4fda-9063-4734c6d9bb66",
+          "title": "Accountant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "45fad81c-cfd0-4b76-b172-ce2816afbca4",
+          "title": "Junior Algo Trader",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "45fad81c-cfd0-4b76-b172-ce2816afbca4",
+          "title": "Junior Algo Trader",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+          "title": "銷售代表 Sales Executive",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "a2627135-ba1a-47fd-90df-4bdf0a6f9d74",
+          "title": "銷售代表 Sales Executive",
+          "score": 5,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0084",
+      "query": "集团招聘经理（coe） 岗位，要求标题:集团招聘经理（coe） 薪资:1.5-2.5万 公司:深圳市德保膳食管理有限公司 地点:深圳·龙华区 标签:招聘 人力资源管理 日常管理 pmp 招聘管理",
+      "scores": [
+        1,
+        1,
+        2,
+        1,
+        1,
+        3,
+        1,
+        4,
+        2,
+        5
+      ],
+      "rank_of_first_relevant": 6,
+      "n_relevant_in_top_k": 3,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "a0b5154a-e3da-4fe4-b8ad-fe7e67bb3639",
+          "title": "Account Manager – Enterprise Solution",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "a0b5154a-e3da-4fe4-b8ad-fe7e67bb3639",
+          "title": "Account Manager – Enterprise Solution",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "8a79aa0d-eab9-4ef2-bff8-1c3f712379b0",
+          "title": "Senior Manager - Investment Feasibility & Fund Operation",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "4882bbb4-0941-43ff-952c-411749073e52",
+          "title": "Senior Recruitment Consultant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "4882bbb4-0941-43ff-952c-411749073e52",
+          "title": "Senior Recruitment Consultant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "af818943-c286-4338-a96b-b4288481de43",
+          "title": "Recruitment Manager / Senior Recruitment Consultant (High Commission Scheme)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "af818943-c286-4338-a96b-b4288481de43",
+          "title": "Recruitment Manager / Senior Recruitment Consultant (High Commission Scheme)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "6e155f6d-4c1d-4182-bdfc-e7f5033ca773",
+          "title": "OPERATIONS AND PROGRAMME COORDINATOR",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "b9c62920-e6cd-4d67-9acb-a58b7cea2df2",
+          "title": "Boatyard Office Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "b9c62920-e6cd-4d67-9acb-a58b7cea2df2",
+          "title": "Boatyard Office Manager",
+          "score": 5,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0162",
+      "query": "产品助理（底薪8K起，产品经理一对一带）",
+      "scores": [
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+        3,
+        2,
+        4,
+        2
+      ],
+      "rank_of_first_relevant": 7,
+      "n_relevant_in_top_k": 2,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+          "title": "Product Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+          "title": "Product Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "5cb5ddbd-fe1a-4001-bd12-7f9aeb342e32",
+          "title": "Product Manager",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "9bac6f27-1781-4442-9cfd-d94ad8326058",
+          "title": "Business Analyst, Consumer Interactive",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "9bac6f27-1781-4442-9cfd-d94ad8326058",
+          "title": "Business Analyst, Consumer Interactive",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+          "title": "培训产品经理（AI+）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 2,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0172",
+      "query": "（外包）Compliance Assistant – Trust and Corporate Service 岗位，要求Skip to content Jobsdb Job search People search Career advic",
+      "scores": [
+        1,
+        5,
+        2,
+        1,
+        3,
+        1,
+        4,
+        1,
+        5,
+        1
+      ],
+      "rank_of_first_relevant": 2,
+      "n_relevant_in_top_k": 4,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "93e36e52-56cf-4fbb-a794-0744ea5f0b26",
+          "title": "（外包）Compliance Assistant – Trust and Corporate Service",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "08df4d45-130e-401a-a15a-887c1194424a",
+          "title": "Education Consultant/ Senior Education Consultant",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "c8072e08-480c-4771-b69a-1e54fe6a5caf",
+          "title": "Senior System Engineer/ System Engineer",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "c8072e08-480c-4771-b69a-1e54fe6a5caf",
+          "title": "Senior System Engineer/ System Engineer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "e57b9f0e-66ec-4359-936b-6b38a88fd4d1",
+          "title": "Senior IT Project Manager (Insurance experience)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "982937d0-3c4a-45ab-8ad4-6917716d3dd5",
+          "title": "Front-end/Back-end developer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "982937d0-3c4a-45ab-8ad4-6917716d3dd5",
+          "title": "Front-end/Back-end developer",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "d4838304-11b8-4230-a770-581147bc2f25",
+          "title": "初級軟體研發工程師（Web）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "d4838304-11b8-4230-a770-581147bc2f25",
+          "title": "初級軟體研發工程師（Web）",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "715c1266-3c93-4822-98b8-bd45fc92e9b4",
+          "title": "Business Analyst / Product Manager",
+          "score": 1,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0029",
+      "query": "供应链 采购 物流管理",
+      "scores": [
+        1,
+        5,
+        2,
+        1,
+        5,
+        3,
+        4,
+        4,
+        4,
+        5
+      ],
+      "rank_of_first_relevant": 2,
+      "n_relevant_in_top_k": 7,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "44b33791-2f26-45b7-af50-387de883b471",
+          "title": "Senior Officer, Group Procurement",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "44b33791-2f26-45b7-af50-387de883b471",
+          "title": "Senior Officer, Group Procurement",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "6e46f878-65ff-459c-814e-b0f5b6ed72b4",
+          "title": "Contracts and Procurement Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "d1097317-72d5-4c1b-a2da-216885edb54e",
+          "title": "Manager (Supply Chain and Inventory Management)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "d1097317-72d5-4c1b-a2da-216885edb54e",
+          "title": "Manager (Supply Chain and Inventory Management)",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "85181b2f-0dbd-4234-91a7-a2e5e473a88b",
+          "title": "Supply Chain Specialist",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "3de4f7ca-1517-4c2b-a50c-76ee85fd8930",
+          "title": "Management Trainee, Logistics Operations",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "57f68f63-dc96-44ff-b157-8f6343ca8aae",
+          "title": "Senior Logistics Specialist (MJ000251)",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "85181b2f-0dbd-4234-91a7-a2e5e473a88b",
+          "title": "Supply Chain Specialist",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "4ecce140-06c3-4ff9-ade4-0dedd74be39a",
+          "title": "Manager, Supply Chain Management",
+          "score": 5,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0055",
+      "query": "AI应用工程师 岗位，要求职位介绍 AI应用工程师 岗位职责 一、业务分析与需求定义 1.深入理解公司S2B2C商业模式及B端渠道用户画像，识别业务链路中可AI提效的关键环节。 2.结合",
+      "scores": [
+        2,
+        2,
+        1,
+        2,
+        2,
+        1,
+        2,
+        3,
+        2,
+        2
+      ],
+      "rank_of_first_relevant": 8,
+      "n_relevant_in_top_k": 1,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "93c23e90-5427-4fb6-bdc9-0808a3a0fd2e",
+          "title": "Associate Creative Director (Art Base)",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "93c23e90-5427-4fb6-bdc9-0808a3a0fd2e",
+          "title": "Associate Creative Director (Art Base)",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "eaed712b-ce9f-4b1c-a635-b5e4e4bf146c",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "65fc4824-2807-4444-8a56-c90629b1a997",
+          "title": "培训产品经理（AI+）",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "63778c33-6344-4f47-abe8-79304b93108f",
+          "title": "AI Transformation Specialist",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "63778c33-6344-4f47-abe8-79304b93108f",
+          "title": "AI Transformation Specialist",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "9f32c9b8-e955-466d-a236-d714c82d2e86",
+          "title": "System Analyst (AI Team)",
+          "score": 2,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0028",
+      "query": "电商平面设计师 标题:电商平面设计师(J10108) 薪资:1",
+      "scores": [
+        1,
+        2,
+        2,
+        1,
+        2,
+        3,
+        3,
+        4,
+        3,
+        3
+      ],
+      "rank_of_first_relevant": 6,
+      "n_relevant_in_top_k": 5,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "f07fcce7-09f0-4039-af5c-6a066ca76f2b",
+          "title": "Product Designer (Home Décor / Seasonal Products)",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "f07fcce7-09f0-4039-af5c-6a066ca76f2b",
+          "title": "Product Designer (Home Décor / Seasonal Products)",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "9b64a627-079e-4844-9fa0-d9383dfdf578",
+          "title": "Graphic Designer",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "9b64a627-079e-4844-9fa0-d9383dfdf578",
+          "title": "Graphic Designer",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "186da691-094f-4aaf-bece-7eec2953d7d7",
+          "title": "E-commerce Manager",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "ca5ccf51-eafc-4d85-be9d-dd2abe835410",
+          "title": "Graphic Designer (Part-Time)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "ca5ccf51-eafc-4d85-be9d-dd2abe835410",
+          "title": "Graphic Designer (Part-Time)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "186da691-094f-4aaf-bece-7eec2953d7d7",
+          "title": "E-commerce Manager",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "c4830346-8834-48d3-8f55-85607d6372d8",
+          "title": "Graphic and Product Designer",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "c4830346-8834-48d3-8f55-85607d6372d8",
+          "title": "Graphic and Product Designer",
+          "score": 3,
+          "is_mock": false
+        }
+      ]
+    },
+    {
+      "query_id": "q0175",
+      "query": "税务会计",
+      "scores": [
+        1,
+        5,
+        2,
+        5,
+        3,
+        3,
+        4,
+        3,
+        3,
+        5
+      ],
+      "rank_of_first_relevant": 2,
+      "n_relevant_in_top_k": 8,
+      "judge_meta": [
+        {
+          "candidate_idx": 0,
+          "jd_id": "aed42b86-fb38-4fda-9063-4734c6d9bb66",
+          "title": "Accountant",
+          "score": 1,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 1,
+          "jd_id": "aed42b86-fb38-4fda-9063-4734c6d9bb66",
+          "title": "Accountant",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 2,
+          "jd_id": "18fddbb5-67df-43e2-a450-490f1bf824a1",
+          "title": "AUDIT STAFF –ASSOCIATES/MANAGER",
+          "score": 2,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 3,
+          "jd_id": "18fddbb5-67df-43e2-a450-490f1bf824a1",
+          "title": "AUDIT STAFF –ASSOCIATES/MANAGER",
+          "score": 5,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 4,
+          "jd_id": "204a8629-7dfd-437c-8ba3-01acab450e7c",
+          "title": "Assistant Manager, Tax – Cross Discipline (MJ007387)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 5,
+          "jd_id": "204a8629-7dfd-437c-8ba3-01acab450e7c",
+          "title": "Assistant Manager, Tax – Cross Discipline (MJ007387)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 6,
+          "jd_id": "e6f23983-8819-4d2d-b26d-0a4d64457cda",
+          "title": "Senior Accountant",
+          "score": 4,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 7,
+          "jd_id": "085ea6db-ecc5-4338-b779-27c77cdce736",
+          "title": "AUDIT SEMI-SENIOR / AUDIT JUNIOR (Welcome Fresh Graduates)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 8,
+          "jd_id": "085ea6db-ecc5-4338-b779-27c77cdce736",
+          "title": "AUDIT SEMI-SENIOR / AUDIT JUNIOR (Welcome Fresh Graduates)",
+          "score": 3,
+          "is_mock": false
+        },
+        {
+          "candidate_idx": 9,
+          "jd_id": "4dc071e0-f31f-49d1-ad1d-49f73b22406e",
+          "title": "Audit Semi Senior",
+          "score": 5,
+          "is_mock": false
+        }
+      ]
+    }
+  ],
+  "queries_source": "eval\\baseline_50_queries.jsonl",
+  "all_per_query": []
+}
