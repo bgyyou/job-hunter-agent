@@ -2231,3 +2231,27 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - `jd_to_db_payload` 在 `pages/05` 与 `pages/07` 各有一份 1:1 副本 —— 后续应下沉到 `services/`，本次拆分不引入新的跨 page 依赖方向。
 - `pages/99_📊_Ops.py` 是 M12 已存在的运维面板，本次未改。
 - `services/` `agents/` `database/` 的拆分是独立议题，不在本次范围。
+
+---
+
+## [M-v4-1 agents 拆分] coordinator 1390 → 子模块 + applicant 883 → 子模块 — 2026-07-29
+
+### 范围
+
+`agents/coordinator.py` 1390 行 / `agents/applicant.py` 883 行两个单点文件按职责拆成子包。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 拆分 | coordinator.py → `agents/coordinator/` 子包：`orchestrator.py`（CoordinatorAgent 主类）/ `state.py`（状态管理）/ `match_analysis.py`（匹配分析）/ `chat.py`（对话）/ `tools.py`（工具） | 新建 `agents/coordinator/` |
+| 拆分 | applicant.py → `agents/applicant/` 子包：`apply.py`（ApplicantAgent 主类）/ `submit.py`（提交）/ `retry.py`（重试）/ `tools.py`（工具） | 新建 `agents/applicant/` |
+| 一次性硬切 | 原 `agents/coordinator.py` / `agents/applicant.py` 删除（不留 backwards-compat shim，符合 CLAUDE.md 第 2 节铁律）；`web_app.py:33` 从 `from agents.coordinator import CoordinatorAgent` 改为 `from agents.coordinator.orchestrator import CoordinatorAgent` | `web_app.py` |
+| 子包入口 | `agents/coordinator/__init__.py` / `agents/applicant/__init__.py` 只写 docstring，不 re-export（不留 alias） | 同上 |
+
+### 验收
+
+- `wc -l agents/coordinator.py agents/applicant.py` → `0 0`（文件已删）
+- `pytest tests/ -q` → **520 passed, 3 skipped**（与拆分前逐条一致，无新增无回归）
+- `from agents.coordinator.orchestrator import CoordinatorAgent` 工作
+- `from agents.applicant.apply import ApplicantAgent` 工作
