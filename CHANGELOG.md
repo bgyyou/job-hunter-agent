@@ -2153,3 +2153,45 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - **30 query 串行评测 ≈ 5 分钟**：30 LLM call × 平均 ~10s（含 thinking model reasoning）；比 concurrency=2 慢约 1×。换 provider / 切 fast model 可压回 1-2 分钟，本任务不优化
 - **mock fallback 标签化**（`429_RATE_LIMIT` / `OTHER_ERROR`）只在 `_judge_query_batch` 末尾设置；未来 `eval/miss_analysis.py` 可按这个标签分类失败原因（不在本任务范围）
 - **如果未来要切到非 thinking model**（如 `gpt-4o-mini`），单 call 时间可压到 2-3s，concurrency=2 的 mock fallback rate 可能也 <3%，到时候再权衡串行 vs 并发（不在本任务范围）
+
+## [M-v4-1 golden 校准] golden 30 校准集 PRELIMINARY + Spearman 验证脚本 — 2026-07-28
+
+### 背景
+
+[M-v4-1 收口] 节记录 50 query LLM judge 评测**没有 golden 校验**，Spearman ≥ 0.8 健康门槛未测；`eval/golden_candidates.jsonl` 50 条候选待人工标。本任务先抽 30 条给"骨架 + PRELIMINARY 占位标签" + 验证脚本，把人工标的回路打通；真人工标留待用户后续按 `eval/annotation_guide.md` 覆盖。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 数据 | 从 `golden_candidates.jsonl` (50 条) 抽 30 条 → `eval/golden_30_to_annotate.jsonl`（每条 5-6 candidate；human_label=None 占位） | `eval/golden_30_to_annotate.jsonl`（已存在） |
+| 脚本 | 新建 `scripts/build_golden_30_preliminary.py`：对每条 query 跑 LLM judge（per-query batch），把 score≥3 二值化为 human_label；输出 `eval/golden_30_preliminary.jsonl`（PRELIMINARY 占位标签） | `scripts/build_golden_30_preliminary.py` |
+| 脚本 | 新建 `scripts/verify_golden_spearman.py`：每条 query 用 PRELIMINARY 与 LLM judge 分别算 NDCG@10，再算 Spearman 等级相关 + p-value；ρ ≥ 0.8 健康门槛（默认） | `scripts/verify_golden_spearman.py` |
+| 数据 | `eval/golden_30_preliminary.jsonl`：30 条 query × 5-6 candidate × {human_label: 0/1, llm_judge_score: 1-5} | `eval/golden_30_preliminary.jsonl` |
+| 测试 | 新建 `tests/unit/test_verify_golden_spearman.py` 22 条：dcg_at_k 数值正确性 + ndcg_at_k 边界 + compute_spearman 完美/负相关/常数/长度不一致 + build_per_query_ndcgs 多场景 + main() 端到端（mock 数据） | `tests/unit/test_verify_golden_spearman.py` |
+| 文档 | `eval/README.md` 第 5/8 节更新实施步骤（标 ✅ 完成）+ 文件清单追加新脚本路径 | `eval/README.md` |
+
+### 关键决策
+
+- **PRELIMINARY 是占位标，不是真 golden**：LLM judge 二值化 score≥3 与人工标 1-5 不是同一语义，必须按 `annotation_guide.md` 重新标。本任务把"标 - 验"回路打通，不替代人工标
+- **Spearman 算 NDCG 序列而非 label/score 直接相关**：NDCG@10 把"哪个排第一"考虑进来，更贴近评测指标本身；这样 ρ 反映的是"LLM judge 排序能力"，而不是"评分误差"
+- **`build_golden_ndcgs` 中 `human_label=None` 兜底为 0**：`int(None)` 会抛 TypeError；明确写 `1 if (c.get("human_label") or 0) else 0`，避免后续脚本踩坑
+- **不调 `eval/calibrate_judge.py`**：M-v4-1 设计的校准脚本是算 per-candidate label/score 相关（不适合 PRELIMINARY 占位），所以新建 `verify_golden_spearman.py` 走 NDCG 序列路线；未来真人工标完后两种脚本都能跑
+
+### 验收
+
+- `eval/golden_30_preliminary.jsonl` → **30 行**（每行 5-6 candidate，含 `human_label` 0/1 + `llm_judge_score` 1-5）
+- `python scripts/build_golden_30_preliminary.py` → 151 candidate，71 相关（47.0%，mock 启发式打分）
+- `python scripts/verify_golden_spearman.py` →
+  - **Spearman ρ = 1.0000**（PRELIMINARY 本就是 LLM judge score 二值化，必然 ρ=1，仅验证管道通）
+  - 平均 NDCG@10: PRELIMINARY 0.8251 / LLM judge 0.8251
+  - ρ ≥ 0.8 健康门槛 **PASS**
+- `pytest tests/unit/test_verify_golden_spearman.py -v` → **22 passed**（dcg/ndcg/spearman/build_per_query + 端到端 2 条）
+- `pytest tests/ -q` → **542 passed, 3 skipped**（基线 520 + 新增 22 条；远超 ≥ 500 目标）
+
+### 已知边界 & 后续
+
+- **PRELIMINARY ≠ 真 golden**：30 条里 28 条是 mock judge fallback（无 LLM_API_KEY），mock 用词重叠打分，不是 LLM 真判断；必须人工按 `annotation_guide.md` 标 1-5 分后 ρ 才有诊断意义
+- **跑 `verify_golden_spearman.py --regenerate-judge` 强制重跑 judge**：默认复用 jsonl 里的 `llm_judge_score`（快速）；CI 跑校验时建议 `--regenerate-judge` 强制拿新鲜分数
+- **golden_30_to_annotate.jsonl 是"真人工标"目标文件**：每个 candidate 的 `human_label` 字段填 1-5（不是 0/1）；填完后用 `verify_golden_spearman.py --input eval/golden_30_to_annotate.jsonl` 算 ρ（前提是 `human_label` 改为 1-5 + 加一个 `human_label_binary` 字段，或改 verify 脚本适配 1-5；本任务不做，留给真人工标那一步）
+- **LLM judge 50 query 健康门槛**：等真人工标完后，50 query 都标完才能下"LLM judge ρ ≥ 0.8 可替代人工"的结论
