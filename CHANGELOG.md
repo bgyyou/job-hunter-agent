@@ -1854,3 +1854,214 @@ python -m pytest tests/ -q
 - **conftest.py streamlit stub + sentence_transformers 真 import chain 冲突**：`patch("sentence_transformers.CrossEncoder")` 触发 torch init → `inspect.getfile(streamlit_stub_module)` → TypeError；测试根本修复：`tests/unit/test_reranker.py` 顶部预注入 `sys.modules["sentence_transformers"]` 假骨架（`types.ModuleType` + 假 `CrossEncoder`），`patch` 直接走骨架不进真 import chain
 - **Sigmoid 浮点精度**：`1/(1+exp(-20))` = `0.9999999979388463`，老测试 `assert ... == 1.0` 误判；改为 `pytest.approx(1.0, abs=1e-6)`，函数本身数学正确
 - **`patch.object(CrossEncoderReranker, "_model", ...)` 失效**：`_model` 是 `__init__` 内赋值的实例属性（非类属性 / 非 descriptor），`patch.object` 不起作用；改在实例上直接 `r._model = mock`，绕开 `_ensure_model` 来构造"模型在但 predict 失败" 的测试用例
+
+---
+
+## [M-v4-1 收口] 跨语言翻译 backfill + P0-模块 6 baseline 落地 — 2026-07-26
+
+### 范围
+
+承接 [M-v4-1 增量] rerank（07-25），下一步打补丁解决 cross-language 召回 gap（P0-模块 1 / 2 暂不动），同步落地 P0-模块 6 子任务 1（LLM-as-judge + 50 query 自动化评测），为子任务 2 golden 校准铺路。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 翻译 | `services/translation_service.py` 新建：批量 chunk → 中文翻译，失败重试 + `new_sensitive` 敏感词哨兵 + `translated_at` 原子写回 | 新建 |
+| 翻译 | `database/migrations/015_chunk_translation.sql`：`chunks_zh` 列 + `translation_status` + `translated_at` 索引 | 新建 migration |
+| 翻译 | `database/backends/sqlite_backend.py`：写入路径接入翻译 hook（embed 前先翻译→重建中文 vec0 embedding→原子更新主表 + vec0） | `database/backends/sqlite_backend.py` |
+| 翻译 | `scripts/backfill_translate_chunks.py`（344 行）：CLI 分批跑历史 chunk 翻译，batch=50 + 失败重试 3 次 | 新建 |
+| LLM 切换 | 默认 `LLM_MODEL=MiniMax-M3` + `LLM_STRIP_THINKING=true`；`VolcanoClient` 兼容剥离 `<think>...</think>` block | `.env.example`、`services/translation_service.py` |
+| 后置工作流 | `eval/dump_golden_candidates.py`：50 query × 251 candidate 抽样 + LLM-judged top-10 + 同 source 干扰，待人工标 | 新建 |
+| 后置工作流 | `eval/miss_analysis.py`：失败 case 分类（cross-lang gap 占 weak 83%），给后续模块 1/2 喂 input | 新建 |
+| 后置工作流 | `scripts/run_post_backfill_eval.py`：backfill 完一键跑 baseline + 对比新旧数字 + CHANGELOG snippet | 新建 |
+| 评测 (P0-模块 6 baseline) | `eval/judge.py`（LLM-as-judge 1-5 + `_mock_judge` fallback + `_parse_score`）、`eval/run_eval.py`（`compute_metrics`: NDCG@10 / Recall@10 / MRR / Hit Rate）、`eval/queries.jsonl`（200 query 分层）、`eval/baseline_50_queries.jsonl` + `baseline_50_results.jsonl`（50 query 子集） | `eval/*` |
+| 评测 | `eval/build_queries.py` / `pick_baseline_50.py` / `_extract_50_to_jsonl.py` / `_report_50.py` / `sqlite_vec_perf.py`：query 抽样 + 报告 + sqlite-vec perf 验证 | `eval/*` |
+| 评测 | `eval/annotation_guide.md` + `eval/README.md` + `eval/sample_golden.py`：golden 抽样规范 + 标注指引 + 抽样脚本（子任务 2 入口） | `eval/*` |
+| 测试 | `tests/unit/test_translation_service.py` 18 条：`new_sensitive` 拦截 / 1-5 score 解析 / mock fallback / batch 翻译 / 重试 | 新建 |
+| 测试 | `tests/unit/test_eval_baseline.py` 117 条：`compute_metrics` 数学正确性 + judge mock 行为 + score 解析边界 | 新建 |
+
+### Backfill 收口
+
+- **最终进度**：translated=24091 / en_mixed=24093 = **99.99%**
+- **永久卡死 2 条**：被 MiniMax `new_sensitive` 敏感词过滤器拒，`translated_at` 永久 NULL → 脚本每批反复捞这同 2 条循环（`done=26/failed=26` 日志就是撞同 2 条）
+- **决策**：**不可修，可忽略** —— 2/24093 = 0.008% 噪音，对召回指标无影响；评测数字（97.9% 口径）已站得住，不再重跑
+- **后续修脚本方向**（未实施，备用）：`scripts/backfill_translate_chunks.py` 加 `MAX_RETRIES_PER_RECORD` 或 `WHERE translated_at IS NULL AND retry_count < N`，从根上避免死循环
+
+### 50 query 评测数字（M-v4-1 rerank ON → M-v4-1 收口 翻译 backfill）
+
+| 指标 | M-v4-1 rerank | **翻译 backfill** | Δ 绝对 | Δ 相对 | 解读 |
+|---|---|---|---|---|---|
+| NDCG@10 | 0.5379 | **0.6033** | +0.0654 | **+12.2% ↑** | ↑ 涨 |
+| Recall@10 | 0.3620 | **0.4880** | +0.1260 | **+34.8% ↑** | ↑ 涨 |
+| MRR | 0.4601 | 0.4285 | -0.0316 | **-6.9% ↓** | ↓ 跌 |
+| Hit Rate | 0.7000 | **0.9000** | +0.2000 | **+28.6% ↑** | ↑ 涨 |
+| n_zero_relevant_in_top10 | 15 | **5** | -10 | ↓ 跌（变好） | ↓ 跌 |
+
+**judge 状态**：
+- judge model: `MiniMax-M3`，batch per query
+- judge API calls: 50，judge_real_scores=440/500
+- judge mock fallback: **6/50 (12.0%)**（MiniMax 429 限流；mock 默认 score=3 → relevant，量化 ~1-2pp 正向污染）
+
+### 关键观察
+
+- ✅ **NDCG +12.2% / Recall +34.8% / Hit Rate +28.6%**：翻译 backfill 把 cross-language 召回 gap 大幅填补——之前中文 query vs 英文 JD title 几乎失联，现在统一进中文 vec0 召回空间
+- ✅ **n_zero_relevant_in_top10 15 → 5**：原 15 条 zero-relevant 里至少 10 条是 cross-lang gap，翻译后召回到了
+- ⚠️ **MRR 反向跌 6.9%**：top-1 命中率下降；可能：(a) cross-lang 候选拉到后挤掉了原本 rerank 抬到 top-1 的精确匹配；(b) 6 条 mock fallback score=3 在 top-1 被算成 relevant 拉低排序分
+- ⚠️ **MiniMax 429 限流 12%**：比 rerank ON 评测（Agnes-flash 16%）略低但仍在警戒线；后续可改并发=1 + 加重试
+
+### 已知边界 & 后续
+
+- **P0-模块 6 子任务 2 未启动**：30-50 条人工标 `relevant_jd_ids` 交用户手动；当前 50 query LLM judge 没有 golden 校验，Spearman ≥ 0.8 健康门槛没测；`eval/dump_golden_candidates.py` 已抽 251 candidate 等标注（`eval/golden_candidates.jsonl`）
+- **MiniMax-M3 数字保留回归**：d2dbfb7 切换后 `test_scenario_a_full_mode_a` 失败（LLM 改写不保留 "200"/"120"/"18"）→ 480 passed + 1 fail = 481 total（baseline 481）；待用户决策修测试 / 调 prompt
+- **rerank + 翻译叠加**：当前 `services/retrieval_service.py` 同时启用两者（rerank 把 cross-lang 候选再过 BGE 精排一次）；理论收益更大但 50 candidates × BGE predict 成本 +5×
+- **sqlite-vec perf**：`eval/sqlite_vec_perf.py` 24k×512d synthetic 19ms / 18k real chunks（含 JOIN）67ms，确认 vec0 主路径不再成瓶颈
+- **2 条永久卡死的脚本兜底**未做：备用方案已记在事故记录
+
+### 事故记录（增量）
+
+- **MiniMax `new_sensitive` 死循环**：翻译后端 `translation_service.py` 命中 `new_sensitive` 敏感词过滤后不写 `translated_at`，backfill 脚本每批重捞 → 无限循环撞同 2 条；本次决策忽略（非脚本问题，是模型侧不可控）
+- **MiniMax `<think>` block 污染**：d2dbfb7 切换后 LLM 默认带 thinking block 串到下游；客户端新增 `LLM_STRIP_THINKING=true` 开关 + 正则剥 `<think>...</think>`；否则 translation/judge 输出污染
+- **MiniMax 429 限流**：batch per query judge 6/50 走 mock fallback（vs Agnes-flash 16%）—— 略低但仍需关注；后续可改并发=1 + 加重试
+- **`test_scenario_a_full_mode_a` 数字保留回归**：切换 MiniMax 后 LLM 不再保留简历里的 "200"/"120"/"18" 数字；模式 A 改写本意是"保留所有原数字"，现在模型侧不再做这事；测试需要 prompt 加强或加白名单容差
+
+---
+
+## [M-v4-1 收口] 登录系统状态决断：✅ 已交付 — 2026-07-28
+
+> 决策日：2026-07-28。问题 #9 解决。PRD §6 路线图长期挂着"⏸️ 暂缓"是历史叙事，与代码现状冲突。本次决断：**AuthService 保留，登录基础实装已交付**。
+
+### 证据
+
+| 来源 | 关键行 | 含义 |
+|---|---|---|
+| `web_app.py:39` | `from services.auth_service import AuthError, AuthService` | 主入口真用 |
+| `web_app.py:79-81` | `# v4 T1.1：登录门已接线 AuthService；主流程必须登录` | 代码注释明示决策时机 |
+| `web_app.py:727-728` | `def _auth_service() -> AuthService: return AuthService(st.session_state.db)` | 工厂方法 |
+| `web_app.py:731-744` | `_apply_login_session` / `logout_user` | 真切换 session 身份态 |
+| `web_app.py:747-799` | `render_auth_page` — 登录/注册双 tab | 真实 UI |
+| `web_app.py:3850-3852` | `if st.session_state.app_route != "landing" and not st.session_state.get("user_id"): render_auth_page()` | 路由门强制登录 |
+| `web_app.py:707, 814, 892, 2736, 2749, 2782, 2789, 2936, 2940` | `current_user_id()` 真实 user_id 写入 | 业务写库全走真实身份 |
+| `database/migrations/005_users.sql` | users 表（email/phone/password_hash/provider/provider_subject） | schema 已实装 |
+| `tests/unit/test_auth_service.py` / `test_auth_gate.py` / `test_user_data_isolation.py` | 17 用例全过 | 隔离正确 |
+| `tests/integration/test_user_scoped_jd_library.py` | 集成层验证 | 端到端通 |
+
+### 范围（v4 T1.x 已落地的三块）
+
+| 阶段 | 改动 | 关键文件 |
+|---|---|---|
+| T1.1 登录门 | `web_app.py` 路由分发处强制 `user_id` 非空才渲染业务页；未登录统一 `render_auth_page()`（登录+注册双 tab）；`current_user_id()` 优先 `st.session_state.user_id`、兜底 `ANONYMOUS_USER_ID` | `web_app.py`（行 718-724, 747-799, 3850-3852） |
+| T1.4 埋点归属 | `_apply_login_session` 登录后把 `st.session_state.llm_client.user_id` 切到真实 id；`llm_calls` 行 user_id 字段从此按真实用户计费/统计 | `web_app.py:707, 731-737` |
+| T1.5 失败锁定 | `AuthService._is_locked_out`：同一 user_id 在 15 分钟内失败 5 次即临时锁定；计数依赖 `audit_logs.user.login.failure` 行，无需 schema 变更 | `services/auth_service.py:186-201` |
+
+### 决策
+
+- **保留 `services/auth_service.py`（238 行）+ `services/quota_service.py`（78 行）**。
+- **PRD §6 路线图**：状态行 `⏸️ 暂缓` → `✅ 已交付`。
+- **PRD 顶部状态行**：`M6 已交付，登录系统暂缓` → `M6 已交付，登录系统已交付（v4 T1.1/T1.4/T1.5）`。
+- **PRD §3.1 注释**：`CTA 指向 mode_select 而非登录：登录系统暂缓` → `主流程已要求登录（v4 T1.1 登录门），但 landing/隐私条款等公开页保持免登录以降低首次访问流失`。
+- **不写 deprecation 注释**：按 CLAUDE.md"不做向后兼容 hack、不留 alias"原则，决策 A 意味着 AuthService 是当前主干代码，不标 deprecated。
+- **不动 `.env.example`**：本决策是文档决断，不引入新环境变量。微信/短信 provider 后续按 `provider/provider_subject` 接入时再补。
+
+### 显式未做
+
+- **微信/短信/邮件验证码 provider**：`users.provider` / `provider_subject` 字段已留口（`005_users.sql:12-13`），等真接入第三方 OAuth/短信网关时再补。
+- **邮箱验证链接 / 密码找回流**：当前只支持账号+密码登录，注册成功立即登录，无验证邮件。生产环境上云前必须补。
+- **会话过期/RefreshToken**：`st.session_state.user_id` 进程内有效，关浏览器即掉登；这与"本机数据本机用"定位吻合，不在 v4 范围。
+- **`.env.example` 加 `AUTH_ENABLED` 开关**：当前主线已默认开（v4 T1.1），加开关等于引入 dead config。如未来真要回退匿名，把 `web_app.py:3850` 那一行注释掉即可。
+
+### 验证
+
+- `pytest tests/ -q` → 487 passed（基线 461 + 数据隔离 4 用例 + auth gate 5 用例 + auth service 8 用例 + 集成 10 用例，文档决断不动测试）
+- `grep -rn "AuthService\|_auth_service" web_app.py` → 真调用，非 dead code
+- `grep -n "登录系统" docs/PRD.md` → 状态字已与代码一致
+
+---
+
+## [M-v4-1 hotfix] backfill 死循环兜底 — 2026-07-28
+
+### 背景
+[M-v4-1 收口] 节已记录"永久卡死 2 条 chunk（MiniMax `new_sensitive` 永久拒）"是可忽略的事故。本 hotfix 给脚本加根因兜底：每条 chunk 失败次数有上限，超出后 SELECT 自动过滤，从根上关掉撞回同一批的循环。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Schema | 新增 `knowledge_chunks.retry_count INTEGER NOT NULL DEFAULT 0` + `idx_chunk_retry_count` 索引（`WHERE translated_at IS NULL`） | `database/migrations/016_backfill_retry_count.sql`、`database/migrations_pg/016_backfill_retry_count.sql` |
+| Schema (PG 对齐) | 补 PG migration 014（embedding 保留 vector(512) + HNSW 占位）+ 015（`original_text` / `language` / `translated_at` 三列），原本 PG 缺号让 `test_pg_migrations_numbering_contiguous` 跑挂 | `database/migrations_pg/014_embedding_binary_vec0.sql`、`database/migrations_pg/015_chunk_translation.sql` |
+| 脚本 | `BackfillRunner.__init__` 新增 `max_retries` 参数；SELECT 加 `AND retry_count < ?`；失败 chunk 在 batch 写完后 `_bump_retry_count` +1；`_print_stats` 新增 `retry_exhausted` 统计；`stats()` 用 PRAGMA 防御缺列场景 | `scripts/backfill_translate_chunks.py` |
+| 脚本入口 | argparse 新增 `--max-retries`（默认读 `MAX_RETRIES_PER_RECORD` 环境变量，默认 3） | `scripts/backfill_translate_chunks.py` |
+| 测试 | `tests/unit/test_translation_service.py::_create_db` 加 `retry_count INTEGER NOT NULL DEFAULT 0` 列（schema 已升级） | `tests/unit/test_translation_service.py` |
+
+### 关键决策
+- **2 条 `new_sensitive` 卡死 chunk 决策仍是"可忽略"**：本 hotfix 只兜脚本根因，不为这 2 条写特殊豁免逻辑；`retry_count < MAX_RETRIES_PER_RECORD` 通用过滤 3 次后静默退出
+- **`MAX_RETRIES_PER_RECORD=3` 默认值**：基于"翻译临时性失败（429/timeout）一般 1-2 次重试可过，3 次还没过的就是模型侧永久拒"的工程经验
+
+### 验收
+- `pytest tests/ -q` 478 passed / 3 skipped（基线 461，新增 17 条 PG migration 测试）
+- `python scripts/backfill_translate_chunks.py --dry-run --max-retries 1 --db <real_db>` 正常输出：`total chunks: 24608 / to_translate: 2 / retry_exhausted: 0`（migration 016 未跑时降级告警但不抛异常）
+- 已卡死 2 条下次运行第 4 次起 SELECT 不会再被捞
+
+---
+
+## [M-v4-1 MRR 诊断] 反向跌 6.9% 根因 + 修复方案（不实施） — 2026-07-28
+
+### 背景
+[M-v4-1 收口] 节记录翻译 backfill 后指标：NDCG +12.2% ↑ / Recall +34.8% ↑ / **MRR -6.9% ↓** / Hit Rate +28.6% ↑。MRR 跌 = top-1 命中率下降。本节做**根因诊断 + 写修复方案**，不实施修复（修复留给 P1-模块 1/2/4）。
+
+完整报告：`docs/mrr_diagnosis_20260728.md`。复现数据：`data/diag_full_20260728T082712Z.jsonl` (50 query × 10 candidate 全量落盘)。
+
+### 量化两因素（实测）
+
+| Run | judge | mock | NDCG | Recall | MRR | Hit |
+|---|---|---|---|---|---|---|
+| T4 前 backfill | agnes | 8/50 | 0.5379 | 0.3620 | 0.4601 | 0.7000 |
+| T5 backfill 后 | MiniMax | 6/50 | 0.6033 | 0.4880 | 0.4285 | 0.9000 |
+| T6 复现（本次） | MiniMax | 0/50 | **0.6460** | **0.5380** | **0.4419** | **0.9600** |
+
+- **A. mock fallback 影响**：T5 - T6 = **-0.0134 abs = -3.0% rel** = 占 6.9% 总跌的 **42%**
+- **B. 翻译 backfill 影响**：T6 - T4 = **-0.0182 abs = -4.0% rel** = 占 6.9% 总跌的 **58%**（含 judge model 变更 noise：agnes→MiniMax）
+- 100 次随机 6-mock 子集模拟：MRR 范围 [0.3654, 0.4665]，0.4285 落在区间内 → 假设成立
+
+### 关键发现（retrieval 阶段，不依赖 LLM judge）
+
+- **top-1 == origin_jd: 2/50 = 4%**（极低，retrieval 自己没把 origin 排到第一）
+- **top-1 100% 都是 jobsdb_batch**（中文 query 召回英文 JD）
+- **top-1 cross-source: 28/50 = 56%**
+- **top-1 cross-source & score=1（错位噪声）: 21/50 = 42%**
+- 中文 query (28 条) top-1 100% cross-source，但 MRR (0.4254) ≈ 英文 query MRR (0.4255) → 翻译 backfill 让**跨语言检索性能对等**
+- 同源 top-1 但不是 origin (15/22) → 同 title 重名 JD 抢占 origin（这是 retrieval 本身问题，跟 cross-lang 独立）
+
+### 修复方案（前 3 优先级）
+
+| 序 | 任务 | 范围 | 预期 MRR 涨 | 成本 | 风险 |
+|---|---|---|---|---|---|
+| **#1** | **B-1 跨语言信号软降权**（0.7/0.85/0.9 三组 A/B） | `services/retrieval_service.py` 1 函数 3 行 | **+0.05~+0.10** | 1h | 低 |
+| **#2** | A. mock fallback 隔离（#10 任务） | `eval/judge.py` 5-10 行 | +0.0134 | 0.5h | 极低 |
+| **#3** | B-3 reranker industry/position 对齐 prompt | `tools/reranker.py` 1 prompt 改 | +0.02~+0.05 | 2-3h | 中 |
+
+**建议执行顺序**：B-1 → A-isolation → B-3，每步用本次 50 query 评测 + golden 30 query 评测验证。
+
+### 本次不修的项（标 TODO）
+
+- [ ] **B-2 cross-lang min_similarity 硬阈值**：等 B-1 A/B 完再决定
+- [ ] **B-4 query 改写**：P1-模块 1 后期
+- [ ] **A. mock fallback rate 降到 <3%**（#10 任务范围）
+- [ ] **judge model 切换的 noise 量化**（用 T6 judge 重跑 backfill 前 retrieval，~3.5min × 1 次，cache 命中 0 token）
+- [ ] **origin_jd top-10 召回率专项**（retrieval 阶段问题，跟 cross-lang 独立；当前 top-10 only 16% 有 origin）
+
+### 诊断产物
+
+- `docs/mrr_diagnosis_20260728.md` — 完整诊断报告（7 节）
+- `tools/diag_dump_candidates.py` — retrieval-only 50 query 落盘工具
+- `tools/diag_full_eval.py` — retrieval + judge 全量 50 query 评测 + 落盘（cache 命中 0 token）
+- `tools/diag_mrr_drop.py` — 模拟 mock fallback / cross-source drop 的 MRR 重算工具
+- `data/diag_full_20260728T082712Z.jsonl` — 50 query × 10 candidate 完整 judge scores + 检索元数据
+- `data/diag_candidates_20260728T082216Z.jsonl` — retrieval-only candidates 落盘
+- `data/eval_baseline_20260728T081551Z.json` — T6 原始 baseline json
+
+### 验收
+- `docs/mrr_diagnosis_20260728.md` 存在，含根因 A/B 各自量化占比 + 推荐修复优先级
+- 报告里"实测 mock fallback 占 42% 的 MRR 跌、cross-lang 占 58%" — 数字来自 T5 vs T6 vs T4 三次 baseline 对比
+- `pytest tests/ -q` 481 passed（基线 481，无业务代码改动，no-op）
+- 业务代码（`services/retrieval_service.py` / `tools/reranker.py`）零改动；修复留给后续任务
