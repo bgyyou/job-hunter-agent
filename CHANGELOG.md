@@ -2065,3 +2065,38 @@ python -m pytest tests/ -q
 - 报告里"实测 mock fallback 占 42% 的 MRR 跌、cross-lang 占 58%" — 数字来自 T5 vs T6 vs T4 三次 baseline 对比
 - `pytest tests/ -q` 481 passed（基线 481，无业务代码改动，no-op）
 - 业务代码（`services/retrieval_service.py` / `tools/reranker.py`）零改动；修复留给后续任务
+
+---
+
+## [M-v4-1 可观测性面板] 2026-07-28
+
+把分散在 `llm_calls` / `quality_checks` 表里的埋点数据汇成 Streamlit 一页 4 panel，让主 agent 验收 #1（MRR 跌诊断）和 #2（judge 限流）有可视化依据，无需直接打 SQL。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 服务层 | 新增 `services/ops_metrics.py`：4 个 panel 的纯聚合函数 + 阈值常量（`MOCK_FALLBACK_RED=0.10` / `MOCK_FALLBACK_YELLOW=0.03`） + 跨 dialect SQL 分发（SQLite 用 `json_extract`，PG 用 `->>''`，SQLite 无 percentile_cont → P95 返回 None） | `services/ops_metrics.py` |
+| UI | 新增 `pages/99_📊_Ops.py`：Streamlit multipage 文件，sidebar 出现 "📊 Ops" 入口；4 个 panel（judge mock fallback / retrieval 耗时 / LLM 成功率 / Top 失败 case）；空数据库 → "暂无数据"；登录门：读 `st.session_state.user_id`，未登录提示回主页登录 | `pages/99_📊_Ops.py` |
+| 配置 | `.env.example` 新增 `OPS_DASHBOARD_ENABLED=true`（默认启用；生产对外 demo 可设 false 关闭） | `.env.example` |
+| 测试 | 新增 `tests/unit/test_ops_dashboard.py`：19 条测试，覆盖 SQL 聚合正确性（4 个 panel 各 2-3 条）、空数据库 graceful（4 条）、阈值边界（5 条） | `tests/unit/test_ops_dashboard.py` |
+
+### 4 个 panel 数据形态（按真实 schema 设计，非任务给定的伪字段）
+
+| Panel | 数据源 | 字段含义 |
+|---|---|---|
+| ① judge mock fallback | `llm_calls` | `operation LIKE '%judge%'` 且 `error_message LIKE '%MOCK%' OR '%FALLBACK%'` 的占比；阈值 红 ≥10% / 黄 3-10% / 绿 <3% |
+| ② retrieval 耗时 | `quality_checks` | `check_type IN ('retrieval', 'llm_call')` 且 `details.latency_ms IS NOT NULL`；SQLite 无 P95 → 显示 "N/A (SQLite)" |
+| ③ LLM 成功率 | `llm_calls` | 最近 7 天；`success + cache_hit` 算成功，`error` 算失败 |
+| ④ Top 失败 case | `llm_calls` | `status='error'` 按 (operation, error_type) 分组倒序 Top 10 |
+
+### 关键决策
+- **不照搬任务 SQL 模板**：任务给的 SQL 用 `operation` / `mock_fallback` / `success` 字段，但实际 `quality_checks` 表的列是 `check_type` / `details` JSON / `score`。按真实 schema 重写，面板才有数据可看。
+- **Streamlit multipage 登录门**：`pages/` 下文件不自动走 `web_app.py` 的路由分发，所以直接在 `99_📊_Ops.py` 里读 `st.session_state.user_id`，未登录 `st.stop()`，避免绕过登录。
+- **环境开关而非代码开关**：`OPS_DASHBOARD_ENABLED` 默认 true，生产对外 demo 改 false 即可关闭，不需重新部署。
+
+### 验收
+- `pytest tests/unit/test_ops_dashboard.py -v` → 19 passed
+- `pytest tests/ -q` 待确认 ≥ 481 passed（基线）
+- `streamlit run web_app.py` 启动后 sidebar 自动出现 "📊 Ops" 入口
+- 4 个 panel 空数据均显示 "暂无数据"，不抛异常
