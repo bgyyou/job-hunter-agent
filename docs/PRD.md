@@ -1,6 +1,6 @@
 # JobHunter 产品需求文档（PRD）
 
-> **版本**：v2.1 · **更新**：2026-06-26 · **状态**：M6 已交付，登录系统暂缓
+> **版本**：v2.1 · **更新**：2026-07-28 · **状态**：M6 已交付，登录系统已交付（v4 T1.1/T1.4/T1.5）
 
 ---
 
@@ -59,7 +59,7 @@ RAG 检索 JD 库                  生成优化简历 + Cover Letter
 **设计初衷**：
 - **深紫黑紫霓虹配色**：区别于市面求职工具的蓝白配色，传递"AI 原生"而非"传统 HR SaaS"的定位
 - **单页长滚动**：所有卖点上首页，避免用户点进二级页才发现功能不对路
-- **CTA 指向 mode_select 而非登录**：登录系统暂缓，先让用户体验产品价值，降低流失
+- **CTA 指向 mode_select 而非登录**：主流程已要求登录（v4 T1.1 登录门），但 landing/隐私条款等公开页保持免登录以降低首次访问流失
 
 ---
 
@@ -243,7 +243,7 @@ database/
 | M1-M4 | ✅ 已交付 | RAG / 爬虫 / Flow A / Flow B 核心 |
 | M5 | ✅ 已交付 | PostgreSQL + pgvector / LLM 质量埋点 |
 | M6 | ✅ 已交付 | 批量 JD 预览 / AI chat widget / Liepin / Boss 登录检测 |
-| 登录系统 | ⏸️ 暂缓 | 当前 anonymous user_id，后期加邮箱/微信/短信 provider |
+| 登录系统 | ✅ 已交付 | 邮箱/手机号 + 密码（PBKDF2 200k + salt），users 表落 SQLite/PG；登录门强制业务路由；失败锁定 5/15min（v4 T1.5）；llm_calls 埋点归属到真实用户（v4 T1.4）。微信/短信 provider 后续按 provider/provider_subject 接入 |
 | 51job scraper | 🚧 进行中 | 前程无忧 scraper（路径 1） |
 | 猎聘放量 | 🚧 进行中 | 30 关键词 × 10 条，人类化节奏 |
 

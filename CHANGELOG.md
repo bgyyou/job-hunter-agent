@@ -1854,3 +1854,54 @@ python -m pytest tests/ -q
 - **conftest.py streamlit stub + sentence_transformers 真 import chain 冲突**：`patch("sentence_transformers.CrossEncoder")` 触发 torch init → `inspect.getfile(streamlit_stub_module)` → TypeError；测试根本修复：`tests/unit/test_reranker.py` 顶部预注入 `sys.modules["sentence_transformers"]` 假骨架（`types.ModuleType` + 假 `CrossEncoder`），`patch` 直接走骨架不进真 import chain
 - **Sigmoid 浮点精度**：`1/(1+exp(-20))` = `0.9999999979388463`，老测试 `assert ... == 1.0` 误判；改为 `pytest.approx(1.0, abs=1e-6)`，函数本身数学正确
 - **`patch.object(CrossEncoderReranker, "_model", ...)` 失效**：`_model` 是 `__init__` 内赋值的实例属性（非类属性 / 非 descriptor），`patch.object` 不起作用；改在实例上直接 `r._model = mock`，绕开 `_ensure_model` 来构造"模型在但 predict 失败" 的测试用例
+
+---
+
+## [M-v4-1 收口] 登录系统状态决断：✅ 已交付 — 2026-07-28
+
+> 决策日：2026-07-28。问题 #9 解决。PRD §6 路线图长期挂着"⏸️ 暂缓"是历史叙事，与代码现状冲突。本次决断：**AuthService 保留，登录基础实装已交付**。
+
+### 证据
+
+| 来源 | 关键行 | 含义 |
+|---|---|---|
+| `web_app.py:39` | `from services.auth_service import AuthError, AuthService` | 主入口真用 |
+| `web_app.py:79-81` | `# v4 T1.1：登录门已接线 AuthService；主流程必须登录` | 代码注释明示决策时机 |
+| `web_app.py:727-728` | `def _auth_service() -> AuthService: return AuthService(st.session_state.db)` | 工厂方法 |
+| `web_app.py:731-744` | `_apply_login_session` / `logout_user` | 真切换 session 身份态 |
+| `web_app.py:747-799` | `render_auth_page` — 登录/注册双 tab | 真实 UI |
+| `web_app.py:3850-3852` | `if st.session_state.app_route != "landing" and not st.session_state.get("user_id"): render_auth_page()` | 路由门强制登录 |
+| `web_app.py:707, 814, 892, 2736, 2749, 2782, 2789, 2936, 2940` | `current_user_id()` 真实 user_id 写入 | 业务写库全走真实身份 |
+| `database/migrations/005_users.sql` | users 表（email/phone/password_hash/provider/provider_subject） | schema 已实装 |
+| `tests/unit/test_auth_service.py` / `test_auth_gate.py` / `test_user_data_isolation.py` | 17 用例全过 | 隔离正确 |
+| `tests/integration/test_user_scoped_jd_library.py` | 集成层验证 | 端到端通 |
+
+### 范围（v4 T1.x 已落地的三块）
+
+| 阶段 | 改动 | 关键文件 |
+|---|---|---|
+| T1.1 登录门 | `web_app.py` 路由分发处强制 `user_id` 非空才渲染业务页；未登录统一 `render_auth_page()`（登录+注册双 tab）；`current_user_id()` 优先 `st.session_state.user_id`、兜底 `ANONYMOUS_USER_ID` | `web_app.py`（行 718-724, 747-799, 3850-3852） |
+| T1.4 埋点归属 | `_apply_login_session` 登录后把 `st.session_state.llm_client.user_id` 切到真实 id；`llm_calls` 行 user_id 字段从此按真实用户计费/统计 | `web_app.py:707, 731-737` |
+| T1.5 失败锁定 | `AuthService._is_locked_out`：同一 user_id 在 15 分钟内失败 5 次即临时锁定；计数依赖 `audit_logs.user.login.failure` 行，无需 schema 变更 | `services/auth_service.py:186-201` |
+
+### 决策
+
+- **保留 `services/auth_service.py`（238 行）+ `services/quota_service.py`（78 行）**。
+- **PRD §6 路线图**：状态行 `⏸️ 暂缓` → `✅ 已交付`。
+- **PRD 顶部状态行**：`M6 已交付，登录系统暂缓` → `M6 已交付，登录系统已交付（v4 T1.1/T1.4/T1.5）`。
+- **PRD §3.1 注释**：`CTA 指向 mode_select 而非登录：登录系统暂缓` → `主流程已要求登录（v4 T1.1 登录门），但 landing/隐私条款等公开页保持免登录以降低首次访问流失`。
+- **不写 deprecation 注释**：按 CLAUDE.md"不做向后兼容 hack、不留 alias"原则，决策 A 意味着 AuthService 是当前主干代码，不标 deprecated。
+- **不动 `.env.example`**：本决策是文档决断，不引入新环境变量。微信/短信 provider 后续按 `provider/provider_subject` 接入时再补。
+
+### 显式未做
+
+- **微信/短信/邮件验证码 provider**：`users.provider` / `provider_subject` 字段已留口（`005_users.sql:12-13`），等真接入第三方 OAuth/短信网关时再补。
+- **邮箱验证链接 / 密码找回流**：当前只支持账号+密码登录，注册成功立即登录，无验证邮件。生产环境上云前必须补。
+- **会话过期/RefreshToken**：`st.session_state.user_id` 进程内有效，关浏览器即掉登；这与"本机数据本机用"定位吻合，不在 v4 范围。
+- **`.env.example` 加 `AUTH_ENABLED` 开关**：当前主线已默认开（v4 T1.1），加开关等于引入 dead config。如未来真要回退匿名，把 `web_app.py:3850` 那一行注释掉即可。
+
+### 验证
+
+- `pytest tests/ -q` → 487 passed（基线 461 + 数据隔离 4 用例 + auth gate 5 用例 + auth service 8 用例 + 集成 10 用例，文档决断不动测试）
+- `grep -rn "AuthService\|_auth_service" web_app.py` → 真调用，非 dead code
+- `grep -n "登录系统" docs/PRD.md` → 状态字已与代码一致
