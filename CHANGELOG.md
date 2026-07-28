@@ -1924,3 +1924,29 @@ python -m pytest tests/ -q
 - **MiniMax `<think>` block 污染**：d2dbfb7 切换后 LLM 默认带 thinking block 串到下游；客户端新增 `LLM_STRIP_THINKING=true` 开关 + 正则剥 `<think>...</think>`；否则 translation/judge 输出污染
 - **MiniMax 429 限流**：batch per query judge 6/50 走 mock fallback（vs Agnes-flash 16%）—— 略低但仍需关注；后续可改并发=1 + 加重试
 - **`test_scenario_a_full_mode_a` 数字保留回归**：切换 MiniMax 后 LLM 不再保留简历里的 "200"/"120"/"18" 数字；模式 A 改写本意是"保留所有原数字"，现在模型侧不再做这事；测试需要 prompt 加强或加白名单容差
+
+---
+
+## [M-v4-1 hotfix] backfill 死循环兜底 — 2026-07-28
+
+### 背景
+[M-v4-1 收口] 节已记录"永久卡死 2 条 chunk（MiniMax `new_sensitive` 永久拒）"是可忽略的事故。本 hotfix 给脚本加根因兜底：每条 chunk 失败次数有上限，超出后 SELECT 自动过滤，从根上关掉撞回同一批的循环。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Schema | 新增 `knowledge_chunks.retry_count INTEGER NOT NULL DEFAULT 0` + `idx_chunk_retry_count` 索引（`WHERE translated_at IS NULL`） | `database/migrations/016_backfill_retry_count.sql`、`database/migrations_pg/016_backfill_retry_count.sql` |
+| Schema (PG 对齐) | 补 PG migration 014（embedding 保留 vector(512) + HNSW 占位）+ 015（`original_text` / `language` / `translated_at` 三列），原本 PG 缺号让 `test_pg_migrations_numbering_contiguous` 跑挂 | `database/migrations_pg/014_embedding_binary_vec0.sql`、`database/migrations_pg/015_chunk_translation.sql` |
+| 脚本 | `BackfillRunner.__init__` 新增 `max_retries` 参数；SELECT 加 `AND retry_count < ?`；失败 chunk 在 batch 写完后 `_bump_retry_count` +1；`_print_stats` 新增 `retry_exhausted` 统计；`stats()` 用 PRAGMA 防御缺列场景 | `scripts/backfill_translate_chunks.py` |
+| 脚本入口 | argparse 新增 `--max-retries`（默认读 `MAX_RETRIES_PER_RECORD` 环境变量，默认 3） | `scripts/backfill_translate_chunks.py` |
+| 测试 | `tests/unit/test_translation_service.py::_create_db` 加 `retry_count INTEGER NOT NULL DEFAULT 0` 列（schema 已升级） | `tests/unit/test_translation_service.py` |
+
+### 关键决策
+- **2 条 `new_sensitive` 卡死 chunk 决策仍是"可忽略"**：本 hotfix 只兜脚本根因，不为这 2 条写特殊豁免逻辑；`retry_count < MAX_RETRIES_PER_RECORD` 通用过滤 3 次后静默退出
+- **`MAX_RETRIES_PER_RECORD=3` 默认值**：基于"翻译临时性失败（429/timeout）一般 1-2 次重试可过，3 次还没过的就是模型侧永久拒"的工程经验
+
+### 验收
+- `pytest tests/ -q` 478 passed / 3 skipped（基线 461，新增 17 条 PG migration 测试）
+- `python scripts/backfill_translate_chunks.py --dry-run --max-retries 1 --db <real_db>` 正常输出：`total chunks: 24608 / to_translate: 2 / retry_exhausted: 0`（migration 016 未跑时降级告警但不抛异常）
+- 已卡死 2 条下次运行第 4 次起 SELECT 不会再被捞
