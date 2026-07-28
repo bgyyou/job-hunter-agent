@@ -11,6 +11,8 @@ Step 1（解析）→ Step 2（转换）→ Step 3（改写）→ Step 4（预�
 """
 from __future__ import annotations
 
+import importlib
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock
@@ -20,6 +22,9 @@ import pytest
 import web_app
 from services.jd_parser import StructuredJD, JDParserRouter
 from services.resume_rewriter import ResumeRewriter, RewriteResult
+page_mod_1 = importlib.import_module('pages.04_📝_Flow_A_Step2')
+page_mod_2 = importlib.import_module('pages.05_💬_Flow_A_Step3')
+
 
 
 # ============================================================
@@ -192,7 +197,7 @@ class TestScenarioAFull:
         jd = scenario_a_full["jd"]
 
         # Step 2: form → resume
-        resume = web_app.step2_form_to_resume(form)
+        resume = page_mod_1.step2_form_to_resume(form)
         assert resume["name"] == "张三"
         assert len(resume["experience"]) == 2
         assert len(resume["projects"]) == 1
@@ -205,12 +210,12 @@ class TestScenarioAFull:
         assert len(result.rewrites) >= 1
 
         # Step 3.5: 合并 final_resume
-        final = web_app._compose_final_resume(resume, result, form)
+        final = page_mod_2._compose_final_resume(resume, result, form)
         assert final["_rewrite_mode"] == "A"
         assert len(final["_rewrites"]) >= 1
 
         # Step 4: 一页纸预估
-        estimate = web_app._estimate_resume(final)
+        estimate = page_mod_2._estimate_resume(final)
         assert estimate.capacity_mm == 265.0
         # 完整简历但每段 60-100 字符 → 应该在 1 页内
         assert estimate.overflow is False, (
@@ -240,12 +245,12 @@ class TestScenarioBMinimal:
         jd = scenario_b_minimal["jd"]
 
         # Step 2
-        resume = web_app.step2_form_to_resume(form)
+        resume = page_mod_1.step2_form_to_resume(form)
         assert len(resume["experience"]) == 1
         assert resume["projects"] == []
 
         # Step 3: 评分
-        score = web_app._score_resume(resume)
+        score = page_mod_2._score_resume(resume)
         assert score["recommended_mode"] in ("B", "A+B")
         # 极简简历 → 推荐 B
 
@@ -257,11 +262,11 @@ class TestScenarioBMinimal:
         assert any(rw.get("is_ai_generated") for rw in result.rewrites)
 
         # Step 3.5: 合并
-        final = web_app._compose_final_resume(resume, result, form)
+        final = page_mod_2._compose_final_resume(resume, result, form)
         assert final["_rewrite_mode"] == "B"
 
         # Step 4: 预估
-        estimate = web_app._estimate_resume(final)
+        estimate = page_mod_2._estimate_resume(final)
         assert estimate.overflow is False
 
         # Step 5: 导出
@@ -282,11 +287,11 @@ class TestScenarioCPartial:
         jd = scenario_c_partial["jd"]
 
         # Step 2
-        resume = web_app.step2_form_to_resume(form)
+        resume = page_mod_1.step2_form_to_resume(form)
         assert len(resume["experience"]) == 4
 
         # Step 4: 预估 — 4 段大工作 → 必然超页
-        estimate = web_app._estimate_resume(resume)
+        estimate = page_mod_2._estimate_resume(resume)
         # 4 段工作 + 大量描述 → 应超页
         if estimate.overflow:
             # 超页 → 瘦身建议应触发
@@ -304,7 +309,7 @@ class TestScenarioCPartial:
         # 模拟用户瘦身（删 2 段工作）后预估
         resume_slim = {**resume}
         resume_slim["experience"] = resume["experience"][:2]
-        estimate_slim = web_app._estimate_resume(resume_slim)
+        estimate_slim = page_mod_2._estimate_resume(resume_slim)
         # 瘦身后应不超页（或至少溢出量变小）
         assert estimate_slim.total_mm <= estimate.total_mm
 

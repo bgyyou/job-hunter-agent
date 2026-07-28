@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import importlib
 
+page_mod_1 = importlib.import_module('pages.05_💬_Flow_A_Step3')
+
 import pytest
 
 
@@ -38,14 +40,14 @@ def web_app_mod():
 
 class TestScoreResume:
     def test_returns_dict_with_required_keys(self, web_app_mod):
-        s = web_app_mod._score_resume({})
+        s = page_mod_1._score_resume({})
         assert isinstance(s, dict)
         assert "total_score" in s
         assert "recommended_mode" in s
         assert "reason" in s
 
     def test_empty_resume_low_score(self, web_app_mod):
-        s = web_app_mod._score_resume({
+        s = page_mod_1._score_resume({
             "name": "X", "phone": "1", "email": "x@x.com",
             "experience": [], "projects": [], "education": [],
         })
@@ -53,7 +55,7 @@ class TestScoreResume:
         assert s["recommended_mode"] in ("B", "A+B")
 
     def test_full_resume_high_score(self, web_app_mod):
-        s = web_app_mod._score_resume({
+        s = page_mod_1._score_resume({
             "name": "张三", "phone": "13800138000", "email": "z@z.com",
             "experience": [
                 {"company": "字节", "title": "PM",
@@ -76,7 +78,7 @@ class TestScoreResume:
         state = _FakeSession()
         state["llm_client"] = None
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
-        s = web_app_mod._score_resume({})
+        s = page_mod_1._score_resume({})
         assert s is not None
 
 
@@ -91,7 +93,7 @@ class TestComposeFinalResume:
         rw = RewriteResult(mode="A", rewrites=[
             {"section": "experience_0", "original": "x", "rewritten": "y"}
         ])
-        out = web_app_mod._compose_final_resume(resume, rw, {})
+        out = page_mod_1._compose_final_resume(resume, rw, {})
         assert out["name"] == "张三"
         assert out["phone"] == "1"
         assert out["experience"] == [{"company": "X"}]
@@ -103,7 +105,7 @@ class TestComposeFinalResume:
             {"section": "experience_0", "rewritten": "改写 1"},
             {"section": "experience_1", "rewritten": "改写 2"},
         ])
-        out = web_app_mod._compose_final_resume(resume, rw, {})
+        out = page_mod_1._compose_final_resume(resume, rw, {})
         assert out["_rewrites"] == rw.rewrites
         assert out["_rewrite_mode"] == "A"
         assert len(out["_rewrites"]) == 2
@@ -116,7 +118,7 @@ class TestComposeFinalResume:
             "rewrites": [{"section": "education_0", "rewritten": "改写"}],
             "warnings": [], "needs_user_review": True,
         }
-        out = web_app_mod._compose_final_resume(resume, rw_dict, {})
+        out = page_mod_1._compose_final_resume(resume, rw_dict, {})
         assert out["_rewrite_mode"] == "A"
         assert out["_rewrites"][0]["section"] == "education_0"
 
@@ -128,7 +130,7 @@ class TestComposeFinalResume:
             {"section": "experience_0", "content": "模板段",
              "is_ai_generated": True, "anchored_keywords": ["销售转化"]}
         ])
-        out = web_app_mod._compose_final_resume(resume, rw, {})
+        out = page_mod_1._compose_final_resume(resume, rw, {})
         assert out["_rewrite_mode"] == "B"
         assert out["_rewrites"][0]["is_ai_generated"] is True
 
@@ -149,7 +151,7 @@ class TestRenderRewriteResults:
         monkeypatch.setattr(web_app_mod.st, "container", lambda *a, **kw: _StubEverything())
         monkeypatch.setattr(web_app_mod.st, "spinner", lambda *a, **kw: _StubEverything())
         monkeypatch.setattr(web_app_mod.st, "status", lambda *a, **kw: _StubEverything())
-        web_app_mod._render_rewrite_results({
+        page_mod_1._render_rewrite_results({
             "mode": "A",
             "rewrites": [{
                 "section": "experience_0", "original": "做产品",
@@ -169,7 +171,7 @@ class TestRenderRewriteResults:
         monkeypatch.setattr(web_app_mod.st, "container", lambda *a, **kw: _StubEverything())
         monkeypatch.setattr(web_app_mod.st, "spinner", lambda *a, **kw: _StubEverything())
         monkeypatch.setattr(web_app_mod.st, "status", lambda *a, **kw: _StubEverything())
-        web_app_mod._render_rewrite_results({
+        page_mod_1._render_rewrite_results({
             "mode": "B",
             "rewrites": [{
                 "section": "experience_0",
@@ -186,7 +188,7 @@ class TestRenderRewriteResults:
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
         from tests.conftest import _StubEverything
         monkeypatch.setattr(web_app_mod.st, "expander", lambda *a, **kw: _StubEverything())
-        web_app_mod._render_rewrite_results({
+        page_mod_1._render_rewrite_results({
             "mode": "A", "rewrites": [], "warnings": [],
             "needs_user_review": False,
         })
@@ -228,10 +230,10 @@ class TestStep3RerunButton:
         assert state["fa_step3_first_run"] is True
         assert state["fa_step3_mode"] == "auto"
 
-    def test_rerun_label_logic_in_source(self, web_app_mod):
+    def test_rerun_label_logic_in_source(self):
         """P1-2 关键路径：render_flow_a_step_3_rewrite 应有 first_run 分支。"""
         import inspect
-        src = inspect.getsource(web_app_mod.render_flow_a_step_3_rewrite)
+        src = inspect.getsource(page_mod_1.render_flow_a_step_3_rewrite)
         # 至少有 first_run 判断 + 3 种按钮文案
         assert "fa_step3_first_run" in src, "render 应读 fa_step3_first_run"
         assert "改写 / 生成" in src, "首次文案缺失"

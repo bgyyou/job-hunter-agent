@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import importlib
 
+page_mod_1 = importlib.import_module('pages.03_📝_Flow_A_Step1')
+
 import pytest
 
 
@@ -44,11 +46,11 @@ def web_app_mod():
 class TestJdToDict:
     def test_dict_passthrough(self, web_app_mod):
         d = {"company": "X", "title": "PM", "raw_text": "..."}
-        out = web_app_mod._jd_to_dict(d)
+        out = page_mod_1._jd_to_dict(d)
         assert out == d
 
     def test_none_returns_empty_dict(self, web_app_mod):
-        out = web_app_mod._jd_to_dict(None)
+        out = page_mod_1._jd_to_dict(None)
         assert out == {}
 
     def test_dataclass_structured_jd(self, web_app_mod):
@@ -63,7 +65,7 @@ class TestJdToDict:
             needs_user_review=False,
             parse_notes=["单元测试"],
         )
-        out = web_app_mod._jd_to_dict(jd)
+        out = page_mod_1._jd_to_dict(jd)
         assert out["source"] == "text"
         assert out["company"] == "字节跳动"
         assert out["title"] == "Python 工程师"
@@ -84,7 +86,7 @@ class TestJdToDict:
             level = "mid"
             user_id = "u1"
 
-        out = web_app_mod._jd_to_dict(FakeJD())
+        out = page_mod_1._jd_to_dict(FakeJD())
         assert out["company"] == "Fake"
         assert out["title"] == "Dev"
         # 额外字段被补回
@@ -115,9 +117,9 @@ class TestSyncFlowAPositionFromJD:
         )
         # 用一个独立的 SessionState 替代
         state = _FakeSession()
-        state["fa_jd_structured"] = web_app_mod._jd_to_dict(jd)
+        state["fa_jd_structured"] = page_mod_1._jd_to_dict(jd)
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
-        web_app_mod._sync_flow_a_position_from_jd()
+        page_mod_1._sync_flow_a_position_from_jd()
         assert state["fa_position"] == "AI 产品经理"
         assert state["fa_industry"] == "互联网"
         assert state["fa_function"] == "产品"
@@ -127,7 +129,7 @@ class TestSyncFlowAPositionFromJD:
         state["fa_jd_structured"] = None
         state["fa_position"] = "pre-existing"
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
-        web_app_mod._sync_flow_a_position_from_jd()
+        page_mod_1._sync_flow_a_position_from_jd()
         # 旧值保留
         assert state["fa_position"] == "pre-existing"
 

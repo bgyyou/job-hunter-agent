@@ -2153,6 +2153,7 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - **30 query 串行评测 ≈ 5 分钟**：30 LLM call × 平均 ~10s（含 thinking model reasoning）；比 concurrency=2 慢约 1×。换 provider / 切 fast model 可压回 1-2 分钟，本任务不优化
 - **mock fallback 标签化**（`429_RATE_LIMIT` / `OTHER_ERROR`）只在 `_judge_query_batch` 末尾设置；未来 `eval/miss_analysis.py` 可按这个标签分类失败原因（不在本任务范围）
 - **如果未来要切到非 thinking model**（如 `gpt-4o-mini`），单 call 时间可压到 2-3s，concurrency=2 的 mock fallback rate 可能也 <3%，到时候再权衡串行 vs 并发（不在本任务范围）
+<<<<<<< HEAD
 
 ## [M-v4-1 golden 校准] golden 30 校准集 PRELIMINARY + Spearman 验证脚本 — 2026-07-28
 
@@ -2195,3 +2196,40 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - **跑 `verify_golden_spearman.py --regenerate-judge` 强制重跑 judge**：默认复用 jsonl 里的 `llm_judge_score`（快速）；CI 跑校验时建议 `--regenerate-judge` 强制拿新鲜分数
 - **golden_30_to_annotate.jsonl 是"真人工标"目标文件**：每个 candidate 的 `human_label` 字段填 1-5（不是 0/1）；填完后用 `verify_golden_spearman.py --input eval/golden_30_to_annotate.jsonl` 算 ρ（前提是 `human_label` 改为 1-5 + 加一个 `human_label_binary` 字段，或改 verify 脚本适配 1-5；本任务不做，留给真人工标那一步）
 - **LLM judge 50 query 健康门槛**：等真人工标完后，50 query 都标完才能下"LLM judge ρ ≥ 0.8 可替代人工"的结论
+=======
+
+---
+
+## [M-v4-1 web_app 拆分] 2026-07-28
+
+### 范围
+
+`web_app.py` 单文件 3865 行装了 9 张页面 + 全部 helper，任何一处改动都要在几千行里定位、且多人并行改必冲突。按 Streamlit 官方 multipage 约定拆成 `pages/NN_xxx.py`，`web_app.py` 只留「壳」：主题 CSS + session 初始化 + 顶部导航 + 路由分发。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 拆分 | 9 张页面整体 move 到 `pages/`，各自 `def main()` 入口 + `st.set_page_config()` | `pages/01_🏠_Landing.py` … `pages/09_🔐_Auth.py` |
+| 瘦身 | `web_app.py` 3865 → 1174 行（-69.6%），只保留主题 CSS、`init_session_state` / `init_app_services` / `run_async` / `current_user_id`、`render_top_nav`、landing live band、登录页与路由分发 | `web_app.py` |
+| 路由 | `render_flow_a` / `render_flow_b` / `render_jd_library` / `render_resume_library` 改为 `st.switch_page()` 薄分发；Flow A 仍按 `fa_step` 1/2/3 决定跳哪张 page | `web_app.py` |
+| 测试 | 7 个测试文件把已搬走的 helper 引用从 `web_app.<fn>` 改为 `importlib.import_module('pages.NN_xxx').<fn>` | `tests/unit/test_flow_a_step_{1,2,3,4_5}.py`、`tests/integration/test_flow_a_{step_3to5_scenarios,real_llm_3_scenarios}.py`、`tests/integration/test_jd_library_metadata.py` |
+| 测试 | `test_flow_a_real_llm_3_scenarios.py` 的 page 模块 import 挪到 `needs_llm` 求值之后 —— page → `web_app` → `config.settings` 会触发 `load_dotenv()`，放在前面会让 `skipif(not _has_llm_credentials())` 永远为 False，无凭证环境也去打真 LLM | 同上 |
+
+### 影响范围
+
+- **用户可见**：Streamlit sidebar 现在直接列出 9 张页面，可直达；原有「顶部导航 + session 状态机」路径不变。
+- **业务逻辑**：0 改动。页面函数是整体 move，只改函数名（`render_xxx_page` → `main`）和 import 头。
+- **共享 helper**：`init_session_state` / `run_async` / `current_user_id` / `render_top_nav` 等仍在 `web_app.py`，各 page 从 `web_app` import，不复制。
+
+### 验收
+
+- `pytest tests/ -q` → **520 passed, 3 skipped**（与拆分前基线逐条一致，无新增无回归）
+- 导入 smoke：`web_app` + `pages/` 下全部 10 个模块逐个 `importlib.import_module` 通过
+- `wc -l web_app.py` → **1174**（目标 ≤1500）
+
+### 已知边界 & 后续
+
+- `jd_to_db_payload` 在 `pages/05` 与 `pages/07` 各有一份 1:1 副本 —— 后续应下沉到 `services/`，本次拆分不引入新的跨 page 依赖方向。
+- `pages/99_📊_Ops.py` 是 M12 已存在的运维面板，本次未改。
+- `services/` `agents/` `database/` 的拆分是独立议题，不在本次范围。

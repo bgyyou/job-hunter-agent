@@ -26,6 +26,7 @@ pytest tests/integration/test_flow_a_real_llm_3_scenarios.py -v -m "not real_llm
 """
 from __future__ import annotations
 
+import importlib
 import asyncio
 import os
 import shutil
@@ -34,6 +35,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pytest
+
 
 # 在模块顶层加载 .env（pytest 不自动加载，必须显式 load，否则 skipif 看不到 key）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -58,6 +60,11 @@ needs_llm = pytest.mark.skipif(
     not _has_llm_credentials(),
     reason="LLM_API_KEY 未配置（或为占位符），跳过 real_llm 测试",
 )
+
+# 注意：必须在 needs_llm 求值之后再 import page 模块 —— 它会连带 import web_app →
+# config.settings 触发 load_dotenv()，把仓库根 .env 灌进 os.environ，
+# 放在前面会让上面的 skipif 永远为 False（CI 无凭证时也去打真 LLM）。
+page_mod_1 = importlib.import_module('pages.05_💬_Flow_A_Step3')
 
 
 # ============================================================
@@ -209,14 +216,14 @@ class TestRealLLMScenarios:
             )
 
         # Step 3.5: 合并
-        final = web_app._compose_final_resume(
+        final = page_mod_1._compose_final_resume(
             sample_resume_full, result, _form_from_resume(sample_resume_full),
         )
         assert final["_rewrite_mode"] == "A"
         assert len(final["_rewrites"]) >= 1
 
         # Step 4: 一页纸预估
-        estimate = web_app._estimate_resume(final)
+        estimate = page_mod_1._estimate_resume(final)
         assert estimate.capacity_mm == 265.0
         assert estimate.overflow is False, (
             f"场景 A 真 LLM 改写后超页：{estimate.total_mm:.1f}mm"
@@ -241,7 +248,7 @@ class TestRealLLMScenarios:
         from services.resume_rewriter import ResumeRewriter
 
         # Step 3: 评分
-        score = web_app._score_resume(sample_resume_minimal)
+        score = page_mod_1._score_resume(sample_resume_minimal)
         assert score["recommended_mode"] in ("B", "A+B"), (
             f"极简简历应推荐 B/A+B，实际：{score['recommended_mode']}"
         )
@@ -291,13 +298,13 @@ class TestRealLLMScenarios:
         )
 
         # Step 4: 预估超页
-        est_full = web_app._estimate_resume(sample_resume_overflow)
+        est_full = page_mod_1._estimate_resume(sample_resume_overflow)
         if est_full.overflow:
             # 瘦身（删 2 段工作）
             slim = {**sample_resume_overflow}
             slim["experience"] = sample_resume_overflow["experience"][:2]
 
-            est_slim = web_app._estimate_resume(slim)
+            est_slim = page_mod_1._estimate_resume(slim)
             assert est_slim.total_mm <= est_full.total_mm, (
                 f"瘦身后预估应变小：full={est_full.total_mm:.1f}, slim={est_slim.total_mm:.1f}"
             )
