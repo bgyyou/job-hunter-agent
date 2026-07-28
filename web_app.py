@@ -30,7 +30,7 @@ except Exception as _exc:
 
 load_dotenv()
 
-from agents.coordinator import CoordinatorAgent
+from agents.coordinator.orchestrator import CoordinatorAgent
 from agents.resume_flow_a import ResumeFlowA, SECTIONS
 from config.settings import settings
 from database.classifier import Classifier

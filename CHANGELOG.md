@@ -2153,3 +2153,27 @@ LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
 - **30 query 串行评测 ≈ 5 分钟**：30 LLM call × 平均 ~10s（含 thinking model reasoning）；比 concurrency=2 慢约 1×。换 provider / 切 fast model 可压回 1-2 分钟，本任务不优化
 - **mock fallback 标签化**（`429_RATE_LIMIT` / `OTHER_ERROR`）只在 `_judge_query_batch` 末尾设置；未来 `eval/miss_analysis.py` 可按这个标签分类失败原因（不在本任务范围）
 - **如果未来要切到非 thinking model**（如 `gpt-4o-mini`），单 call 时间可压到 2-3s，concurrency=2 的 mock fallback rate 可能也 <3%，到时候再权衡串行 vs 并发（不在本任务范围）
+
+---
+
+## [M-v4-1 agents 拆分] coordinator 1390 → 子模块 + applicant 883 → 子模块 — 2026-07-29
+
+### 范围
+
+`agents/coordinator.py` 1390 行 / `agents/applicant.py` 883 行两个单点文件按职责拆成子包。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| 拆分 | coordinator.py → `agents/coordinator/` 子包：`orchestrator.py`（CoordinatorAgent 主类）/ `state.py`（状态管理）/ `match_analysis.py`（匹配分析）/ `chat.py`（对话）/ `tools.py`（工具） | 新建 `agents/coordinator/` |
+| 拆分 | applicant.py → `agents/applicant/` 子包：`apply.py`（ApplicantAgent 主类）/ `submit.py`（提交）/ `retry.py`（重试）/ `tools.py`（工具） | 新建 `agents/applicant/` |
+| 一次性硬切 | 原 `agents/coordinator.py` / `agents/applicant.py` 删除（不留 backwards-compat shim，符合 CLAUDE.md 第 2 节铁律）；`web_app.py:33` 从 `from agents.coordinator import CoordinatorAgent` 改为 `from agents.coordinator.orchestrator import CoordinatorAgent` | `web_app.py` |
+| 子包入口 | `agents/coordinator/__init__.py` / `agents/applicant/__init__.py` 只写 docstring，不 re-export（不留 alias） | 同上 |
+
+### 验收
+
+- `wc -l agents/coordinator.py agents/applicant.py` → `0 0`（文件已删）
+- `pytest tests/ -q` → **520 passed, 3 skipped**（与拆分前逐条一致，无新增无回归）
+- `from agents.coordinator.orchestrator import CoordinatorAgent` 工作
+- `from agents.applicant.apply import ApplicantAgent` 工作
