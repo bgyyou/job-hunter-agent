@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import sqlite3
 import sys
 import time
@@ -347,7 +348,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--queries", default="eval/queries.jsonl")
     parser.add_argument("--top-k", type=int, default=TOP_K_DEFAULT)
-    parser.add_argument("--concurrency", type=int, default=2)
+    # [M-v4-1 judge 限流] 默认并发从 2 降到 1：避免并发触发 MiniMax 429。
+    # 想要恢复并发：--concurrency 2 或 LLM_JUDGE_CONCURRENCY=2。
+    parser.add_argument(
+        "--concurrency", type=int,
+        default=int(os.environ.get("LLM_JUDGE_CONCURRENCY", "1")),
+        help="judge batch 并发上限（默认 1；env LLM_JUDGE_CONCURRENCY 优先）",
+    )
     parser.add_argument("--limit", type=int, default=0, help="限制 query 数（0=全部）")
     parser.add_argument("--no-judge", action="store_true", help="跳过 LLM judge，用纯 mock")
     args = parser.parse_args()

@@ -2100,3 +2100,56 @@ python -m pytest tests/ -q
 - `pytest tests/ -q` 待确认 ≥ 481 passed（基线）
 - `streamlit run web_app.py` 启动后 sidebar 自动出现 "📊 Ops" 入口
 - 4 个 panel 空数据均显示 "暂无数据"，不抛异常
+
+---
+
+## [M-v4-1 judge 限流] LLM judge 429 retry + 降并发到 1 — mock fallback <3% — 2026-07-28
+
+### 背景
+[M-v4-1 收口] 节记录 50 query 评测中 judge mock fallback = **6/50 (12.0%)**（MiniMax 429 限流；mock 默认 score=3 → relevant，量化 ~1-2pp 正向污染），任务 #2 要求把 mock fallback rate 降到 <3%。
+
+### 改动清单
+
+| 类别 | 改动 | 影响文件 |
+|---|---|---|
+| Judge | `_judge_query_batch` / `judge` 加 429 指数退避（1s/2s/4s/8s/16s，最多 5 次重试，由 `JUDGE_MAX_RETRIES` / `JUDGE_RETRY_BASE_DELAY` 控制）；非 429 异常仅 1 次重试（避免无效循环） | `eval/judge.py` |
+| Judge | 全 retry 失败的 mock fallback `raw_response` 区分 `429_RATE_LIMIT` vs `OTHER_ERROR`，便于事故复盘 | `eval/judge.py` |
+| Judge | 新增 `_is_rate_limit_error(exc)` 工具函数，识别 "429" / "rate limit" / "too many requests" | `eval/judge.py` |
+| 并发 | `judge_batch_per_query` / `judge_batch` 默认并发从 2 降到 1（串行）；可由 `LLM_JUDGE_CONCURRENCY` 环境变量或 `--concurrency` flag 覆盖 | `eval/judge.py`、`eval/run_eval.py` |
+| 评测入口 | `eval/run_eval.py` argparse `--concurrency` 默认值改为读 `LLM_JUDGE_CONCURRENCY` 环境变量（默认 1）；新增 `import os` | `eval/run_eval.py` |
+| 配置 | `.env.example` 追加 3 个开关：`JUDGE_MAX_RETRIES=5` / `JUDGE_RETRY_BASE_DELAY=1.0` / `LLM_JUDGE_CONCURRENCY=1`，注释说明用途 | `.env.example` |
+| 测试 | 新建 `tests/unit/test_eval_judge_429_retry.py` 23 条：retry 触发 / 持续 429 fallback / 成功不重试 / 非 429 单次重试 / backoff 序列 / env 注入 / 并发默认=1 / 并发 env 覆盖 / 单条 judge 429 fallback | 新建 |
+
+### 关键决策
+
+- **串行（concurrency=1）优先于加重试**：MiniMax 在并发 ≥2 时概率性 429；串行是根因治理。retry 是兜底，concurrency=1 让 retry 几乎用不到（30 query 实测 0 次 429）
+- **非 429 只 retry 1 次**：5xx / timeout / network reset 已由 `OpenAICompatibleClient._call_with_retries` 处理过，再叠一层 judge 自己的 retry 是浪费；只让 429 走指数退避
+- **不加 tenacity**：按 CLAUDE.md"不加 429 依赖"指示，用 stdlib `asyncio.sleep` 即可
+- **mock fallback 区分原因**：`raw_response` 含 `429_RATE_LIMIT` 或 `OTHER_ERROR` 前缀，未来统计 mock fallback 真实原因不用再改 schema
+
+### 验收
+
+- `pytest tests/ -q` → **520 passed, 3 skipped**（基线 497 + 新增 23 条）
+- `pytest tests/unit/test_eval_judge_429_retry.py -v` → **23 passed**
+- `python eval/run_eval.py --queries eval/baseline_50_queries.jsonl --limit 30` →
+  - judge mock queries: **0/30 (0.0%)**（原 12% → 0%，超额完成 <3% 目标）
+  - judge API calls: 30（batch per query 1 call each，concurrency=1）
+  - NDCG@10: 0.7270 / Recall@10: 0.6133 / MRR: 0.5517 / Hit Rate: 1.0000 / Failures: 0/30
+  - 结果写到 `data/eval_baseline_20260728T100909Z.json`
+
+### 复现
+
+```bash
+# 默认（concurrency=1 + 5 retry + 1.0s base）
+python eval/run_eval.py --queries eval/baseline_50_queries.jsonl --limit 30
+
+# 调高并发（验证 retry 真生效）
+LLM_JUDGE_CONCURRENCY=6 JUDGE_MAX_RETRIES=3 JUDGE_RETRY_BASE_DELAY=0.5 \
+  python eval/run_eval.py --queries eval/baseline_50_queries.jsonl --limit 30
+```
+
+### 已知边界 & 后续
+
+- **30 query 串行评测 ≈ 5 分钟**：30 LLM call × 平均 ~10s（含 thinking model reasoning）；比 concurrency=2 慢约 1×。换 provider / 切 fast model 可压回 1-2 分钟，本任务不优化
+- **mock fallback 标签化**（`429_RATE_LIMIT` / `OTHER_ERROR`）只在 `_judge_query_batch` 末尾设置；未来 `eval/miss_analysis.py` 可按这个标签分类失败原因（不在本任务范围）
+- **如果未来要切到非 thinking model**（如 `gpt-4o-mini`），单 call 时间可压到 2-3s，concurrency=2 的 mock fallback rate 可能也 <3%，到时候再权衡串行 vs 并发（不在本任务范围）
