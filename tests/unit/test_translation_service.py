@@ -36,6 +36,7 @@ def _create_db(path):
             original_text TEXT,
             language TEXT NOT NULL,
             translated_at TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
             embedding BLOB,
             embedding_dim INTEGER NOT NULL DEFAULT 0
         );

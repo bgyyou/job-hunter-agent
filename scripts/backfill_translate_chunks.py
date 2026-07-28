@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sqlite3
 import sys
 import time
@@ -48,6 +49,9 @@ from services.translation_service import ChunkTranslator, detect_language  # noq
 BGE_DIM = 512
 DEFAULT_BATCH = 50
 DEFAULT_CONCURRENCY = 8
+# M-v4-1 hotfix: 失败重试上限，超出后该 chunk 静默退出避免死循环
+# (MiniMax `new_sensitive` 永久拒 2 条 chunk，每次重跑都撞回同一批)
+DEFAULT_MAX_RETRIES = int(os.getenv("MAX_RETRIES_PER_RECORD", "3"))
 
 
 def _to_blob(vec) -> bytes:
@@ -59,14 +63,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _safe_retry_count(conn: sqlite3.Connection, cid: str) -> int:
+    """读一条 chunk 的 retry_count；不存在返 0。供 _bump_retry_count 内部用。"""
+    row = conn.execute(
+        "SELECT retry_count FROM knowledge_chunks WHERE id = ?", (cid,)
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
 class BackfillRunner:
     """单进程回填。SQLite WAL 模式下并发读，写要分批 commit。"""
 
-    def __init__(self, db_path: str, batch_size: int, concurrency: int, dry_run: bool):
+    def __init__(
+        self,
+        db_path: str,
+        batch_size: int,
+        concurrency: int,
+        dry_run: bool,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+    ):
         self.db_path = db_path
         self.batch_size = batch_size
         self.concurrency = concurrency
         self.dry_run = dry_run
+        self.max_retries = max_retries
         self.translator = ChunkTranslator(concurrency=concurrency)
 
     def _conn(self) -> sqlite3.Connection:
@@ -93,10 +113,26 @@ class BackfillRunner:
                 "SELECT COUNT(*) FROM knowledge_chunks "
                 "WHERE language IN ('en', 'mixed') AND translated_at IS NULL"
             ).fetchone()[0]
+            # retry_count 列可能不存在（migration 016 未跑），graceful fallback：缺列返 0
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
+            if "retry_count" in cols:
+                exhausted = conn.execute(
+                    "SELECT COUNT(*) FROM knowledge_chunks "
+                    "WHERE language IN ('en', 'mixed') AND translated_at IS NULL "
+                    "AND retry_count >= ?",
+                    (self.max_retries,),
+                ).fetchone()[0]
+            else:
+                exhausted = 0
+                logger.warning(
+                    "  knowledge_chunks.retry_count 列不存在 — migration 016 未跑？"
+                    "exhausted 统计按 0 报"
+                )
             return {
                 "total_chunks": total,
                 "by_language": by_lang,
                 "to_translate": untranslated,
+                "retry_exhausted": exhausted,
             }
         finally:
             conn.close()
@@ -120,9 +156,11 @@ class BackfillRunner:
             try:
                 rows = conn.execute(
                     """SELECT id, chunk_text, language FROM knowledge_chunks
-                       WHERE language IN ('en', 'mixed') AND translated_at IS NULL
+                       WHERE language IN ('en', 'mixed')
+                         AND translated_at IS NULL
+                         AND retry_count < ?
                        ORDER BY id LIMIT ?""",
-                    (self.batch_size,),
+                    (self.max_retries, self.batch_size),
                 ).fetchall()
             finally:
                 conn.close()
@@ -157,11 +195,13 @@ class BackfillRunner:
             new_texts: List[str] = []
             new_embs: List[Optional[bytes]] = []
             new_dims: List[int] = []
-            for (orig, zh, err), lang in zip(results, languages):
+            failed_ids: set = set()
+            for (orig, zh, err), lang, cid in zip(results, languages, chunk_ids):
                 if zh is None:
                     new_texts.append(orig)  # 失败：保留原文
                     new_embs.append(None)
                     new_dims.append(0)
+                    failed_ids.add(cid)
                     total_failed += 1
                     logger.warning(f"  translation failed: {err[:80] if err else 'None'}")
                 else:
@@ -181,6 +221,7 @@ class BackfillRunner:
                     except Exception as exc:
                         logger.warning(f"  embed failed: {exc}")
                         new_embs[ti] = None
+                        failed_ids.add(chunk_ids[ti])
                         total_failed += 1
 
             # 4. 写回 DB
@@ -192,6 +233,9 @@ class BackfillRunner:
                 emb_blobs=new_embs,
                 emb_dims=new_dims,
             )
+            # 4b. 递增失败 chunk 的 retry_count（M-v4-1 hotfix 死循环兜底）
+            if failed_ids:
+                self._bump_retry_count(failed_ids)
             total_done += len(rows)
             elapsed = time.time() - batch_t0
             rate = len(rows) / max(elapsed, 0.1)
@@ -261,13 +305,39 @@ class BackfillRunner:
         finally:
             conn.close()
 
+    def _bump_retry_count(self, chunk_ids: set) -> None:
+        """失败 chunk 的 retry_count + 1；达到 max_retries 后下次 SELECT 自动跳过。"""
+        if not chunk_ids:
+            return
+        conn = self._conn()
+        try:
+            conn.executemany(
+                "UPDATE knowledge_chunks SET retry_count = retry_count + 1 WHERE id = ?",
+                [(cid,) for cid in chunk_ids],
+            )
+            conn.commit()
+            # 过滤日志：报告本次撞到上线的（retry_count 达到阈值后被静默跳过的）
+            exhausted_now = [cid for cid in chunk_ids if _safe_retry_count(conn, cid) >= self.max_retries]
+            if exhausted_now:
+                logger.warning(
+                    f"  retry_count 上限已达 (max_retries={self.max_retries})，"
+                    f"本次新增静默 {len(exhausted_now)} 条: {exhausted_now[:3]}..."
+                )
+        finally:
+            conn.close()
+
     def _print_stats(self) -> None:
         s = self.stats()
         logger.info("=== DB 状态 ===")
         logger.info(f"  total chunks: {s['total_chunks']}")
         for lang, n in s["by_language"].items():
             logger.info(f"  language={lang}: {n}")
-        logger.info(f"  to_translate (language IN en/mixed AND translated_at IS NULL): {s['to_translate']}")
+        logger.info(
+            f"  to_translate (language IN en/mixed AND translated_at IS NULL): {s['to_translate']}"
+        )
+        logger.info(
+            f"  retry_exhausted (retry_count >= {self.max_retries}, 静默跳过): {s['retry_exhausted']}"
+        )
 
     def detect_languages(self, batch_size: int = 2000) -> Dict[str, int]:
         """扫描所有 chunk_text，按启发式更新 language 列（单连接 + 大 batch）。
@@ -325,11 +395,14 @@ def main():
     ap.add_argument("--batch-size", type=int, default=DEFAULT_BATCH)
     ap.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
+                    help=f"单 chunk 失败重试上限（也读 MAX_RETRIES_PER_RECORD 环境变量，默认 {DEFAULT_MAX_RETRIES}）")
     ap.add_argument("--detect-only", action="store_true", help="只跑语言检测，不翻译")
     ap.add_argument("--limit", type=int, default=0, help="最多处理 chunks 数（0=全部）")
     args = ap.parse_args()
 
-    runner = BackfillRunner(args.db, args.batch_size, args.concurrency, args.dry_run)
+    runner = BackfillRunner(args.db, args.batch_size, args.concurrency, args.dry_run,
+                            max_retries=args.max_retries)
     if args.dry_run:
         runner._print_stats()
         return
