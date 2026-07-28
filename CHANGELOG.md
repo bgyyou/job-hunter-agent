@@ -2001,3 +2001,67 @@ python -m pytest tests/ -q
 - `pytest tests/ -q` 478 passed / 3 skipped（基线 461，新增 17 条 PG migration 测试）
 - `python scripts/backfill_translate_chunks.py --dry-run --max-retries 1 --db <real_db>` 正常输出：`total chunks: 24608 / to_translate: 2 / retry_exhausted: 0`（migration 016 未跑时降级告警但不抛异常）
 - 已卡死 2 条下次运行第 4 次起 SELECT 不会再被捞
+
+---
+
+## [M-v4-1 MRR 诊断] 反向跌 6.9% 根因 + 修复方案（不实施） — 2026-07-28
+
+### 背景
+[M-v4-1 收口] 节记录翻译 backfill 后指标：NDCG +12.2% ↑ / Recall +34.8% ↑ / **MRR -6.9% ↓** / Hit Rate +28.6% ↑。MRR 跌 = top-1 命中率下降。本节做**根因诊断 + 写修复方案**，不实施修复（修复留给 P1-模块 1/2/4）。
+
+完整报告：`docs/mrr_diagnosis_20260728.md`。复现数据：`data/diag_full_20260728T082712Z.jsonl` (50 query × 10 candidate 全量落盘)。
+
+### 量化两因素（实测）
+
+| Run | judge | mock | NDCG | Recall | MRR | Hit |
+|---|---|---|---|---|---|---|
+| T4 前 backfill | agnes | 8/50 | 0.5379 | 0.3620 | 0.4601 | 0.7000 |
+| T5 backfill 后 | MiniMax | 6/50 | 0.6033 | 0.4880 | 0.4285 | 0.9000 |
+| T6 复现（本次） | MiniMax | 0/50 | **0.6460** | **0.5380** | **0.4419** | **0.9600** |
+
+- **A. mock fallback 影响**：T5 - T6 = **-0.0134 abs = -3.0% rel** = 占 6.9% 总跌的 **42%**
+- **B. 翻译 backfill 影响**：T6 - T4 = **-0.0182 abs = -4.0% rel** = 占 6.9% 总跌的 **58%**（含 judge model 变更 noise：agnes→MiniMax）
+- 100 次随机 6-mock 子集模拟：MRR 范围 [0.3654, 0.4665]，0.4285 落在区间内 → 假设成立
+
+### 关键发现（retrieval 阶段，不依赖 LLM judge）
+
+- **top-1 == origin_jd: 2/50 = 4%**（极低，retrieval 自己没把 origin 排到第一）
+- **top-1 100% 都是 jobsdb_batch**（中文 query 召回英文 JD）
+- **top-1 cross-source: 28/50 = 56%**
+- **top-1 cross-source & score=1（错位噪声）: 21/50 = 42%**
+- 中文 query (28 条) top-1 100% cross-source，但 MRR (0.4254) ≈ 英文 query MRR (0.4255) → 翻译 backfill 让**跨语言检索性能对等**
+- 同源 top-1 但不是 origin (15/22) → 同 title 重名 JD 抢占 origin（这是 retrieval 本身问题，跟 cross-lang 独立）
+
+### 修复方案（前 3 优先级）
+
+| 序 | 任务 | 范围 | 预期 MRR 涨 | 成本 | 风险 |
+|---|---|---|---|---|---|
+| **#1** | **B-1 跨语言信号软降权**（0.7/0.85/0.9 三组 A/B） | `services/retrieval_service.py` 1 函数 3 行 | **+0.05~+0.10** | 1h | 低 |
+| **#2** | A. mock fallback 隔离（#10 任务） | `eval/judge.py` 5-10 行 | +0.0134 | 0.5h | 极低 |
+| **#3** | B-3 reranker industry/position 对齐 prompt | `tools/reranker.py` 1 prompt 改 | +0.02~+0.05 | 2-3h | 中 |
+
+**建议执行顺序**：B-1 → A-isolation → B-3，每步用本次 50 query 评测 + golden 30 query 评测验证。
+
+### 本次不修的项（标 TODO）
+
+- [ ] **B-2 cross-lang min_similarity 硬阈值**：等 B-1 A/B 完再决定
+- [ ] **B-4 query 改写**：P1-模块 1 后期
+- [ ] **A. mock fallback rate 降到 <3%**（#10 任务范围）
+- [ ] **judge model 切换的 noise 量化**（用 T6 judge 重跑 backfill 前 retrieval，~3.5min × 1 次，cache 命中 0 token）
+- [ ] **origin_jd top-10 召回率专项**（retrieval 阶段问题，跟 cross-lang 独立；当前 top-10 only 16% 有 origin）
+
+### 诊断产物
+
+- `docs/mrr_diagnosis_20260728.md` — 完整诊断报告（7 节）
+- `tools/diag_dump_candidates.py` — retrieval-only 50 query 落盘工具
+- `tools/diag_full_eval.py` — retrieval + judge 全量 50 query 评测 + 落盘（cache 命中 0 token）
+- `tools/diag_mrr_drop.py` — 模拟 mock fallback / cross-source drop 的 MRR 重算工具
+- `data/diag_full_20260728T082712Z.jsonl` — 50 query × 10 candidate 完整 judge scores + 检索元数据
+- `data/diag_candidates_20260728T082216Z.jsonl` — retrieval-only candidates 落盘
+- `data/eval_baseline_20260728T081551Z.json` — T6 原始 baseline json
+
+### 验收
+- `docs/mrr_diagnosis_20260728.md` 存在，含根因 A/B 各自量化占比 + 推荐修复优先级
+- 报告里"实测 mock fallback 占 42% 的 MRR 跌、cross-lang 占 58%" — 数字来自 T5 vs T6 vs T4 三次 baseline 对比
+- `pytest tests/ -q` 481 passed（基线 481，无业务代码改动，no-op）
+- 业务代码（`services/retrieval_service.py` / `tools/reranker.py`）零改动；修复留给后续任务
