@@ -109,6 +109,44 @@ def _parse_score_array(raw: str, n: int) -> list[int]:
     return [3] * n
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """识别 429 / rate limit 类异常，用于触发更长退避。"""
+    err_text = str(exc).lower()
+    return (
+        "429" in err_text
+        or "rate limit" in err_text
+        or "too many requests" in err_text
+    )
+
+
+def _get_retry_config() -> tuple[int, float]:
+    """读取 judge retry 配置（stdlib only，无新增依赖）。
+
+    - JUDGE_MAX_RETRIES：429 时最大重试次数（默认 5），非 429 一律 1 次。
+    - JUDGE_RETRY_BASE_DELAY：429 指数退避基数秒数（默认 1.0）。
+    """
+    try:
+        n = int(os.environ.get("JUDGE_MAX_RETRIES", "5"))
+    except ValueError:
+        n = 5
+    try:
+        base = float(os.environ.get("JUDGE_RETRY_BASE_DELAY", "1.0"))
+    except ValueError:
+        base = 1.0
+    return max(0, n), max(0.0, base)
+
+
+def _get_default_concurrency() -> int:
+    """读取 judge batch 并发上限（默认 1，串行避开限流）。
+
+    环境变量 LLM_JUDGE_CONCURRENCY；非法值回退到 1。
+    """
+    try:
+        return max(1, int(os.environ.get("LLM_JUDGE_CONCURRENCY", "1")))
+    except ValueError:
+        return 1
+
+
 def _mock_judge(query: str, jd_id: Optional[str], title: str, text: str) -> JudgeVerdict:
     """Mock judge：基于 query-candidate 词重叠打分。
 
@@ -162,7 +200,11 @@ class LLMJudge:
 
     async def judge(self, query: str, jd_id: Optional[str], title: str, text: str,
                     retries: int = 2) -> JudgeVerdict:
-        """Single (query, candidate) → JudgeVerdict. Mock fallback on API failure."""
+        """Single (query, candidate) → JudgeVerdict. Mock fallback on API failure.
+
+        429 重试策略由环境变量 JUDGE_MAX_RETRIES / JUDGE_RETRY_BASE_DELAY 控制；
+        非 429 异常只重试 1 次（避免无效循环拉长单条 judge 时间）。
+        """
         client = self._get_client()
         if client is None:
             return _mock_judge(query, jd_id, title, text)
@@ -172,8 +214,11 @@ class LLMJudge:
             query=query,
             candidate=f"Title: {title}\nSnippet: {(text or '')[:400]}",
         )
+        max_rate_retries, base_delay = _get_retry_config()
         last_err: Optional[Exception] = None
-        for attempt in range(retries + 1):
+        attempt = 0
+        # 最多 max_rate_retries 次 429 重试 + 1 次非 429 重试；先放 429 retry loop
+        while True:
             try:
                 resp = await client.analyze(
                     [LLMMessage(role="user", content=prompt)],
@@ -189,22 +234,43 @@ class LLMJudge:
                 )
             except Exception as exc:
                 last_err = exc
-                err_text = str(exc)
-                if "429" in err_text or "rate limit" in err_text.lower():
-                    backoff = 2.0 * (attempt + 1)
-                else:
-                    backoff = 1.0 * (attempt + 1)
-                if attempt < retries:
+                is_429 = _is_rate_limit_error(exc)
+                # 429：指数退避 1s/2s/4s/8s/16s（最多 max_rate_retries 次）
+                # 其他：仅 1 次重试
+                if is_429:
+                    if attempt >= max_rate_retries:
+                        break
+                    backoff = base_delay * (2 ** attempt)
+                    print(
+                        f"[judge] 429 rate limit, retry {attempt + 1}/{max_rate_retries} "
+                        f"in {backoff:.1f}s (query={query[:30]}...): {str(exc)[:80]}"
+                    )
+                    attempt += 1
                     await asyncio.sleep(backoff)
                     continue
-                break
+                else:
+                    if attempt >= 1:
+                        break
+                    print(
+                        f"[judge] non-429 error, retry 1/1 in 0.5s "
+                        f"(query={query[:30]}...): {str(exc)[:80]}"
+                    )
+                    attempt += 1
+                    await asyncio.sleep(0.5)
+                    continue
+        # 全 retry 失败 → mock fallback（区分 429 vs other）
+        kind = "429_RATE_LIMIT" if last_err and _is_rate_limit_error(last_err) else "OTHER_ERROR"
         v = _mock_judge(query, jd_id, title, text)
-        v.raw_response = f"FALLBACK_MOCK (err: {str(last_err)[:80]})"
+        v.raw_response = f"FALLBACK_MOCK ({kind}, err: {str(last_err)[:80]})"
         return v
 
     async def _judge_query_batch(self, query: dict, cands: list[dict],
                                   retries: int = 2) -> list[JudgeVerdict]:
-        """One LLM call per query, returns N scores for N candidates."""
+        """One LLM call per query, returns N scores for N candidates.
+
+        429 重试策略由环境变量 JUDGE_MAX_RETRIES / JUDGE_RETRY_BASE_DELAY 控制；
+        非 429 异常只重试 1 次（避免无效循环拉长单条 judge 时间）。
+        """
         if not cands:
             return []
         client = self._get_client()
@@ -224,8 +290,10 @@ class LLMJudge:
             query=query["query"], candidates_block=candidates_block,
         )
 
+        max_rate_retries, base_delay = _get_retry_config()
         last_err: Optional[Exception] = None
-        for attempt in range(retries + 1):
+        attempt = 0
+        while True:
             try:
                 resp = await client.analyze(
                     [LLMMessage(role="user", content=prompt)],
@@ -248,21 +316,35 @@ class LLMJudge:
                 return verdicts
             except Exception as exc:
                 last_err = exc
-                err_text = str(exc)
-                if "429" in err_text or "rate limit" in err_text.lower():
-                    backoff = 3.0 * (attempt + 1)
-                else:
-                    backoff = 1.5 * (attempt + 1)
-                if attempt < retries:
+                is_429 = _is_rate_limit_error(exc)
+                if is_429:
+                    if attempt >= max_rate_retries:
+                        break
+                    backoff = base_delay * (2 ** attempt)
+                    print(
+                        f"[judge_batch] 429 rate limit, retry {attempt + 1}/{max_rate_retries} "
+                        f"in {backoff:.1f}s (qid={query.get('query_id', '?')}): {str(exc)[:80]}"
+                    )
+                    attempt += 1
                     await asyncio.sleep(backoff)
                     continue
-                break
-        # 全 retry 失败 → mock fallback for all candidates
+                else:
+                    if attempt >= 1:
+                        break
+                    print(
+                        f"[judge_batch] non-429 error, retry 1/1 in 0.5s "
+                        f"(qid={query.get('query_id', '?')}): {str(exc)[:80]}"
+                    )
+                    attempt += 1
+                    await asyncio.sleep(0.5)
+                    continue
+        # 全 retry 失败 → mock fallback for all candidates（区分 429 vs other）
+        kind = "429_RATE_LIMIT" if last_err and _is_rate_limit_error(last_err) else "OTHER_ERROR"
         err_short = str(last_err)[:80]
         verdicts = []
         for c in cands:
             v = _mock_judge(query["query"], c.get("jd_id"), c.get("title", ""), c.get("text", ""))
-            v.raw_response = f"FALLBACK_MOCK (err: {err_short})"
+            v.raw_response = f"FALLBACK_MOCK ({kind}, err: {err_short})"
             verdicts.append(v)
         return verdicts
 
@@ -270,7 +352,7 @@ class LLMJudge:
 async def judge_batch_per_query(
     queries: list[dict],
     candidates_per_query: list[list[dict]],
-    concurrency: int = 2,
+    concurrency: Optional[int] = None,
 ) -> list[list[JudgeVerdict]]:
     """Batch judge: ask LLM once per query with all candidates → N scores.
 
@@ -278,7 +360,12 @@ async def judge_batch_per_query(
     candidates_per_query[i] = [{jd_id, title, text}, ...]
 
     Returns verdicts_per_query[i] = [JudgeVerdict for each candidate in order].
+
+    concurrency：未传时从 LLM_JUDGE_CONCURRENCY 环境变量读取，默认 1（串行）。
+    默认串行是 [M-v4-1 judge 限流] 节决策：避免并发触发 MiniMax 429。
     """
+    if concurrency is None:
+        concurrency = _get_default_concurrency()
     judge = LLMJudge()
     sem = asyncio.Semaphore(concurrency)
 
@@ -292,11 +379,15 @@ async def judge_batch_per_query(
 
 
 # 保留向后兼容的 judge_batch（per-candidate 旧接口）
-async def judge_batch(items: list[dict], concurrency: int = 2) -> list[JudgeVerdict]:
+async def judge_batch(items: list[dict], concurrency: Optional[int] = None) -> list[JudgeVerdict]:
     """Per-candidate judge（向后兼容，新代码用 judge_batch_per_query）。
 
     items = [{query, jd_id, title, text}, ...]
+
+    concurrency：未传时从 LLM_JUDGE_CONCURRENCY 环境变量读取，默认 1。
     """
+    if concurrency is None:
+        concurrency = _get_default_concurrency()
     judge = LLMJudge()
     sem = asyncio.Semaphore(concurrency)
 
