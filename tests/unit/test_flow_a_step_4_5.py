@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import importlib
+page_mod_1 = importlib.import_module('pages.05_💬_Flow_A_Step3')
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,7 +41,7 @@ def web_app_mod():
 class TestEstimateResume:
     def test_returns_page_estimate(self, web_app_mod):
         from services.one_page_estimator import PageEstimate
-        est = web_app_mod._estimate_resume({
+        est = page_mod_1._estimate_resume({
             "name": "X", "phone": "1", "email": "x@x.com",
             "experience": [{"company": "A", "title": "B",
                             "description": "C" * 100, "achievements": ["D"]}],
@@ -48,7 +50,7 @@ class TestEstimateResume:
 
     def test_no_crash_on_empty_resume(self, web_app_mod):
         from services.one_page_estimator import PageEstimate
-        est = web_app_mod._estimate_resume({})
+        est = page_mod_1._estimate_resume({})
         assert isinstance(est, PageEstimate)
 
     def test_fallback_on_exception(self, web_app_mod, monkeypatch):
@@ -60,7 +62,7 @@ class TestEstimateResume:
             raise RuntimeError("mock error")
 
         monkeypatch.setattr(ope.OnePageEstimator, "estimate", _boom)
-        est = web_app_mod._estimate_resume({})
+        est = page_mod_1._estimate_resume({})
         # fallback 的 PageEstimate 有 suggestions 含错误信息
         assert est.overflow is False
         assert any("估算失败" in s for s in est.suggestions)
@@ -83,7 +85,7 @@ class TestRenderOnePageEstimate:
             total_mm=120.0, capacity_mm=265.0, total_lines=25, capacity_lines=55,
             overflow=False, overflow_segments=[], suggestions=[], segment_lines={},
         )
-        web_app_mod._render_one_page_estimate(est)
+        page_mod_1._render_one_page_estimate(est)
 
     def test_overflow_shows_warning(self, web_app_mod, monkeypatch):
         from services.one_page_estimator import PageEstimate
@@ -100,7 +102,7 @@ class TestRenderOnePageEstimate:
             suggestions=["精简描述", "删除最早一段"],
             segment_lines={"experience": 40},
         )
-        web_app_mod._render_one_page_estimate(est)
+        page_mod_1._render_one_page_estimate(est)
 
 
 # ============================================================
@@ -129,7 +131,7 @@ class TestHandleExport:
         monkeypatch.setattr(dg, "DocumentGenerator", lambda: fake_gen)
 
         # 不抛异常
-        web_app_mod._handle_export(
+        page_mod_1._handle_export(
             "docx",
             {"name": "张三"},
             {"company": "字节", "title": "AI 产品经理"},
@@ -161,7 +163,7 @@ class TestHandleExport:
                 for i in range(5)
             ],
         }
-        web_app_mod._handle_export("docx", overflow_resume, {}, "conservative")
+        page_mod_1._handle_export("docx", overflow_resume, {}, "conservative")
         # st.error 被调 → 不抛
 
 
@@ -195,7 +197,7 @@ class TestOfferHtmlFallback:
                   "experience": [{"company": "字节", "title": "PM",
                                   "description": "做 RAG", "achievements": ["DAU 1000"]}]}
         jd = {"title": "AI 产品经理", "company": "字节跳动"}
-        web_app_mod._offer_html_fallback(resume, jd, "conservative", error="chromium not found")
+        page_mod_1._offer_html_fallback(resume, jd, "conservative", error="chromium not found")
         # 不抛异常，st.download_button / st.warning 都被调过即可
 
     def test_filename_uses_name_position_company(self, web_app_mod, monkeypatch):
@@ -216,7 +218,7 @@ class TestOfferHtmlFallback:
 
         resume = {"name": "李四", "phone": "1", "email": "l@l.com"}
         jd = {"title": "数据分析师", "company": "Acme"}
-        web_app_mod._offer_html_fallback(resume, jd, "modern", error="playwright missing")
+        page_mod_1._offer_html_fallback(resume, jd, "modern", error="playwright missing")
 
         assert captured["file_name"] is not None
         assert captured["file_name"].endswith(".html")
@@ -234,7 +236,7 @@ class TestOfferHtmlFallback:
 
         resume = {"name": "王五", "phone": "1", "email": "w@w.com"}
         # jd=None 不抛
-        web_app_mod._offer_html_fallback(resume, None, "conservative", error="x")
+        page_mod_1._offer_html_fallback(resume, None, "conservative", error="x")
 
     def test_html_render_exception_falls_back_to_error(self, web_app_mod, monkeypatch):
         """_render_html 也失败时 → st.error，不抛。"""
@@ -254,7 +256,7 @@ class TestOfferHtmlFallback:
         fake_gen._render_html.side_effect = RuntimeError("html boom")
         monkeypatch.setattr(dg, "DocumentGenerator", lambda: fake_gen)
 
-        web_app_mod._offer_html_fallback(
+        page_mod_1._offer_html_fallback(
             {"name": "X"}, {"title": "T", "company": "C"}, "conservative", error="pdf boom"
         )
         assert any("HTML 渲染也失败" in e for e in captured["errors"])
@@ -274,11 +276,11 @@ class TestOfferHtmlFallback:
         monkeypatch.setattr(web_app_mod.st, "info", lambda *a, **kw: None)
 
         # 让 _offer_html_fallback 标记被调
-        original_offer = web_app_mod._offer_html_fallback
+        original_offer = page_mod_1._offer_html_fallback
         def _spy_offer(resume, jd, template, error=None):
             captured["called"] = True
             return original_offer(resume, jd, template, error)
-        monkeypatch.setattr(web_app_mod, "_offer_html_fallback", _spy_offer)
+        monkeypatch.setattr(page_mod_1, "_offer_html_fallback", _spy_offer)
 
         # 让 generate_pdf 抛异常
         from services import document_generator as dg
@@ -290,7 +292,7 @@ class TestOfferHtmlFallback:
         fake_gen._render_html.return_value = "<!doctype html><html><body>简历</body></html>"
         monkeypatch.setattr(dg, "DocumentGenerator", lambda: fake_gen)
 
-        web_app_mod._handle_export(
+        page_mod_1._handle_export(
             "pdf",
             {"name": "张三", "phone": "1", "email": "z@z.com"},
             {"title": "AI PM", "company": "字节"},

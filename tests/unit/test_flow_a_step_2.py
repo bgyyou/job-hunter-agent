@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import importlib
 
+page_mod_1 = importlib.import_module('pages.04_📝_Flow_A_Step2')
+
 import pytest
 
 
@@ -44,7 +46,7 @@ class TestEnsureStep2Form:
         """首次进入 Step 2 → 1 段教育 + 1 段工作 + 0 段项目。"""
         state = _FakeSession()
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
-        form = web_app_mod._ensure_step2_form()
+        form = page_mod_1._ensure_step2_form()
         assert len(form["education"]) == 1
         assert len(form["work"]) == 1
         assert len(form["projects"]) == 0
@@ -75,7 +77,7 @@ class TestEnsureStep2Form:
             "languages": ["中文", "英语"],
         }
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
-        form = web_app_mod._ensure_step2_form()
+        form = page_mod_1._ensure_step2_form()
         assert form["basic"]["name"] == "张三"
         assert form["basic"]["phone"] == "13800138000"
         assert form["basic"]["email"] == "z@z.com"
@@ -91,7 +93,7 @@ class TestEnsureStep2Form:
         state = _FakeSession()
         state["fa_step2_form"] = {"basic": {"name": "已存在"}, "_marker": True}
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
-        form = web_app_mod._ensure_step2_form()
+        form = page_mod_1._ensure_step2_form()
         assert form["basic"]["name"] == "已存在"
         assert form["_marker"] is True
 
@@ -127,39 +129,39 @@ class TestValidateStep2Form:
     def test_missing_name(self, web_app_mod):
         form = self._form()
         form["basic"]["name"] = ""
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err and "姓名" in err
 
     def test_missing_phone_and_email(self, web_app_mod):
         form = self._form()
         form["basic"]["phone"] = ""
         form["basic"]["email"] = ""
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err and ("手机" in err or "邮箱" in err)
 
     def test_missing_edu_school(self, web_app_mod):
         form = self._form(edu_school="")
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err and "教育" in err
 
     def test_missing_edu_degree(self, web_app_mod):
         form = self._form(edu_degree="")
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err and "教育" in err
 
     def test_missing_work_company(self, web_app_mod):
         form = self._form(w_company="")
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err and "工作" in err
 
     def test_missing_work_title(self, web_app_mod):
         form = self._form(w_title="")
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err and "工作" in err
 
     def test_valid_form_passes(self, web_app_mod):
         form = self._form()
-        err = web_app_mod._validate_step2_form(form)
+        err = page_mod_1._validate_step2_form(form)
         assert err is None
 
 
@@ -178,7 +180,7 @@ class TestStep2FormToResume:
             "skills_text": "", "certifications_text": "", "languages_text": "",
             "portfolio": "",
         }
-        r = web_app_mod.step2_form_to_resume(form)
+        r = page_mod_1.step2_form_to_resume(form)
         assert r["name"] == "张三"
         assert r["phone"] == "13800138000"
         assert r["email"] == "z@z.com"
@@ -196,7 +198,7 @@ class TestStep2FormToResume:
             "skills_text": "", "certifications_text": "", "languages_text": "",
             "portfolio": "",
         }
-        r = web_app_mod.step2_form_to_resume(form)
+        r = page_mod_1.step2_form_to_resume(form)
         assert len(r["experience"]) == 1
         assert r["experience"][0]["achievements"] == [
             "促成 200 单成交", "GMV 120 万", "团队规模 3→10",
@@ -211,7 +213,7 @@ class TestStep2FormToResume:
             "languages_text": "中文, 英语",
             "portfolio": "github.com/x",
         }
-        r = web_app_mod.step2_form_to_resume(form)
+        r = page_mod_1.step2_form_to_resume(form)
         assert r["skills"] == ["Python", "LLM", "RAG", "SQL"]
         assert r["certifications"] == ["PMP", "AWS"]
         assert r["languages"] == ["中文", "英语"]
@@ -228,7 +230,7 @@ class TestStep2FormToResume:
             "skills_text": "", "certifications_text": "", "languages_text": "",
             "portfolio": "",
         }
-        r = web_app_mod.step2_form_to_resume(form)
+        r = page_mod_1.step2_form_to_resume(form)
         assert len(r["projects"]) == 1
         assert r["projects"][0]["name"] == "AI Agent"
         assert r["projects"][0]["achievements"] == ["达成 1000 DAU"]
@@ -240,7 +242,7 @@ class TestStep2FormToResume:
             "skills_text": "", "certifications_text": "", "languages_text": "",
             "portfolio": "",
         }
-        r = web_app_mod.step2_form_to_resume(form)
+        r = page_mod_1.step2_form_to_resume(form)
         assert r["experience"] == []
         assert r["projects"] == []
         assert r["education"] == []
