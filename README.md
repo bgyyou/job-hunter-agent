@@ -134,9 +134,22 @@ python crawler/run_crawler.py --site liepin --keyword "AI产品经理" --limit 1
 ## 测试 & 治理
 
 ```bash
-pytest tests/ -v --cov=database --cov=tools/embedder --cov=tools/chunker
-# 期望：35/35 pass，repository/embedder/chunker 覆盖率 ≥60%
+pytest tests/ --cov=database --cov=services --cov=agents --cov=tools --cov=crawler
+# 基线：461 passed / 3 skipped（共 464 collected），耗时约 65s
+# 测试分层：tests/unit + tests/integration 两层
 ```
+
+**各模块覆盖率（实测）**：
+
+| 模块 | 覆盖率 | 备注 |
+|------|------|------|
+| `database/` | 67% | sqlite_backend 82%，postgres_backend 27%（仅本地可测），classifier 89% |
+| `services/` | 82% | 业务核心，多数模块 80%+，translation_service 56% |
+| `agents/` | 16% | resume_flow_a 74%，其余子 agent 多数 0%（依赖 LLM 端到端调用） |
+| `tools/` | 25% | chunker 100% / embedder 81% / llm 77% / parser 24%；scraper 子目录多数 0% 因依赖真实浏览器 |
+| `crawler/` | 0% | 全部依赖真实站点，单元测试覆盖；通过 `tools/scraper/` 间接覆盖部分 |
+
+> 上表数字按模块独立运行 `pytest tests/ --cov=<module> --cov-report=term` 得到（覆盖率工具默认按 --cov 路径分别汇总）。完整逐文件清单：跑 `pytest tests/ --cov=database --cov=services --cov=agents --cov=tools --cov=crawler --cov-report=term-missing`。
 
 - 入口收敛：根目录只剩 `web_app.py` + `run_web.bat`，老脚本在 `scripts/legacy/`
 - 日志轮转：loguru 20MB / 7 天，写到 `logs/`
