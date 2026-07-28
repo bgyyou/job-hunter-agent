@@ -98,11 +98,14 @@ pearson_r, _ = pearsonr(golden_scores, llm_scores)
 ## 5. 实施步骤
 
 1. ✅ **子任务 1 跑 baseline**：LLM judge 已有分数
-2. ⏳ **抽样脚本生成候选**：`python eval/sample_golden.py` 输出 `eval/golden_candidates.jsonl`（50 条待标）
-3. ⏳ **人工标注**：你按 `eval/annotation_guide.md` 给每个候选打 1-5 分
-4. ⏳ **标注后写入**：`eval/golden.jsonl`（最终带分数的）
-5. ⏳ **跑校准脚本**：`python eval/calibrate_judge.py` 算 Spearman / Pearson
-6. ⏳ **CI 接入**：相关系数 < 0.8 fail
+2. ✅ **抽样脚本生成候选**：`python eval/dump_golden_candidates.py` 输出 `eval/golden_candidates.jsonl`（50 条候选）
+3. ✅ **抽 30 条 golden 骨架**：`python scripts/extract_golden_30.py` → `eval/golden_30_to_annotate.jsonl`
+4. ✅ **PRELIMINARY 标签占位**：`python scripts/build_golden_30_preliminary.py` → `eval/golden_30_preliminary.jsonl`
+   - **PRELIMINARY 标签**：LLM judge score≥3 二值化为 1，是占位标，**不是真 golden**，待人工按 `annotation_guide.md` 覆盖
+5. ⏳ **人工标注**：按 `eval/annotation_guide.md` 给 `golden_30_to_annotate.jsonl` 每个候选打 1-5 分
+6. ✅ **Spearman 验证**：`python scripts/verify_golden_spearman.py` → ρ + 报告
+   - 校验 LLM judge NDCG@10 vs PRELIMINARY NDCG@10 的一致性；ρ ≥ 0.8 健康门槛
+7. ⏳ **CI 接入**：相关系数 < 0.8 fail
 
 ---
 
@@ -125,11 +128,17 @@ pearson_r, _ = pearsonr(golden_scores, llm_scores)
 
 - `eval/README.md`（本文档）
 - `eval/queries.jsonl`（baseline 200+ query）
-- `eval/golden_candidates.jsonl`（抽样候选，待标）
+- `eval/golden_candidates.jsonl`（抽样候选，待标；50 条）
+- `eval/golden_30_to_annotate.jsonl`（30 条骨架，待人工标 1-5 分）
+- `eval/golden_30_preliminary.jsonl`（30 条 PRELIMINARY 二值标签，占位标）
 - `eval/golden.jsonl`（最终带分数）
 - `eval/judge.py`（LLM-as-judge）
-- `eval/sample_golden.py`（抽样脚本）
-- `eval/calibrate_judge.py`（校准脚本）
+- `eval/dump_golden_candidates.py`（50 条候选抽样）
+- `eval/sample_golden.py`（旧抽样脚本，保留）
+- `scripts/extract_golden_30.py`（30 条骨架抽取）
+- `scripts/build_golden_30_preliminary.py`（PRELIMINARY 标签生成）
+- `scripts/verify_golden_spearman.py`（Spearman 验证）
+- `tests/unit/test_verify_golden_spearman.py`（Spearman 单测）
 - `eval/annotation_guide.md`（标注指引）
 
 ---
