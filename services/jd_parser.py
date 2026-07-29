@@ -4,13 +4,19 @@
 
 - TextJDParser:    粘贴文本 + 关键词 + LLM 抽结构（LLM 失败降级到关键词）
 - ImageJDParser:   PaddleOCR + LLM 抽结构（强制 needs_user_review=True）
-- RAGJDRetriever:  从 rag_industry_function 库调真实 JD 样本（数据待补充）
+- RAGJDRetriever:  从 knowledge_chunks 走 Retriever 语义检索（v4-2 fix）
 - JDParserRouter:  按 source 路由
 
 设计原则：
 - 所有 parser 返回 StructuredJD（jd_id=None，待用户确认后入库）
 - ImageJDParser 强制 needs_user_review=True（OCR 不可信，必须用户校对）
 - LLM 失败时降级到关键词 + 行号定位（兜底）
+
+设计变更（2026-07-29, RAG 0 召回修复）：
+- 原 M-rebuild-1 设计：从 rag_industry_function 表查"行业×职能×级别"预填样本
+- 现实：rag_industry_function 仅 1 行（user_contributed），永远是 0 召回
+- 新设计：直接走 Retriever 语义检索，从 24k+ chunks 拉真结果
+- rag_industry_function 表暂保留为 dead schema，不删（避免破坏 schema_version）
 """
 
 from __future__ import annotations
@@ -291,19 +297,25 @@ class ImageJDParser:
 
 
 class RAGJDRetriever:
-    """RAG 库检索：从 rag_industry_function 调真实 JD 样本（数据待补充）。"""
+    """RAG 库检索：从 knowledge_chunks 走 Retriever 语义检索合成 JD。
+
+    v4-2 修复（2026-07-29）：原设计查 rag_industry_function 表（仅 1 行 → 永远 0 召回）。
+    现改走 Retriever，从 24k+ chunks 拉 top-K 召回结果，按 chunk_type 拆出
+    responsibilities / requirements，组装成 StructuredJD。
+    """
 
     def __init__(self, db: Optional[Any] = None):
         self.db = db
 
     async def parse(self, query: Dict[str, str]) -> StructuredJD:
-        """按 (industry, function, level) 调 RAG 库。
+        """按 (industry, function, level, position) 走 Retriever 语义检索。
 
-        query: ``{"industry": "...", "function": "...", "level": "..."}``
+        query: ``{"industry": "...", "function": "...", "level": "...", "position": "..."}``
         """
         industry = query.get("industry", "")
         function = query.get("function", "")
         level = query.get("level")
+        position = query.get("position", "")
 
         if not industry or not function:
             return StructuredJD(
@@ -319,45 +331,95 @@ class RAGJDRetriever:
                 parse_notes=["RAG 数据库未配置（db=None）"],
             )
 
-        rows = self.db.list_rag_by_industry_function(
-            industry, function, level=level, limit=5
-        )
-        if not rows:
+        # 拼接 query：position 是必填项（页面已强制选择），industry 是软加权信号
+        search_query = f"{position} {industry}".strip()
+        try:
+            from tools.retriever import Retriever
+            retriever = Retriever(db=self.db)
+            # 不用 level / filter_position：classifier 覆盖率 0.2%，硬过滤会 0 命中
+            chunks = retriever.retrieve(
+                query=search_query,
+                top_k=10,
+                min_similarity=0.4,
+                boost_industry=industry or None,
+            )
+        except Exception as exc:
+            logger.warning(f"RAG retrieval failed: {exc}")
+            return StructuredJD(
+                source="rag",
+                industry=industry,
+                function=function,
+                level=level,
+                parse_notes=[f"RAG 检索失败：{exc}"],
+            )
+
+        if not chunks:
             return StructuredJD(
                 source="rag",
                 industry=industry,
                 function=function,
                 level=level,
                 parse_notes=[
-                    f"RAG 库暂无 ({industry}/{function}/{level}) 数据"
-                    "（数据渠道待定，见 update_plan.md §5.3）"
+                    f"RAG 语义检索无命中（query='{search_query}'）"
+                    "—— 请尝试 Text 或 Image 路径"
                 ],
             )
 
-        first = rows[0]
-        samples = first.get("sample_jds") or []
-        if not samples:
-            return StructuredJD(
-                source="rag",
-                industry=industry,
-                function=function,
-                level=level,
-                parse_notes=[
-                    f"RAG 库 ({industry}/{function}/{level}) 无 sample_jds 数据"
-                ],
-            )
-        sample = samples[0]
+        responsibilities = [
+            c["chunk_text"] for c in chunks if c.get("chunk_type") == "responsibility"
+        ]
+        requirements = [
+            c["chunk_text"] for c in chunks if c.get("chunk_type") == "requirement"
+        ]
+        # 其他 chunk_type（overview / nice_to_have / full）也拼进 raw_text
+        other_texts = [
+            c["chunk_text"]
+            for c in chunks
+            if c.get("chunk_type") not in ("responsibility", "requirement")
+            and c.get("chunk_text")
+        ]
+        raw_text = "\n".join(
+            [t for t in (responsibilities + requirements + other_texts) if t]
+        )
+
+        # 统计去重 jd_id 数（覆盖全部 chunks，不依赖 get_jd 是否成功）
+        seen_jd_ids: set = {
+            (c.get("metadata") or {}).get("jd_id")
+            for c in chunks
+            if (c.get("metadata") or {}).get("jd_id")
+        }
+        # 尝试从 jds 表补 title / company（取首个有数据的 JD）
+        title: Optional[str] = None
+        company: Optional[str] = None
+        for c in chunks:
+            jd_id = (c.get("metadata") or {}).get("jd_id")
+            if jd_id:
+                try:
+                    row = self.db.get_jd(jd_id)
+                    if row:
+                        title = title or row.get("title")
+                        company = company or row.get("company")
+                        if title and company:
+                            break
+                except Exception:
+                    pass
+
+        unique_jds = len(seen_jd_ids)
         return StructuredJD(
             source="rag",
-            raw_text=json.dumps(sample, ensure_ascii=False),
-            company=sample.get("company"),
-            title=sample.get("title"),
+            raw_text=raw_text,
+            title=title,
+            company=company,
             industry=industry,
             function=function,
             level=level,
-            responsibilities=sample.get("responsibilities", []),
-            requirements=sample.get("requirements", []),
-            parse_notes=[f"RAG 库查到 {len(rows)} 条候选，取第一条作为基础"],
+            responsibilities=responsibilities,
+            requirements=requirements,
+            parse_notes=[
+                f"RAG 语义检索（query='{search_query}'）"
+                f"召回 {len(chunks)} 个 chunk，来自 {unique_jds} 个 JD",
+                f"responsibilities={len(responsibilities)}, requirements={len(requirements)}",
+            ],
         )
 
 

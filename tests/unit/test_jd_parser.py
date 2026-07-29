@@ -51,7 +51,7 @@ class FakeLLMClient:
 
 
 class FakeDB:
-    """测试用 fake db（模拟 list_rag_by_industry_function 返回 RAG 样本）。"""
+    """测试用 fake db（v4-2 修复后仍保留，供 schema_v3 测试使用）。"""
 
     def __init__(self, rows=None):
         self.rows = rows or [
@@ -76,6 +76,18 @@ class FakeDB:
 
     def list_rag_by_industry_function(self, industry, function, level=None, limit=50):
         return [r for r in self.rows if r["industry"] == industry and r["function"] == function]
+
+
+class FakeRetriever:
+    """v4-2 修复后：mock Retriever 走 RAGJDRetriever 的语义检索路径。"""
+
+    def __init__(self, chunks=None):
+        self.chunks = chunks if chunks is not None else []
+        self.last_query = None
+
+    def retrieve(self, query, **kwargs):
+        self.last_query = query
+        return self.chunks
 
 
 class TestTextJDParser:
@@ -161,7 +173,7 @@ class TestImageJDParser:
 
 
 class TestRAGJDRetriever:
-    """RAGJDRetriever：从 rag_industry_function 调真实 JD。"""
+    """RAGJDRetriever（v4-2 修复后）：走 Retriever 语义检索合成 StructuredJD。"""
 
     def test_missing_industry_returns_error(self):
         """缺 industry 时返回带 note 的空 StructuredJD。"""
@@ -175,20 +187,67 @@ class TestRAGJDRetriever:
         jd = _run(retriever.parse({"industry": "互联网", "function": "产品"}))
         assert "数据库未配置" in jd.parse_notes[0]
 
-    def test_empty_db_returns_no_data_note(self):
-        """DB 空时返回无数据 note。"""
-        empty_db = type("EmptyDB", (), {"list_rag_by_industry_function": lambda *a, **k: []})()
-        retriever = RAGJDRetriever(db=empty_db)
-        jd = _run(retriever.parse({"industry": "互联网", "function": "产品"}))
-        assert "暂无" in jd.parse_notes[0]
-
-    def test_db_with_data_returns_first_sample(self):
-        """DB 有数据时取第一条 sample_jd 作为基础结构。"""
+    def test_no_chunks_returns_hint_to_use_text_image(self, monkeypatch):
+        """Retriever 返 0 chunk 时，提示用户用 Text 或 Image 路径。"""
+        monkeypatch.setattr(
+            "tools.retriever.Retriever", lambda **kw: FakeRetriever(chunks=[])
+        )
         retriever = RAGJDRetriever(db=FakeDB())
-        jd = _run(retriever.parse({"industry": "互联网", "function": "产品", "level": "senior"}))
+        jd = _run(retriever.parse({"industry": "互联网", "function": "产品", "position": "AI 产品经理"}))
+        assert jd.source == "rag"
+        assert "无命中" in jd.parse_notes[0]
+        assert "Text" in jd.parse_notes[0] or "Image" in jd.parse_notes[0]
+
+    def test_chunks_synthesize_structured_jd(self, monkeypatch):
+        """Retriever 返 chunk 时，按 chunk_type 拆 responsibilities / requirements 合成 StructuredJD。"""
+        fake_chunks = [
+            {
+                "chunk_text": "负责 AI 产品规划与落地",
+                "chunk_type": "responsibility",
+                "similarity": 0.85,
+                "metadata": {"jd_id": "fake-jd-1", "chunk_index": 1},
+            },
+            {
+                "chunk_text": "3年以上 AI 产品经验",
+                "chunk_type": "requirement",
+                "similarity": 0.78,
+                "metadata": {"jd_id": "fake-jd-1", "chunk_index": 2},
+            },
+            {
+                "chunk_text": "熟悉 LLM 应用场景",
+                "chunk_type": "requirement",
+                "similarity": 0.72,
+                "metadata": {"jd_id": "fake-jd-2", "chunk_index": 3},
+            },
+        ]
+        monkeypatch.setattr(
+            "tools.retriever.Retriever", lambda **kw: FakeRetriever(chunks=fake_chunks)
+        )
+
+        class DBWithGet:
+            def get_jd(self, jd_id):
+                if jd_id == "fake-jd-1":
+                    return {"title": "AI 产品经理", "company": "字节跳动"}
+                return None
+
+        retriever = RAGJDRetriever(db=DBWithGet())
+        jd = _run(retriever.parse({
+            "industry": "互联网", "function": "产品", "level": "senior",
+            "position": "AI 产品经理",
+        }))
+
+        assert jd.source == "rag"
+        assert jd.industry == "互联网"
+        assert jd.function == "产品"
+        assert jd.title == "AI 产品经理"  # 来自 fake-jd-1
         assert jd.company == "字节跳动"
-        assert jd.title == "AI 产品经理"
-        assert "候选" in jd.parse_notes[0]
+        assert len(jd.responsibilities) == 1
+        assert "AI 产品规划" in jd.responsibilities[0]
+        assert len(jd.requirements) == 2
+        assert "3年以上" in jd.requirements[0]
+        assert "召回" in jd.parse_notes[0]
+        assert "3 个 chunk" in jd.parse_notes[0]
+        assert "来自 2 个 JD" in jd.parse_notes[0]
 
 
 class TestJDParserRouter:
