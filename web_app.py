@@ -821,6 +821,18 @@ def reset_flow_b_state() -> None:
     st.session_state.flow_b_step = "resume"
 
 
+def _flow_a_draft_service() -> Optional[FlowADraftService]:
+    """Flow A 草稿服务工厂：未拿到 db 时返回 None，调用方需判空。
+
+    与 _auth_service 不同，Flow A 可能在用户登录前就被初始化（页面跳转路径），
+    所以这里显式判 None + 兜底 _save_flow_a_draft 已有 `if not service: return`。
+    """
+    db = st.session_state.get("db")
+    if not db:
+        return None
+    return FlowADraftService(db, current_user_id())
+
+
 def _save_flow_a_draft(
     current_step: str,
     current_section: Optional[str],
