@@ -135,7 +135,8 @@ python crawler/run_crawler.py --site liepin --keyword "AI产品经理" --limit 1
 
 ```bash
 pytest tests/ --cov=database --cov=services --cov=agents --cov=tools --cov=crawler
-# 基线：481 passed（主仓库），耗时约 56s；worktree 子 agent 环境会看到 461 passed / 3 skipped（缺 LLM key 致 LLM 集成测试 skip）
+# 基线：568 passed, 3 deselected（主仓库，2026-08-03 实测），耗时约 70s
+# 3 deselected = @pytest.mark.real_llm 真 LLM 测试，pytest.ini 默认不跑；加 -m real_llm 且配好 LLM key 才会执行
 # 测试分层：tests/unit + tests/integration 两层
 ```
 

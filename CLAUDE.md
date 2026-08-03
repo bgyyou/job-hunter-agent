@@ -35,7 +35,7 @@ git push                            # 3. 推到 GitHub，触发 CI
 - `test: ...` — 纯测试
 
 ### 推之前自检
-1. `pytest tests/ -q` 必须 81 passed（或当前基线）
+1. `pytest tests/ -q` 必须 568 passed, 3 deselected（2026-08-03 基线；deselected 是 `@pytest.mark.real_llm` 的测试，pytest.ini 默认不选）
 2. `git status` 确认没有 `.env` / `*.db` / `data/cookies/*.json` 等被意外 staged
 3. pre-commit hook 已装（`bash tools/githooks/install.sh` 一次性）
 
