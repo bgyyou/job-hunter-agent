@@ -13,6 +13,7 @@
 | 日期 | 变更 | 操作者 |
 |---|---|---|
 | 2026-08-03 | v1 PRELIMINARY 创建（基于探查 27 文件 + 三路 subagent 报告） | pingce skill |
+| 2026-08-03 | **R5 关闭 P1-015**（commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323` / docs）：R5-1 backends 27 处 `user_id: str = "default"` 必填化（关键字-only `*, user_id: str` 防挪首位 caller 静默串位）；R5-2 services/tools StructuredJD 删 user_id 字段 + LLMClient 改必填；R5-3 21 个测试 fixture 切到显式 user_id + 新增 `tests/unit/test_p1_015_no_default_user_id.py`（40 测试：反射守卫/e2e TypeError/静态 grep/一致性）；R5-4 写路径 caller 全部显式 user_id（pages/06 Flow_B + 7 个 scripts + audit/jd_library/flow_a_draft 服务）。基线 578 → **618 passed, 20 skipped, 3 deselected, 0 failed**（+40 守卫测试）。**R6 判定命令 1 使能机制就位** —— 下次跑 R6 不再有 user_id 默认值漏写 | fix agent |
 | 2026-08-03 | **R4 关闭 P0-003 / P0-004**（commit `f09c1d5` / `482b0c7` / `fe2d484` / `26d9cf6` / `6481880` / docs）；测试基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）。注：plan 文本写 014/015 migration 但已被 vec0 / chunk_translation 占用，实际用 **017 / 018**。P2-017（45 行 legacy 残留）随 018 自动消解。**剩余 P0 全清** — 进 P1 阶段，首批 P1-015（27 处 backend `user_id: str = "default"` 签名默认值） | fix agent |
 | 2026-08-03 | P0-005 关闭：docker 明文密码改 env_file + POSTGRES_PASSWORD 强校验（commit `e105177`） | fix agent |
 | 2026-08-03 | P0-006 关闭：登录错误信息脱敏 — login_user 三场景统一对外文案（commit `7925824` / `6b57427`） | fix agent |
@@ -180,7 +181,13 @@
 ### P1-015 · DB 层 27 处 `user_id: str = "default"` 签名默认值
 - **问题**：`database/backends/{__init__,sqlite_backend,postgres_backend}.py` 共 27 个方法把 `user_id` 的默认值定成 `"default"`（`list_resumes` / `list_jds` / `get_jd_by_url` / `list_optimizations` / `get_latest_flow_a_draft` / `list_jds_structured` 等）。调用方漏传 `user_id` 时**不报错**，静默读写共享桶 —— 这正是 P0-008 那类跨用户串数据的**使能机制**，而不只是巧合。
 - **代码依据**：`grep -rn 'user_id: str = "default"' database/` = 27 命中；R6 判定命令 1 的 3 处残留命中即来源于此
-- **状态**：🔴 待修复 — 建议硬切：删掉默认值改为必填位置参数，让漏传变成 `TypeError`（编译期暴露）。影响面：`tests/unit/test_repository.py:64,67` 和 `tests/unit/test_sqlite_backend_extended.py:39,47` 四处 `list_resumes()` 无参调用需补 user_id。
+- **修复（commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323`）**：
+  - **R5-1** backends 27 处签名改为必填 `*, user_id: str`（关键字-only，避免挪首位导致 caller 静默串位）
+  - **R5-2** services/tools StructuredJD 删 `user_id` 字段（解析层不应知道归属用户）+ LLMClient 必填
+  - **R5-3** 21 个测试 fixture 切到显式 `user_id=`；新增 `tests/unit/test_p1_015_no_default_user_id.py` 40 测试（三层守卫：反射/e2e/静态 grep + 一致性）
+  - **R5-4** 写路径 caller 全部显式 user_id（pages/06 Flow_B 3 个 insert 站点 + audit/jd_library/flow_a_draft 服务 + 7 个 scripts：`backfill_jd_quality` / `batch_{51job,jobsdb,liepin}` / `migrate_sqlite_to_pg` / `verify_m3` / `migrate_v1` + agents/base.py）
+  - **白名单例外**：4 个系统级方法允许 `user_id: Optional[str] = None`（`get_llm_usage_today` 全局聚合 / `list_audit_logs` 系统级审计 / `vector_search` + `like_search_chunks` 跨用户 RAG 召回）
+- **状态**：✅ 已关闭 — R6 判定命令 1 使能机制就位；守卫测试 40 条保证不再回潮
 - **关联**：P0-008 / REVIEW.md R6 判定命令 1
 
 ---
@@ -290,7 +297,7 @@
 ## P0 汇总（按 owner 决议分组）
 
 **已关闭**：P0-001 / P0-002 / P0-003 / P0-004 / P0-005 / P0-006 / P0-007 / P0-008 / P0-009  
-**剩余待办**：**无**（P0 全清，进入 P1 阶段，首批 P1-015 — 27 处 backend `user_id: str = "default"` 签名默认值清理）  
+**剩余待办**：**无**（P0 全清，P1-015 已关闭；下一批 P1 阶段待办按 user_product_completeness_view.md 排序：LLM Observability → 质量分治理 → 部署）  
 **已结案联动**：P1-012 与 P0-004 协调（先 P0-004 删除 rag_industry_function，再 P1-012 同步迁移清单 — 现在 `migrate_sqlite_to_pg.py` 表清单不需补 rag_industry_function，自动一致）
 
 ---

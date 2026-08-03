@@ -118,7 +118,7 @@
   - **同根因 写侧兜底也一并堵**：`pages/03_📝_Flow_A_Step1.py:61` `_jd_to_dict` 把 `user_id` 兜底 `"default"`（解析出的 JD 会落共享账号），改为 `current_user_id()`
   - 测试 `tests/unit/test_application_history_user_scoped.py` 4 条（08 页无 default 字面量 / 不直调 db.list_resumes / 03 页无 user_id="default" 兜底 + 引 current_user_id）
   - 验证：判定命令 2 周围 30 行只有 `user_id = current_user_id()` + `list_resumes_flat(db, user_id)` + 空态 st.info，**无回退分支**
-  - **判定命令 1 仍 3 命中 ⚠️**：是 backend 签名 `def list_resumes(self, user_id: str = "default")` 默认值（sqlite_backend / postgres_backend / __init__），不属本工单范围；已登记为 **P1-015**（删默认值改必填位置参数，让漏传编译期 fail）。**这才是使能机制**，下次 R6 真正过必须连 P1-015 一起做
+  - **判定命令 1 仍 3 命中 ⚠️**：是 backend 签名 `def list_resumes(self, user_id: str = "default")` 默认值（sqlite_backend / postgres_backend / __init__），不属本工单范围；已登记为 **P1-015**（删默认值改必填位置参数，让漏传编译期 fail）。**这才是使能机制**，下次 R6 真正过必须连 P1-015 一起做 — **2026-08-03 R5 commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323` 已关闭 P1-015；R6 判定命令 1 使能机制就位，下一轮评审 R6 真正过**
 
 ### R7 · RAG 评测基线不退化
 - **判定命令 1**：`pytest tests/integration/test_eval_rag.py -q --tb=no`（如存在）
@@ -340,6 +340,7 @@
 | 2026-08-03 | **R2 修复落地（commit `711618e`）**：P0-002 真 LLM flake 关闭；基线 547 passed / 3 deselected / 0 failed | fix agent |
 | 2026-08-03 | **R5-2 修复落地（commit `7925824` + `6b57427` + `376ec90`）**：P0-006 登录错误信息脱敏 + P0-009 README 行数 160→270；基线 552 passed / 3 deselected / 0 failed | fix agent |
 | 2026-08-03 | **v1.1 R4 增量修复** | **P0-003 / P0-004 关闭**（commit `f09c1d5` / `482b0c7` / `fe2d484` / `26d9cf6` / `6481880`），连带关闭 P2-017（45 行 legacy=1 残留随 018 DELETE 消解）；**R3 + R4 已修复备注就位**；基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）。注：migration 文件实际编号 017/018（plan 014/015 已被 vec0 / chunk_translation 占用）。**P0 全清** — 进入 P1 阶段，首批 P1-015（27 处 backend `user_id: str = "default"` 签名默认值清理，使能机制彻底堵死） | fix agent |
+| 2026-08-03 | **v1.1 R5 增量修复** | **P1-015 关闭**（commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323`）：R5-1 backends 27 处 `user_id: str = "default"` 改为 keyword-only `*, user_id: str` 必填；R5-2 services/tools StructuredJD 删 user_id 字段 + LLMClient 必填；R5-3 21 测试 fixture 切显式 + 新增 40 条守卫测试；R5-4 写路径 caller 全显式（pages/06 Flow_B + 7 scripts + agents/base.py）。**R6 判定命令 1 使能机制就位** — 下次 R6 跑判定命令 1 应 0 命中。基线 578 → **618 passed, 20 skipped, 3 deselected, 0 failed**（+40 守卫测试）。白名单 4 系统级方法（`get_llm_usage_today` / `list_audit_logs` / `vector_search` / `like_search_chunks`）说明在 `test_p1_015_no_default_user_id.py` | fix agent |
 
 ### 7.6 评审 agent 工作流
 
