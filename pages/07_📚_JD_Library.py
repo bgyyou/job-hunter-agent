@@ -27,6 +27,7 @@ from web_app import (  # noqa: E402
     run_async,
     current_user_id,
 )
+from services.text_limits import MAX_USER_TEXT_CHARS, clamp_user_text  # noqa: E402
 
 st.set_page_config(
     page_title="JobHunter · JD 库",
@@ -219,10 +220,13 @@ def render_jd_library() -> None:
         st.warning(f"公共 JD 初始化失败：{exc}")
 
     with st.expander("添加 JD 到我的 JD库"):
-        jd_text = st.text_area("粘贴 JD", height=220, key="jd_library_add_text")
+        jd_text = st.text_area("粘贴 JD", height=220, max_chars=MAX_USER_TEXT_CHARS, key="jd_library_add_text")
         if st.button("分析并保存到 JD库", disabled=not jd_text):
             if not require_services_safe():
                 return
+            jd_text, truncated = clamp_user_text(jd_text)
+            if truncated:
+                st.warning(f"JD 超过 {MAX_USER_TEXT_CHARS} 字符，已截断后分析。建议只粘贴职责/要求正文。")
             with st.spinner("正在分析并保存 JD..."):
                 analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
                 jd_result = run_async(analyzer.parse_from_text(jd_text))

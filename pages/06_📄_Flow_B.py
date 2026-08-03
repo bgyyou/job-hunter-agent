@@ -26,6 +26,7 @@ from web_app import (  # noqa: E402
     run_async,
     current_user_id,
 )
+from services.text_limits import MAX_USER_TEXT_CHARS, clamp_user_text  # noqa: E402
 
 # log_action 走 services.audit_service（在 render_flow_b / generate_* 内部按需 import，避免循环）。
 
@@ -233,8 +234,11 @@ def render_flow_b() -> None:
     with st.expander("2. 上传 / 选择目标 JD", expanded=st.session_state.resume_data is not None and st.session_state.jd_result is None):
         input_type = st.radio("JD 来源", ["粘贴 JD", "上传 PDF", "从 JD库选择", "职位 URL"], horizontal=True, key="fb_jd_input_type_radio")
         if input_type == "粘贴 JD":
-            jd_text = st.text_area("粘贴目标 JD", height=220)
+            jd_text = st.text_area("粘贴目标 JD", height=220, max_chars=MAX_USER_TEXT_CHARS)
             if st.button("分析并保存 JD", disabled=not jd_text):
+                jd_text, truncated = clamp_user_text(jd_text)
+                if truncated:
+                    st.warning(f"JD 超过 {MAX_USER_TEXT_CHARS} 字符，已截断后分析。建议只粘贴职责/要求正文。")
                 with st.spinner("正在分析 JD..."):
                     analyzer = JDAnalyzerEnhanced(llm_client=st.session_state.llm_client)
                     jd_result = run_async(analyzer.parse_from_text(jd_text))

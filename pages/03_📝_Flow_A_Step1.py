@@ -31,6 +31,7 @@ from web_app import (  # noqa: E402
     _save_flow_a_draft,
 )
 from tools import taxonomy  # noqa: E402
+from services.text_limits import MAX_USER_TEXT_CHARS, clamp_user_text  # noqa: E402
 
 st.set_page_config(
     page_title="JobHunter · Flow A Step 1",
@@ -159,12 +160,16 @@ def _render_jd_text_panel() -> None:
         "把 JD 完整粘贴到这里",
         value=st.session_state.get("fa_jd_text_input", ""),
         height=240,
+        max_chars=MAX_USER_TEXT_CHARS,
         key="fa_step1_text_input",
         placeholder="示例：\n字节跳动 / AI 产品经理\n岗位职责：\n1. 负责 LLM 应用的需求分析…\n2. …\n任职要求：\n1. 本科及以上…\n",
     )
     # 同步到 session_state 以便提交按钮读取最新值
     st.session_state.fa_jd_text_input = text
     if st.button("解析", type="primary", disabled=not text.strip(), key="fa_step1_text_run"):
+        text, truncated = clamp_user_text(text)
+        if truncated:
+            st.warning(f"JD 超过 {MAX_USER_TEXT_CHARS} 字符，已截断后解析。建议只粘贴职责/要求正文。")
         with st.spinner("LLM 解析中…"):
             try:
                 from services.jd_parser import JDParserRouter
@@ -244,12 +249,14 @@ def _render_jd_review_form(jd: Dict[str, Any]) -> None:
             "职责（每行一条）",
             value="\n".join(jd.get("responsibilities") or []),
             height=120,
+            max_chars=MAX_USER_TEXT_CHARS,
             key="fa_step1_rev_resp",
         )
         requirements = st.text_area(
             "要求（每行一条）",
             value="\n".join(jd.get("requirements") or []),
             height=120,
+            max_chars=MAX_USER_TEXT_CHARS,
             key="fa_step1_rev_req",
         )
         submitted = st.form_submit_button("确认无误，下一步", type="primary")
