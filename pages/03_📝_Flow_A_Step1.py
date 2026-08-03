@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -29,7 +30,9 @@ from web_app import (  # noqa: E402
     render_top_nav,
     run_async,
     _save_flow_a_draft,
+    _register_resume_tmp,
     current_user_id,
+    RESUME_TMP_SUFFIXES,
 )
 from tools import taxonomy  # noqa: E402
 from services.text_limits import MAX_USER_TEXT_CHARS, clamp_user_text  # noqa: E402
@@ -193,6 +196,9 @@ def _render_jd_image_panel() -> None:
     """Image 路径：file_uploader + PaddleOCR + JDParserRouter.parse(source='image', ...)。
 
     OCR 不可信 → 强制 needs_user_review=True，强制走校对界面。
+
+    M-v4-2 R10 P1-005：临时文件用 `jobhunter_resume_<uuid>.<ext>` 命名规范，
+    由 web_app.py 的启动 stale 清理 + atexit session 清理机制兜底。
     """
     uploaded = st.file_uploader(
         "上传 JD 截图（PNG / JPG）",
@@ -202,11 +208,20 @@ def _render_jd_image_panel() -> None:
     if uploaded is not None:
         # 保存到临时路径（ImageJDParser.parse 接文件路径）
         suffix = "." + uploaded.name.split(".")[-1] if "." in uploaded.name else ".png"
+        # 规范化扩展名到白名单集合，非法则退回 .png
+        if suffix.lower() not in RESUME_TMP_SUFFIXES:
+            suffix = ".png"
+        # M-v4-2 R10 P1-005：jobhunter_resume_<uuid> 前缀便于批量清理
         tmp = tempfile.NamedTemporaryFile(
-            delete=False, suffix=suffix, dir=tempfile.gettempdir()
+            delete=False,
+            prefix="jobhunter_resume_",
+            suffix=suffix,
+            dir=tempfile.gettempdir(),
         )
         tmp.write(uploaded.read())
         tmp.close()
+        # 注册到 atexit session 清理列表
+        _register_resume_tmp(tmp.name)
         st.session_state.fa_jd_image_path = tmp.name
         st.caption(f"已保存到：{tmp.name}")
     if st.button(

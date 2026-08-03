@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import os
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +18,78 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import streamlit as st
 from dotenv import load_dotenv
 from loguru import logger
+
+# M-v4-2 R10 P1-005：简历上传临时文件清理机制。
+# - 命名规范 jobhunter_resume_<uuid>.<ext>，便于批量匹配
+# - atexit hook：session 退出时删当前 session 的临时文件
+# - 启动 stale 清理：删 >24h 的同名文件（其他 session 残留）
+RESUME_TMP_PREFIX = "jobhunter_resume_"
+RESUME_TMP_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+RESUME_TMP_STALE_SECONDS = 24 * 60 * 60
+# 当前 session 上传的文件路径列表（atexit 时逐个清理）
+_resume_tmp_paths: List[str] = []
+
+
+def _resume_tmp_dir() -> Path:
+    return Path(tempfile.gettempdir())
+
+
+def _register_resume_tmp(path: str) -> str:
+    """把本次上传的临时文件路径加入 atexit 清理列表。
+
+    返回原始路径不变，方便 caller 继续用 st.session_state 引用。
+    """
+    if path and path not in _resume_tmp_paths:
+        _resume_tmp_paths.append(path)
+    return path
+
+
+def _cleanup_resume_tmp_session() -> None:
+    """atexit hook：删当前 session 上传的所有简历临时文件。"""
+    for p in list(_resume_tmp_paths):
+        try:
+            Path(p).unlink(missing_ok=True)
+        except Exception:
+            pass
+    _resume_tmp_paths.clear()
+
+
+def _cleanup_resume_tmp_stale(max_age_seconds: int = RESUME_TMP_STALE_SECONDS) -> int:
+    """启动 hook：删临时目录中 >max_age_seconds 秒的 jobhunter_resume_*.{png,jpg,...}。
+
+    防止上一次 session 崩溃 / 浏览器关闭等异常路径导致文件长期堆积。
+    返回删除的文件数。
+    """
+    tmp_dir = _resume_tmp_dir()
+    if not tmp_dir.exists():
+        return 0
+    now = time.time()
+    deleted = 0
+    for entry in tmp_dir.glob(f"{RESUME_TMP_PREFIX}*"):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in RESUME_TMP_SUFFIXES:
+            continue
+        try:
+            age = now - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age <= max_age_seconds:
+            continue
+        try:
+            entry.unlink(missing_ok=True)
+            deleted += 1
+        except OSError:
+            pass
+    return deleted
+
+
+# 启动时立即跑一次 stale 清理（process 级，多 page 复用）
+_startup_deleted = _cleanup_resume_tmp_stale()
+if _startup_deleted:
+    logger.info(f"resume tmp stale cleanup: deleted {_startup_deleted} file(s) on startup")
+# atexit 注册 session 退出清理
+atexit.register(_cleanup_resume_tmp_session)
 
 # v2.1 P2-1 阶段一：internal beta 模式 — internal_keys.json 存在则优先注入
 # 必须在 load_dotenv 之前：load_dotenv 不覆盖已存在的 env var
