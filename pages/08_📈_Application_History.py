@@ -154,28 +154,16 @@ def render_application_history() -> None:
         st.error("数据库未初始化。")
         return
 
-    primary_user = current_user_id()
-    flat = list_resumes_flat(db, primary_user)
-    fallback_user = None
-    if not flat:
-        flat = db.list_resumes("default")
-        fallback_user = "default"
+    # P0-008：只读当前登录用户的简历。不做任何跨 user_id 回退——
+    # 多人共用同一个本机 SQLite 时，回退会把别人的简历展示给当前账号。
+    user_id = current_user_id()
+    flat = list_resumes_flat(db, user_id)
 
     if not flat:
         st.info("还没有任何简历。先去首页用 Flow A 生成一份，或在 Flow B 里上传 PDF。")
         return
 
-    if fallback_user:
-        st.warning(
-            f"当前账号 `{primary_user}` 下无简历，临时显示 user_id=`{fallback_user}` 的历史简历。"
-        )
-        effective_user = fallback_user
-    else:
-        effective_user = primary_user
-
-    st.session_state._resume_lib_effective_user = effective_user
-
-    primary = get_primary_resume(db, effective_user)
+    primary = get_primary_resume(db, user_id)
     if primary:
         st.success(
             f"**当前主简历**：v{primary.get('version') or 1} · {primary.get('name') or '(未命名)'} · "
@@ -184,13 +172,13 @@ def render_application_history() -> None:
     else:
         st.info("还没有设置主简历——在下面版本行点「设为主简历」。")
 
-    trees = list_resume_versions(db, effective_user)
+    trees = list_resume_versions(db, user_id)
     for tree in trees:
         with st.expander(
             f"📁 {tree['root_label']} · 共 {len(tree['versions'])} 个版本",
             expanded=(tree["root_id"] == (primary["id"] if primary else None)),
         ):
-            _render_version_tree(db, effective_user, tree)
+            _render_version_tree(db, user_id, tree)
 
 
 def main() -> None:
