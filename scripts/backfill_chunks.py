@@ -1,11 +1,10 @@
-"""Backfill legacy chunk_type='full' chunks.
+"""Backfill chunk_type='full' chunks.
 
-Reads every knowledge_chunks row where chunk_type='full' AND legacy=0,
+Reads every knowledge_chunks row where chunk_type='full' AND deleted_at IS NULL,
 re-splits the text with SemanticChunker, re-embeds with the BGE Embedder,
-inserts the new chunks (under the same jd_id), then marks the old rows
-legacy=1 (kept for audit, excluded from search via legacy=1 filter).
+inserts the new chunks (under the same jd_id), then deletes the old rows.
 
-Idempotent: re-running won't reprocess rows already marked legacy=1.
+Idempotent: re-running won't reprocess rows already deleted by this script.
 
 Usage:
     python scripts/backfill_chunks.py            # run for real
@@ -35,18 +34,18 @@ def _embedding_to_blob(vec):
 
 
 def backfill(db_path: str, dry_run: bool = False) -> dict:
-    backend = SqliteBackend(db_path=db_path)  # ensures legacy column migration
+    backend = SqliteBackend(db_path=db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT id, jd_id, chunk_text, user_id FROM knowledge_chunks "
-        "WHERE chunk_type='full' AND legacy=0 AND deleted_at IS NULL"
+        "WHERE chunk_type='full' AND deleted_at IS NULL"
     ).fetchall()
 
     if not rows:
-        logger.info("no legacy 'full' chunks to backfill")
+        logger.info("no 'full' chunks to backfill")
         conn.close()
-        return {"processed": 0, "new_chunks": 0, "marked_legacy": 0}
+        return {"processed": 0, "new_chunks": 0, "deleted_old": 0}
 
     chunker = SemanticChunker()
     embedder = Embedder()
@@ -76,7 +75,7 @@ def backfill(db_path: str, dry_run: bool = False) -> dict:
 
         if dry_run:
             logger.info(f"[dry-run] jd={jd_id}: would insert {len(chunks)} chunks "
-                        f"({[c.chunk_type for c in chunks]}) and mark old {old_id} legacy=1")
+                        f"({[c.chunk_type for c in chunks]}) and delete old {old_id}")
             for c in chunks:
                 type_distribution[c.chunk_type] = type_distribution.get(c.chunk_type, 0) + 1
             new_chunks += len(chunks)
@@ -87,8 +86,8 @@ def backfill(db_path: str, dry_run: bool = False) -> dict:
             conn.execute(
                 """INSERT INTO knowledge_chunks
                    (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
-                    keywords, embedding, embedding_dim, context, heading_path, legacy)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                    keywords, embedding, embedding_dim, context, heading_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (str(uuid.uuid4()), user_id, jd_id, next_idx, c.chunk_text,
                  c.chunk_type, "[]", _embedding_to_blob(vec), len(vec),
                  "", "[]" if not c.heading_path else
@@ -97,7 +96,7 @@ def backfill(db_path: str, dry_run: bool = False) -> dict:
             next_idx += 1
             new_chunks += 1
 
-        conn.execute("UPDATE knowledge_chunks SET legacy=1 WHERE id=?", (old_id,))
+        conn.execute("UPDATE knowledge_chunks SET deleted_at = datetime('now') WHERE id=? AND deleted_at IS NULL", (old_id,))
 
     if not dry_run:
         conn.commit()
@@ -106,7 +105,7 @@ def backfill(db_path: str, dry_run: bool = False) -> dict:
     summary = {
         "processed": len(rows),
         "new_chunks": new_chunks,
-        "marked_legacy": 0 if dry_run else len(rows),
+        "deleted_old": 0 if dry_run else len(rows),
         "chunk_type_distribution": type_distribution,
         "dry_run": dry_run,
     }

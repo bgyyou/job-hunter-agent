@@ -159,7 +159,7 @@ def phase3_real_db() -> dict:
     rows = conn.execute(
         "SELECT id, embedding FROM knowledge_chunks "
         "WHERE deleted_at IS NULL AND embedding IS NOT NULL "
-        "AND legacy = 0 AND embedding_dim = 512 "
+        "AND embedding_dim = 512 "
         "AND LENGTH(embedding) = 2048"
     ).fetchall()
     n_real = len(rows)

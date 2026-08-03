@@ -134,11 +134,13 @@ class SqliteBackend(BaseBackend):
 
     def _apply_idempotent_migrations(self, conn: sqlite3.Connection) -> None:
         """Bring older DBs up to current schema (idempotent — safe to run every startup)."""
-        # v2.1 M3: knowledge_chunks.legacy column
+        # v4 M-v4-2: knowledge_chunks.legacy 列兜底（M-v4-2 完成后会被 018 DROP）
+        # schema.sql 已不再带 legacy 列；老 DB 启动时若缺此列则现场补回，018 再统一 DROP。
+        # 新 DB 启动序列：schema.sql 建表无 legacy → 此处补回 → 018 DROP，最终一致。
         cols = {r[1] for r in conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()}
         if "legacy" not in cols:
             conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN legacy INTEGER NOT NULL DEFAULT 0")
-            logger.info("migration: added knowledge_chunks.legacy column")
+            logger.info("migration: added knowledge_chunks.legacy column (scaffolding for 018 DROP)")
 
         # v2.1 N10: resumes 版本树 + 主简历字段
         resume_cols = {r[1] for r in conn.execute("PRAGMA table_info(resumes)").fetchall()}
@@ -855,13 +857,12 @@ class SqliteBackend(BaseBackend):
             rowids.append(int(rid))
             dist_map[int(rid)] = float(dist)
 
-        # 2) JOIN 主表 + jds；WHERE 过滤（deleted_at / embedding / legacy / chunk_type / user_id / position）
+        # 2) JOIN 主表 + jds；WHERE 过滤（deleted_at / embedding / chunk_type / user_id / position）
         placeholders = ",".join("?" * len(rowids))
         conditions = [
             "kc.rowid IN (" + placeholders + ")",
             "kc.deleted_at IS NULL",
             "kc.embedding IS NOT NULL",
-            "kc.legacy = 0",
         ]
         params: List[Any] = list(rowids)
         if filter_chunk_type:
@@ -911,7 +912,7 @@ class SqliteBackend(BaseBackend):
         """numpy cosine 全表扫描；保持 v2.1 行为不变以兼容非 512-dim / 老 chunk。"""
         import numpy as np
 
-        conditions = ["kc.deleted_at IS NULL", "kc.embedding IS NOT NULL", "kc.legacy = 0"]
+        conditions = ["kc.deleted_at IS NULL", "kc.embedding IS NOT NULL"]
         params: List[Any] = []
         if filter_chunk_type:
             conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
@@ -962,7 +963,7 @@ class SqliteBackend(BaseBackend):
         """LIKE fallback. Same output shape as ``vector_search`` (similarity=0.0)."""
         conn = self._get_conn()
         try:
-            conditions = ["kc.deleted_at IS NULL AND kc.chunk_text LIKE ?", "kc.legacy = 0"]
+            conditions = ["kc.deleted_at IS NULL AND kc.chunk_text LIKE ?"]
             params: list = [f"%{query_text}%"]
             if filter_chunk_type:
                 conditions.append("kc.chunk_type = ?"); params.append(filter_chunk_type)
@@ -1464,67 +1465,6 @@ class SqliteBackend(BaseBackend):
                 (rewrite_id,),
             )
             conn.commit()
-        finally:
-            conn.close()
-
-    # ==================== v3 M-rebuild-2: RAG Industry×Function Library ====================
-
-    def upsert_rag_industry_function(self, data: Dict) -> int:
-        """Upsert one RAG library row keyed by (industry, function, level).
-
-        Required: ``industry``, ``function``. Optional: ``level``,
-        ``sample_jds`` (List), ``sample_resumes`` (List), ``scoring_rubric``
-        (Dict), ``source``.
-
-        Returns the row id.
-        """
-        conn = self._get_conn()
-        try:
-            conn.execute(
-                """INSERT INTO rag_industry_function
-                   (industry, function, level, sample_jds, sample_resumes,
-                    scoring_rubric, source)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(industry, function, level) DO UPDATE SET
-                    sample_jds = excluded.sample_jds,
-                    sample_resumes = excluded.sample_resumes,
-                    scoring_rubric = excluded.scoring_rubric,
-                    source = excluded.source,
-                    updated_at = datetime('now')""",
-                (data["industry"], data["function"], data.get("level"),
-                 self._json_serialize(data.get("sample_jds", [])),
-                 self._json_serialize(data.get("sample_resumes", [])),
-                 self._json_serialize(data.get("scoring_rubric")),
-                 data.get("source")),
-            )
-            conn.commit()
-            row = conn.execute(
-                """SELECT id FROM rag_industry_function
-                   WHERE industry = ? AND function = ?
-                     AND ((? IS NULL AND level IS NULL) OR level = ?)""",
-                (data["industry"], data["function"], data.get("level"), data.get("level")),
-            ).fetchone()
-            return row[0] if row else 0
-        finally:
-            conn.close()
-
-    def list_rag_by_industry_function(self, industry: str, function: str,
-                                      level: Optional[str] = None,
-                                      limit: int = 50) -> List[Dict]:
-        """Look up RAG library rows by industry/function/level."""
-        conn = self._get_conn()
-        try:
-            sql = "SELECT * FROM rag_industry_function WHERE industry = ? AND function = ?"
-            params: List[Any] = [industry, function]
-            if level:
-                sql += " AND level = ?"
-                params.append(level)
-            sql += " LIMIT ?"
-            params.append(limit)
-            rows = conn.execute(sql, params).fetchall()
-            return self._deserialize_all(
-                rows, ["sample_jds", "sample_resumes", "scoring_rubric"]
-            )
         finally:
             conn.close()
 

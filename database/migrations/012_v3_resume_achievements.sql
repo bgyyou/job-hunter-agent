@@ -1,7 +1,7 @@
 -- ============================================================
 -- Migration 012 (SQLite): v3 resumes.achievements 顶层字段
 -- 实际 ALTER 由 sqlite_backend.py:_apply_idempotent_migrations PRAGMA 检查内联完成
--- （同 knowledge_chunks.legacy / resumes.parent_resume_id 处理模式）
+-- （同 resumes.parent_resume_id 处理模式；018 已 DROP knowledge_chunks.legacy）
 -- 此文件仅作 schema_version 里程碑标记
 -- ============================================================
 

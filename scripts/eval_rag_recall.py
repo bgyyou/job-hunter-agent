@@ -51,7 +51,7 @@ def run_self_retrieval(db, sample_n: int, query_mode: str = "title") -> dict:
     # 同时拉每个 JD 已有的 chunks，供 random_chunk 模式用
     chunk_map: dict = {}
     chunk_rows = conn.execute(
-        "SELECT jd_id, chunk_text FROM knowledge_chunks WHERE legacy=0 AND deleted_at IS NULL"
+        "SELECT jd_id, chunk_text FROM knowledge_chunks WHERE deleted_at IS NULL"
     ).fetchall()
     for jd_id, text in chunk_rows:
         chunk_map.setdefault(jd_id, []).append(text)
