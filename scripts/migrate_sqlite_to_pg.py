@@ -1,25 +1,35 @@
 # -*- coding: utf-8 -*-
-"""v2.1 M5: SQLite → PostgreSQL+pgvector 一次性迁移。
+"""SQLite → PostgreSQL+pgvector 一次性迁移。
 
-策略：
-- 用 SqliteBackend 读、PostgresBackend 写；两者接口一致（BaseBackend）。
-- 表顺序：resumes → jds → knowledge_chunks → match_history → optimizations → quality_checks
-  （依赖 FK：chunks 依赖 jds；optimizations 依赖 chunks；match 依赖 resumes+jds）
-- knowledge_chunks 在迁移过程中重新跑 Embedder 生成 512 维 BGE 向量（旧库全为 NULL）
-  原因：① sqlite 旧库 0/45 有向量；② 真模型语义质量远胜 mock。
-- 默认 dry-run；--apply 才真正写入。
+策略（M-v4-2 / P1-012 重写）：
+- **通用列拷贝**：每张表读 sqlite 的 PRAGMA 列 + PG 的 information_schema 列，
+  取交集后拼参数化 INSERT。schema 加字段自动跟随，不再有手写列白名单。
+  上一版为每张表手写 _migrate_*() 枚举列，已对着 004 收敛前的旧 schema 漂移：
+  往 jds 写 requirements/skills_required/parsed_data（列已不存在），
+  同时丢掉 parsed_sections/tags/quality_score/deleted_at（列实际存在）。
+- **类型转换由 PG 的 udt_name 驱动**：jsonb → %s::jsonb，vector → %s::vector，
+  text[] → Python list，其余原样。不硬编码任何列名。
+- **user_id 保留源值**：sqlite 行已带真实归属（v4 多用户）。--user-id 只作为
+  user_id 为空的历史行的兜底，不覆盖已有归属，否则多租户会被塌成单用户。
+- knowledge_chunks 迁移时重跑 Embedder 生成向量（sqlite 侧 embedding 是
+  sqlite-vec 的二进制格式，与 pgvector 不通用，只能重算）。
+- 表顺序按 FK 依赖排；ON CONFLICT DO NOTHING 保证重跑幂等。
+- 默认 dry-run；--apply 才真正写入。dry-run 也连 PG，用于提前报告列差异。
 - 迁移完成后 sqlite 文件不删，由用户决定是否重命名 .backup。
 
 使用：
-    python scripts/migrate_sqlite_to_pg.py            # 预览
-    python scripts/migrate_sqlite_to_pg.py --apply    # 实际跑
+    python scripts/migrate_sqlite_to_pg.py --user-id <fallback_owner>          # 预览
+    python scripts/migrate_sqlite_to_pg.py --user-id <fallback_owner> --apply  # 实际跑
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
+from typing import Any, Dict, List
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -28,188 +38,172 @@ if str(PROJECT_ROOT) not in sys.path:
 from loguru import logger
 
 
-# 迁移顺序：依赖前置先迁
-TABLE_ORDER = ["resumes", "jds", "knowledge_chunks", "match_history",
-               "optimizations", "quality_checks"]
+# 迁移顺序：FK 依赖前置先迁（users 最先，无依赖的工具表最后）
+TABLE_ORDER = [
+    "users",
+    "resumes",
+    "jds",
+    "jd_structured",
+    "knowledge_chunks",
+    "match_history",
+    "optimizations",
+    "quality_checks",
+    "flow_a_drafts",
+    "rewrite_history",
+    "interview_questions",
+    "llm_calls",
+    "audit_logs",
+    "skeleton_cache",
+]
+
+# 不迁移：sqlite 内部表、迁移元数据、sqlite-vec 虚拟表的影子表
+# （向量在 PG 侧由 pgvector 承载，chunks 迁移时重算，影子表无意义）
+SKIP_TABLES = {"sqlite_sequence", "schema_version"}
+SKIP_PREFIXES = ("knowledge_chunks_vec",)
+
+BATCH_SIZE = 500
 
 
-def _open_sources(sqlite_path: str, pg_url: str):
-    from database.backends.sqlite_backend import SqliteBackend
-    from database.backends.postgres_backend import PostgresBackend
-    src = SqliteBackend(db_path=sqlite_path)
-    dst = PostgresBackend(pg_url)
-    return src, dst
+def _sqlite_columns(sqlite_path: str, table: str) -> List[str]:
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    finally:
+        conn.close()
 
 
-def _read_all_resumes(src):
-    return src.list_resumes(user_id="__all__") if False else _read_all(src, "resumes")
+def _pg_columns(pg_conn, table: str) -> Dict[str, str]:
+    """返回 {column_name: udt_name}；表不存在时返回空 dict。"""
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            """SELECT column_name, udt_name
+               FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = %s""",
+            (table,),
+        )
+        return {r[0]: r[1] for r in cur.fetchall()}
 
 
-def _read_all(src, table: str):
-    """直接走 sqlite 原生连接，包括软删行（deleted_at 字段透传给 PG）。"""
-    import sqlite3
-    conn = sqlite3.connect(src.db_path)
+def _read_all(sqlite_path: str, table: str) -> List[Dict[str, Any]]:
+    """走 sqlite 原生连接读全表，包括软删行（deleted_at 透传给 PG）。"""
+    conn = sqlite3.connect(sqlite_path)
     conn.row_factory = sqlite3.Row
-    rows = [dict(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
-    conn.close()
-    return rows
+    try:
+        return [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+    finally:
+        conn.close()
 
 
-def _reembed_chunks(rows):
-    """对 knowledge_chunks 重新跑 BGE；保留旧 chunk_text 与元数据。"""
+def _placeholder(udt: str) -> str:
+    """按 PG 列类型决定占位符的 cast —— sqlite 侧一律是 TEXT，需显式转。"""
+    if udt in ("jsonb", "json"):
+        return f"%s::{udt}"
+    if udt == "vector":
+        return "%s::vector"
+    return "%s"
+
+
+def _coerce(value: Any, udt: str) -> Any:
+    """把 sqlite 的值转成 PG 该列能接受的形态。"""
+    if value is None:
+        return None
+
+    if udt in ("jsonb", "json"):
+        # sqlite 存的是 JSON 字符串；非法 JSON 兜底包成 JSON 字符串，不让整批挂掉
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, str):
+            try:
+                json.loads(value)
+                return value
+            except (json.JSONDecodeError, ValueError):
+                return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False)
+
+    if udt.startswith("_"):  # PG 数组类型，如 _text
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, list) else [value]
+            except (json.JSONDecodeError, ValueError):
+                return [value]
+        return [value]
+
+    if udt == "bool" and isinstance(value, int):
+        return bool(value)
+
+    return value
+
+
+def _reembed_chunks(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """sqlite 的 embedding 是 sqlite-vec 二进制，与 pgvector 不通用 → 重算。"""
     from tools.embedder import Embedder
+
     emb = Embedder()
-    texts = [r["chunk_text"] for r in rows]
+    texts = [r.get("chunk_text") or "" for r in rows]
     vectors = emb.embed_batch(texts) if texts else []
     out = []
     for r, vec in zip(rows, vectors):
         r = dict(r)
-        r["embedding"] = vec
+        r["embedding"] = "[" + ",".join(f"{v:.7f}" for v in vec) + "]"
         r["embedding_dim"] = len(vec)
         out.append(r)
     logger.info(f"  reembedded {len(out)} chunks (dim={emb.dim})")
     return out
 
 
-def _migrate_resumes(dst, rows, user_id: str):
-    n = 0
+def _copy_table(pg_conn, table: str, rows: List[Dict[str, Any]],
+                sqlite_cols: List[str], pg_cols: Dict[str, str],
+                fallback_user_id: str) -> int:
+    """按列交集拷贝一张表。返回写入行数。"""
+    from psycopg2.extras import execute_batch
+
+    cols = [c for c in sqlite_cols if c in pg_cols]
+    if not cols:
+        logger.warning(f"  [{table}] no overlapping columns, skipped")
+        return 0
+
+    dropped = [c for c in sqlite_cols if c not in pg_cols]
+    if dropped:
+        logger.warning(f"  [{table}] sqlite-only columns dropped: {dropped}")
+    missing = [c for c in pg_cols if c not in sqlite_cols]
+    if missing:
+        logger.info(f"  [{table}] PG-only columns left at default: {missing}")
+
+    placeholders = ", ".join(_placeholder(pg_cols[c]) for c in cols)
+    sql = (f'INSERT INTO {table} ({", ".join(cols)}) VALUES ({placeholders}) '
+           f"ON CONFLICT DO NOTHING")
+
+    params = []
     for r in rows:
-        # JsonB fields：sqlite 侧存为 JSON 字符串，PG backend 接收后自动按 str 处理
-        dst.insert_resume({
-            "id": r["id"], "name": r["name"],
-            "phone": r.get("phone"), "email": r.get("email"),
-            "summary": r.get("summary"),
-            "skills": _safe_json(r.get("skills")),
-            "experience_years": r.get("experience_years", 0),
-            "domains": _safe_json(r.get("domains")),
-            "target_roles": _safe_json(r.get("target_roles")),
-            "preferred_locations": _safe_json(r.get("preferred_locations")),
-            "education": _safe_json(r.get("education")),
-            "projects": _safe_json(r.get("projects")),
-        }, user_id=user_id)
-        n += 1
-    return n
+        # user_id 保留源值；只有空值才落到 fallback，避免多租户被塌成单用户
+        if "user_id" in cols and not r.get("user_id"):
+            r = dict(r, user_id=fallback_user_id)
+        params.append(tuple(_coerce(r.get(c), pg_cols[c]) for c in cols))
+
+    with pg_conn.cursor() as cur:
+        execute_batch(cur, sql, params, page_size=BATCH_SIZE)
+    return len(params)
 
 
-def _migrate_jds(dst, rows, user_id: str):
-    n = 0
-    for r in rows:
-        dst.insert_jd({
-            "id": r["id"], "url": r.get("url", ""),
-            "title": r.get("title", ""), "company": r.get("company", ""),
-            "location": r.get("location", ""),
-            "salary_str": r.get("salary_str"),
-            "salary_min": r.get("salary_min"), "salary_max": r.get("salary_max"),
-            "requirements": _safe_json(r.get("requirements")),
-            "preferred_requirements": _safe_json(r.get("preferred_requirements")),
-            "skills_required": _safe_json(r.get("skills_required")),
-            "implicit_requirements": r.get("implicit_requirements"),
-            "raw_text": r.get("raw_text", ""),
-            "parsed_data": _safe_json(r.get("parsed_data")),
-            "source": r.get("source", "manual"),
-            "search_keyword": r.get("search_keyword"),
-            "platform": r.get("platform"),
-            "job_id": r.get("job_id"),
-            "language": r.get("language", "zh"),
-            "industry_tag": r.get("industry_tag"),
-            "function_tag": r.get("function_tag"),
-            "position_tag": r.get("position_tag"),
-            "auto_classified": r.get("auto_classified", 1),
-            "is_public": r.get("is_public", 0),
-            "crawled_at": r.get("crawled_at"),
-        }, user_id=user_id)
-        n += 1
-    return n
-
-
-def _migrate_chunks(dst, rows, user_id: str):
-    """chunks 已在 _reembed_chunks 中被注入 embedding；逐条 insert_chunk。"""
-    n = 0
-    for r in rows:
-        dst.insert_chunk({
-            "id": r["id"], "jd_id": r["jd_id"],
-            "chunk_index": r.get("chunk_index", n),
-            "chunk_text": r.get("chunk_text", ""),
-            "chunk_type": r.get("chunk_type", "full"),
-            "keywords": _safe_json(r.get("keywords")),
-            "embedding": r.get("embedding"),
-            "embedding_dim": r.get("embedding_dim"),
-            "context": r.get("context", ""),
-            "heading_path": _safe_json(r.get("heading_path")),
-        }, user_id=user_id)
-        n += 1
-    return n
-
-
-def _migrate_matches(dst, rows, user_id: str):
-    n = 0
-    for r in rows:
-        dst.insert_match({
-            "id": r["id"],
-            "resume_id": r["resume_id"], "jd_id": r["jd_id"],
-            "score": r["score"], "reasoning": r.get("reasoning", ""),
-            "matched_skills": _safe_json(r.get("matched_skills")),
-            "missing_skills": _safe_json(r.get("missing_skills")),
-            "gaps": _safe_json(r.get("gaps")),
-            "recommendations": _safe_json(r.get("recommendations")),
-            "skill_mapping": _safe_json(r.get("skill_mapping")),
-            "should_apply": r.get("should_apply", 0),
-            "user_feedback": r.get("user_feedback"),
-            "applied": r.get("applied", 0), "applied_at": r.get("applied_at"),
-        }, user_id=user_id)
-        n += 1
-    return n
-
-
-def _migrate_opts(dst, rows, user_id: str):
-    n = 0
-    for r in rows:
-        dst.insert_optimization({
-            "id": r["id"],
-            "resume_id": r.get("resume_id"), "jd_id": r["jd_id"],
-            "chunk_id": r.get("chunk_id"),
-            "optimization_type": r.get("optimization_type", "modify"),
-            "section": r.get("section"),
-            "original_content": r.get("original_content"),
-            "suggested_content": r.get("suggested_content"),
-            "reason": r.get("reason", ""),
-            "user_adopted": r.get("user_adopted", 0),
-            "user_rating": r.get("user_rating"),
-        }, user_id=user_id)
-        n += 1
-    return n
-
-
-def _migrate_qc(dst, rows, user_id: str):
-    n = 0
-    for r in rows:
-        dst.insert_quality_check(
-            {
-                "check_type": r["check_type"],
-                "target_table": r.get("target_table"),
-                "target_id": r.get("target_id"),
-                "score": r.get("score"),
-                "details": _safe_json(r.get("details")),
-            },
-            user_id=user_id,
+def _resync_sequences(pg_conn, table: str) -> None:
+    """显式带 id 拷贝后，serial 序列还停在 1，后续 INSERT 会撞 PK。"""
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            """SELECT column_name FROM information_schema.columns
+               WHERE table_schema='public' AND table_name=%s
+                 AND column_default LIKE 'nextval%%'""",
+            (table,),
         )
-        n += 1
-    return n
-
-
-def _safe_json(v):
-    """sqlite 里 JSON 列存的是字符串或 None；统一转回 Python 对象供 backend 再序列化。"""
-    import json
-    if v is None:
-        return [] if not isinstance(v, dict) else v
-    if isinstance(v, (list, dict)):
-        return v
-    if isinstance(v, str):
-        try:
-            return json.loads(v)
-        except (json.JSONDecodeError, ValueError):
-            return v
-    return v
+        for (col,) in cur.fetchall():
+            cur.execute(
+                f"SELECT setval(pg_get_serial_sequence(%s, %s), "
+                f"COALESCE((SELECT MAX({col}) FROM {table}), 1))",
+                (table, col),
+            )
+            logger.debug(f"  [{table}] sequence for {col} resynced")
 
 
 def main():
@@ -221,40 +215,57 @@ def main():
     parser.add_argument("--apply", action="store_true",
                         help="默认 dry-run；带此 flag 才实际写入")
     parser.add_argument("--user-id", required=True,
-                        help="Owner of migrated rows (required — data is user-scoped)")
+                        help="user_id 为空的历史行的兜底归属（不覆盖已有 user_id）")
     args = parser.parse_args()
 
     logger.info(f"Source SQLite: {args.sqlite}")
     logger.info(f"Target PG:     {args.pg_url}")
     logger.info(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}")
 
-    src, dst = _open_sources(args.sqlite, args.pg_url)
+    import psycopg2
 
-    summary = {}
-    for table in TABLE_ORDER:
-        rows = _read_all(src, table)
-        summary[table] = len(rows)
-        logger.info(f"[{table}] read {len(rows)} rows from sqlite")
+    pg_conn = psycopg2.connect(args.pg_url)
+    pg_conn.autocommit = False
 
-        if not args.apply:
-            continue
+    summary: Dict[str, str] = {}
+    try:
+        for table in TABLE_ORDER:
+            if table in SKIP_TABLES or table.startswith(SKIP_PREFIXES):
+                continue
 
-        if table == "resumes":
-            n = _migrate_resumes(dst, rows, user_id)
-        elif table == "jds":
-            n = _migrate_jds(dst, rows, user_id)
-        elif table == "knowledge_chunks":
-            reembedded = _reembed_chunks(rows)
-            n = _migrate_chunks(dst, reembedded, user_id)
-        elif table == "match_history":
-            n = _migrate_matches(dst, rows, user_id)
-        elif table == "optimizations":
-            n = _migrate_opts(dst, rows, user_id)
-        elif table == "quality_checks":
-            n = _migrate_qc(dst, rows, user_id)
-        else:
-            continue
-        logger.info(f"  → wrote {n} rows to PG")
+            sqlite_cols = _sqlite_columns(args.sqlite, table)
+            if not sqlite_cols:
+                logger.warning(f"[{table}] not present in sqlite, skipped")
+                summary[table] = "absent in sqlite"
+                continue
+
+            pg_cols = _pg_columns(pg_conn, table)
+            if not pg_cols:
+                logger.error(f"[{table}] not present in PG — run migrations_pg first")
+                summary[table] = "MISSING IN PG"
+                continue
+
+            rows = _read_all(args.sqlite, table)
+            logger.info(f"[{table}] read {len(rows)} rows from sqlite")
+
+            if not args.apply:
+                dropped = [c for c in sqlite_cols if c not in pg_cols]
+                summary[table] = f"{len(rows)} rows" + (f" (would drop {dropped})" if dropped else "")
+                continue
+
+            if table == "knowledge_chunks":
+                rows = _reembed_chunks(rows)
+
+            n = _copy_table(pg_conn, table, rows, sqlite_cols, pg_cols, args.user_id)
+            _resync_sequences(pg_conn, table)
+            pg_conn.commit()
+            logger.info(f"  → wrote {n} rows to PG")
+            summary[table] = f"{n} rows"
+    except Exception:
+        pg_conn.rollback()
+        raise
+    finally:
+        pg_conn.close()
 
     logger.info("=" * 50)
     logger.info("Migration summary:")
