@@ -7,7 +7,7 @@
 | `smart_collector.py` | 持久化 Edge profile，你正常浏览 JobsDB，后台自动保存当前页 JD | 反爬严的站点首选 |
 | `manual_collector.py` | 回车一次保存当前页 JD | 站点需手动确认时 |
 | `login_jobsdb.py` | 仅做登录态 cookies 持久化 | 首次或登录态过期 |
-| `import_collected.py` | 把 collector 落地的 JSON 批量导入知识库 | 收集后入库 |
+| `import_collected.py` | 把 collector 落地的 JSON 批量导入 v2 统一库（`data/jobhunter_v2.db`） | 收集后入库 |
 
 ### 推荐流程
 ```bash
@@ -17,8 +17,8 @@ python scripts/collectors/login_jobsdb.py
 # 2. 边浏览边收集
 python scripts/collectors/smart_collector.py
 
-# 3. 入库
-python scripts/collectors/import_collected.py
+# 3. 入库（--user-id 必填：JD 按用户隔离，导入后在该用户的 Flow B / JD 库可见）
+python scripts/collectors/import_collected.py --user-id <你的 user_id>
 ```
 
 > 全自动爬虫（无需人工）见 `crawler/run_crawler.py --site {boss|lagou|indeed|jobsdb}`。

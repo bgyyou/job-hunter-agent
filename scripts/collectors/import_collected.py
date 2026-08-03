@@ -1,84 +1,62 @@
 #!/usr/bin/env python3
-"""
-导入收集的 JD 到知识库
+"""导入 collector 收集的 JD 到 v2 统一库（data/jobhunter_v2.db）
 
 使用方法：
 1. 先用 smart_collector.py 收集一些 JD
-2. 运行此脚本导入到知识库
+2. 运行此脚本导入：
+       python scripts/collectors/import_collected.py --user-id <你的 user_id>
+
+M-v4-2 (P1-002)：原实现走 v1 KnowledgeBase（多 DB 文件），与 v2 的
+jobhunter_v2.db 不互通，导入后 Flow B 的 list_visible_jds 看不到。现改走
+insert_user_jd + embed_and_store_jd_chunks，与 crawler/pipeline.py 同一条落库路径。
+
+user_id 走必填 CLI 参数而非 web_app.current_user_id()：本脚本是纯 CLI 入口，
+没有 Streamlit session，与 scripts/migrate_sqlite_to_pg.py 的 --user-id 一致。
 """
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
-# 添加项目根目录
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-import asyncio
-import json
+from dotenv import load_dotenv
 from loguru import logger
 
-from tools.knowledge_base import KnowledgeBase
-from tools.llm import OpenAICompatibleClient
-from dotenv import load_dotenv
-import os
+load_dotenv(PROJECT_ROOT / ".env")
+
+from database.classifier import Classifier
+from database.factory import get_db
+from services.jd_library_service import insert_user_jd
+from tools.jd_indexer import embed_and_store_jd_chunks
 
 
-async def import_collected_jobs():
-    """导入收集的 JD 到知识库"""
-    print("="*60)
+def import_collected_jobs(user_id: str) -> int:
+    """把 ~/.job_hunter/collected_jds/job_*.json 导入 v2 库。返回成功条数。"""
+    print("=" * 60)
     print("Job Hunter - 导入收集的 JD")
-    print("="*60)
+    print("=" * 60)
 
-    # 加载环境变量
-    load_dotenv()
-
-    # 检查数据目录
     collected_dir = Path.home() / ".job_hunter" / "collected_jds"
-
     if not collected_dir.exists():
         print(f"\n❌ 数据目录不存在: {collected_dir}")
         print("请先用 smart_collector.py 收集一些职位")
-        return
+        return 0
 
-    # 找到所有 JD 文件
-    job_files = list(collected_dir.glob("job_*.json"))
-    job_files.sort()
-
+    job_files = sorted(collected_dir.glob("job_*.json"))
     if not job_files:
-        print(f"\n❌ 目录中没有找到收集的 JD")
+        print("\n❌ 目录中没有找到收集的 JD")
         print("请先用 smart_collector.py 收集一些职位")
-        return
+        return 0
 
-    print(f"\n找到 {len(job_files)} 个收集的职位\n")
+    print(f"\n找到 {len(job_files)} 个收集的职位（归属 user_id={user_id}）\n")
 
-    # 初始化 LLM 和知识库
-    api_key = os.getenv("LLM_API_KEY", "")
-    api_url = os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1")
-    model = os.getenv("LLM_MODEL", "agnes-2.0-flash")
+    db = get_db()
+    classifier = Classifier()
 
-    if not api_key:
-        print("⚠️  没有找到 LLM_API_KEY，请设置后再运行")
-        print("可以在 .env 文件中设置，或者设置环境变量")
-
-    print("初始化知识库...")
-    kb = KnowledgeBase()
-
-    if api_key:
-        llm = OpenAICompatibleClient(
-            api_key=api_key,
-            api_url=api_url,
-            model=model,
-            is_coding_api=True,
-            use_anthropic_format=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true",
-            user_id="import_collected_script",
-        )
-        kb.set_llm_client(llm)
-        print("✅ LLM 已初始化，将自动分类职位")
-    else:
-        print("⚠️  无 LLM API Key，跳过智能分类")
-
-    # 导入每个 JD
     imported_count = 0
     for idx, job_file in enumerate(job_files, 1):
         try:
@@ -89,55 +67,64 @@ async def import_collected_jobs():
 
             title = job_data.get("title", "Unknown")
             raw_text = job_data.get("raw_text", "")
-
             print(f"  标题: {title[:60]}")
 
-            # 尝试分类
-            category = "General"
-            if api_key and hasattr(kb, "classify_jd"):
-                try:
-                    classification = await kb.classify_jd({
-                        "title": title,
-                        "description": raw_text
-                    })
-                    category = classification.get("category", "General")
-                    print(f"  分类: {category}")
-                except Exception as e:
-                    logger.debug(f"分类失败: {e}")
-
-            # 保存到知识库
-            kb.switch_database(category)
-            jd_id = kb.add_jd({
-                "title": title,
-                "raw_text": raw_text,
+            jd_payload = {
                 "url": job_data.get("url", ""),
+                "title": title,
+                "company": job_data.get("company", ""),
+                "location": job_data.get("location", ""),
+                "raw_text": raw_text,
                 "source": "smart_collector",
-                "saved_at": job_data.get("saved_at", ""),
-            })
+                "crawled_at": job_data.get("saved_at") or None,
+            }
 
-            print(f"  ✅ 已保存到知识库 (ID: {jd_id})")
+            # 分类失败不阻断入库（与 crawler/pipeline.py 一致）
+            try:
+                classification = classifier.classify(title=title, raw_text=raw_text)
+                jd_payload["industry_tag"] = classification.get("industry_tag")
+                jd_payload["function_tag"] = classification.get("function_tag")
+                jd_payload["position_tag"] = classification.get("position_tag")
+                jd_payload["auto_classified"] = 1
+                print(f"  分类: {classification.get('position_tag')} "
+                      f"(layer {classification.get('layer', '?')})")
+            except Exception as exc:
+                logger.warning(f"分类失败，按未分类入库: {exc}")
+
+            jd_id = insert_user_jd(db, user_id, jd_payload)
+
+            # 向量化失败不回滚 JD：JD 本身已可见，索引可后续用 scripts/index_jds.py 补
+            try:
+                n_chunks = embed_and_store_jd_chunks(db, jd_id, raw_text, user_id=user_id)
+            except Exception as exc:
+                n_chunks = 0
+                logger.warning(f"向量化失败 {jd_id}: {exc}")
+
+            print(f"  ✅ 已入 v2 库 (ID: {jd_id}, chunks: {n_chunks})")
             imported_count += 1
 
-            # 移动文件到已导入目录
             imported_dir = collected_dir / "imported"
             imported_dir.mkdir(exist_ok=True)
-            target = imported_dir / job_file.name
-            job_file.rename(target)
+            job_file.rename(imported_dir / job_file.name)
 
-        except Exception as e:
-            logger.exception(f"导入失败: {e}")
-            print(f"  ❌ 失败: {e}")
+        except Exception as exc:
+            logger.exception(f"导入失败: {exc}")
+            print(f"  ❌ 失败: {exc}")
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"导入完成！成功 {imported_count}/{len(job_files)}")
-    print("="*60)
+    print("=" * 60)
+    print(f"\n可在 Flow B / JD 库中以 user_id={user_id} 查看这些 JD。")
+    return imported_count
 
-    # 显示统计
-    stats = kb.get_statistics()
-    print("\n知识库统计：")
-    print(f"  总数据库: {stats.get('total_dbs', 0)}")
-    print(f"  总职位数: {stats.get('total_jds', 0)}")
+
+def main():
+    parser = argparse.ArgumentParser(description="导入 collector 收集的 JD 到 v2 统一库")
+    parser.add_argument("--user-id", required=True,
+                        help="导入 JD 的归属用户 id（必填 — 数据按用户隔离）")
+    args = parser.parse_args()
+    import_collected_jobs(args.user_id)
 
 
 if __name__ == "__main__":
-    asyncio.run(import_collected_jobs())
+    main()
