@@ -15,6 +15,8 @@
 | 2026-08-03 | v1 PRELIMINARY 创建（基于探查 27 文件 + 三路 subagent 报告） | pingce skill |
 | 2026-08-03 | P0-002 关闭：real_llm 默认 deselect + 断言放宽（commit `711618e`） | fix agent |
 | 2026-08-03 | P0-005 关闭：docker 明文密码改 env_file + POSTGRES_PASSWORD 强校验（commit `e105177`） | fix agent |
+| 2026-08-03 | P0-006 关闭：登录错误信息脱敏 — login_user 三场景统一对外文案（commit `7925824` / `6b57427`） | fix agent |
+| 2026-08-03 | P0-009 关闭：README launcher 行数 160→270（commit `376ec90`） | fix agent |
 | 2026-08-03 | P2-018 关闭：CI workflow 加 sqlite-vec==0.1.6（commit `36bf4e6`） | fix agent |
 | 2026-08-03 | v1 FROZEN — owner 拍板 Q1-Q4 + 终审 Q1-Q4 | pingce skill |
 | 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
@@ -78,7 +80,7 @@
 - **代码依据**：
   - `pages/09_🔐_Auth.py:62`
   - `services/auth_service.py` `AuthError` 含具体语义（来源：探查报告）
-- **状态**：🔴 待修复 — P0 安全红线。需新增 commit：所有登录失败统一返回"邮箱/手机号或密码错误"，不区分。
+- **状态**：✅ 已关闭 — `7925824` + `6b57427`（2026-08-03）。修复：1) `services/auth_service.py` 新增 `_LOGIN_OBFUSCATED_MESSAGE = "邮箱/手机号或密码错误"` 常量；2) `login_user` 三个 raise 分支（user_not_found / locked_out / bad_password）全部改为统一文案；3) backend `audit_logs.error_message` 仍按 user_not_found / bad_password / locked_out 落具体错误码便于 ops 排查，前端只拿脱敏 message；4) 适配 `tests/unit/test_auth_service.py::TestLoginLockout::test_fifth_failure_locks_account` match 改文案。验证：`tests/unit/test_auth_service_error_obfuscation.py` 5 条全过，三场景 message 字符串相等。pytest 552 passed / 3 deselected / 0 failed。
 - **关联**：REVIEW.md R5-2
 
 ### P0-007 · 简历粘贴 text_area 无长度上限
@@ -96,7 +98,7 @@
 ### P0-009 · launcher 脚本行数 README 夸大
 - **问题**：`README.md:69` 写 "scripts/jobhunter_launcher.py 是 160 行的 Python 脚本"，实测 270 行。
 - **代码依据**：`wc -l scripts/jobhunter_launcher.py` = 270
-- **状态**：🟡 owner 默认决议修 README（2026-08-03）。需新增 commit：README 数字改为 270 或删掉具体行数。
+- **状态**：✅ 已关闭 — `376ec90`（2026-08-03）。修复：`README.md:69` "160 行" 改为 "270 行"。验证：`grep "160 行" README.md` 0 命中。
 - **关联**：REVIEW.md 第 0 节
 
 ---

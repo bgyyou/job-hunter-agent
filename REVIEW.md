@@ -61,6 +61,13 @@
   - 注意：`docker-compose.prod.yml` 已用 `.env.production`（之前已就绪，不需改）
 - **判定命令 2**（登录错误信息脱敏）：`grep -n "用户不存在\|密码错误" services/auth_service.py`
   - 通过条件：错误信息统一为"邮箱/手机号或密码错误"，不再区分账号存在性
+- **已修复（commit `7925824` + `6b57427`）**：
+  - `services/auth_service.py` 新增 `_LOGIN_OBFUSCATED_MESSAGE = "邮箱/手机号或密码错误"` 常量
+  - `login_user` 三个 raise 分支（user_not_found / locked_out / bad_password）全部改统一文案
+  - backend 侧 `audit_logs.error_message` 仍落 user_not_found / bad_password / locked_out 详细错误码，便于 ops 排查
+  - loguru logger 路径不变（前端不在错误信息层泄露）
+  - 适配 `tests/unit/test_auth_service.py::TestLoginLockout::test_fifth_failure_locks_account` match 改"锁定"→"邮箱/手机号或密码错误"
+  - 验证：`tests/unit/test_auth_service_error_obfuscation.py` 5 条覆盖三场景，message 字符串完全相等；pytest 全量 552 passed / 3 deselected / 0 failed
 - **判定命令 3**（硬编码 key）：`grep -rnE "sk-[a-zA-Z0-9]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}" --include="*.py" .`
   - 通过条件：0 命中（除 gitleaks 白名单 `.env.example` / `tools/githooks/*` 等）
 - **判定命令 4**（简历粘贴长度上限）：`grep -n "st.text_area.*resume\|max_chars" pages/06_📄_Flow_B.py`
@@ -289,6 +296,7 @@
 | 2026-08-03 | v1.1 PRELIMINARY 复审 | R7/R8 跳过实测（R7 命令过时 / R8 用户决策）；R1-R6 红线未达（6 项）；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9（≥3 红线未过触发下限）；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 | 2026-08-03 | v1.1 增量修复 | P0-002 + P0-005 + P2-018 关闭（commit `711618e` / `e105177` / `36bf4e6`）；R2 + R5-1 已修复备注；R1/R3/R4/R5-2/R5-4/R6 仍未达；待 v1.2 复审 | fix agent |
 | 2026-08-03 | **R2 修复落地（commit `711618e`）**：P0-002 真 LLM flake 关闭；基线 547 passed / 3 deselected / 0 failed | fix agent |
+| 2026-08-03 | **R5-2 修复落地（commit `7925824` + `6b57427` + `376ec90`）**：P0-006 登录错误信息脱敏 + P0-009 README 行数 160→270；基线 552 passed / 3 deselected / 0 failed | fix agent |
 
 ### 7.6 评审 agent 工作流
 
