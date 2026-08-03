@@ -24,6 +24,8 @@ from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
 
+from services._text_utils import strip_thinking
+
 
 MAX_CHARS_PER_REQUEST = 4000  # 中文 ~2000 tokens 上限，留余量
 SHORT_PROMPT_THRESHOLD = 400  # 单次调用上限 chars
@@ -98,55 +100,6 @@ _cache = _TranslationCache()
 
 
 # ---------------------------------------------------------------------------
-# 输出清理：MiniMax-M3 默认先写  思维链，后接最终答案
-# ---------------------------------------------------------------------------
-
-_THINKING_TAG_RE = re.compile(r"```[\s\S]*?```", re.DOTALL)
-_FENCE_RE = re.compile(r"```[\s\S]*?```", re.DOTALL)
-
-
-def _strip_thinking(content: str) -> str:
-    """Strip MiniMax-M3 reasoning blocks. Supports both forms:
-       1. ```thinking...``` (fenced code block)
-       2.  textual reasoning tags
-    """
-    BT = "```"
-    LBR = "<"
-    RBR = ">"
-    # Pass 1: strip ```fenced``` blocks
-    start = 0
-    while True:
-        s = content.find(BT, start)
-        if s == -1:
-            break
-        e = content.find(BT, s + 3)
-        if e == -1:
-            break
-        candidate = (content[:s] + content[e + 3:]).strip()
-        if not candidate:
-            return content
-        content = candidate
-        start = 0
-    # Pass 2: strip  ...  plain tags
-    while True:
-        s = content.find(LBR)
-        if s == -1:
-            return content
-        e = content.find(RBR, s + 1)
-        if e == -1:
-            return content
-        head = content[s + 1:e]
-        if not head:
-            return content
-        # find matching   after the first ">"
-        close = content.find(LBR + "/" + head + RBR, e + 1)
-        if close == -1:
-            return content
-        content = (content[:s] + content[close + len(head) + 3:]).strip()
-    return content
-
-
-# ---------------------------------------------------------------------------
 # LLM 翻译主流程
 # ---------------------------------------------------------------------------
 
@@ -210,7 +163,7 @@ class ChunkTranslator:
             temperature=0.1,  # 翻译要稳定
         )
         content = (resp.content or "").strip()
-        content = _strip_thinking(content)
+        content = strip_thinking(content)
         if not content:
             raise RuntimeError("LLM returned empty translation")
         return content

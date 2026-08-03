@@ -5,22 +5,23 @@ import pytest
 import sqlite_vec
 
 from scripts.backfill_translate_chunks import BGE_DIM, BackfillRunner
-from services.translation_service import ChunkTranslator, _strip_thinking, detect_language
+from services._text_utils import strip_thinking
+from services.translation_service import ChunkTranslator, detect_language
 
 
 def test_strip_thinking_fenced_block():
     src = "```thinking\nfoo bar\n```\n答案工程经理"
-    assert _strip_thinking(src) == "答案工程经理"
+    assert strip_thinking(src) == "答案工程经理"
 
 
 def test_strip_thinking_plain_tag():
     src = "<think>reasoning here</think>\n答案工程经理"
-    assert _strip_thinking(src) == "答案工程经理"
+    assert strip_thinking(src) == "答案工程经理"
 
 
 def test_strip_thinking_keeps_clean():
     src = "答案工程经理，无需剥离"
-    assert _strip_thinking(src) == "答案工程经理，无需剥离"
+    assert strip_thinking(src) == "答案工程经理，无需剥离"
 
 
 
