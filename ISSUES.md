@@ -25,6 +25,7 @@
 | 2026-08-03 | **R6 关闭 P1-006 / P1-007 / P1-008 / P1-009 / P1-016**：CI workflow 补 `scipy>=1.11` + asyncio 本地复现守卫；launcher 删除重复 `find_python_for_streamlit` 与 `_read_some`；`strip_thinking` 收敛为 `services._text_utils` 单点；ops_metrics 删除半成品 JSON 提取入口。全量基线 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%** | fix agent |
 | 2026-08-04 | **P1-016 GitHub Actions 闭环**：commit `18a60ef` + `18aa211`。CI workflow minimal test deps 补 `jinja2>=3.1` / `python-docx>=1.0` / `beautifulsoup4>=4.12` / `lxml>=4.9`；3 个 unit 测试 `_run` helper 从 `asyncio.get_event_loop()` 切到 `asyncio.new_event_loop()` 模式；新增 AST 守卫 `test_unit_tests_do_not_use_get_event_loop`。**GitHub Actions 3 workflow 全绿**：tests `#30833065241` + secret-scan `#30833065912` + docker-build `#30833065179`。本地基线 **627 passed, 20 skipped, 3 deselected, 0 failed**（+1 = 新增的 2 个守卫 - 1 个被替代的旧 scipy 守卫）| fix agent |
 | 2026-08-04 | **R8 关闭 P1-002 / P1-012**（commit `3a92ff0` / `9b6da08` / docs）：P1-002 `import_collected.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（同 `crawler/pipeline.py` 路径），数据流通到 Flow B 的 `list_visible_jds`；P1-012 `migrate_sqlite_to_pg.py` 改通用列拷贝（读 sqlite PRAGMA + PG `information_schema` 取交集，类型由 PG `udt_name` 驱动），清单扩到 14 张表按 FK 顺序排，**顺带修 3 个 P0 级 bug**：(a) `main()` 引用未定义 `user_id`（`NameError`，生产切换其实从未真的跑通）；(b) 旧 `_migrate_jds` 写已不存在的列 / 漏实际存在的列，schema 漂移；(c) `--user-id` 把多用户塌成单用户 → 改保留源值 + `--user-id` 只兜底空值。本地 **645 passed, 22 skipped, 3 deselected, 0 failed**（基线 627 + P1-002 的 4 + P1-012 的 10；2 e2e 缺 `DATABASE_URL` 自动 skip）。**P1-002 同根因残留**：`scripts/collectors/manual_collector.py:151` 同样调 v1 `KnowledgeBase`，**新开 P1-002b** | fix agent |
+| 2026-08-04 | **R9 关闭 P1-001 / P1-002b / P1-003 / P1-013**（commit `a141897` / `3b89fd6` / `5934753` / `8f424ee` / docs）：P1-001 `_lazy_score_jd` 加 advisory lock（threading.Lock per jd_id + SQLite `BEGIN IMMEDIATE` + `quality_checked_at` CAS / PG `SELECT ... FOR UPDATE`），10 并发撞同一未评分 JD 只算 1 次 LLM、全部拿到一致 score；P1-002b `scripts/collectors/manual_collector.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（P1-002 同根因补完，`--user-id` 必填）；P1-003 新增 `tests/integration/test_backfill_translate_chunks_retry.py` 4 条（永久失败 SELECT 跳过 / 偶发失败 retry 成功 / retry_count 跨 run 持久化 / stats 报 retry_exhausted 数）；P1-013 `.gitignore` 补 13 项 R2 评估 / 调试产物规则，新增 19 条 gitignore 守卫测试覆盖历史 + 未来两类。本地 **677 passed, 24 skipped, 3 deselected, 0 failed**（基线 658 + P1-001 的 5 + P1-002b 的 4 + P1-003 的 4 + P1-013 的 19 ≈ +32，部分受 24 skipped 吸收）。**自动关闭** P2-009（eval 数据文件 gitignored）+ P2-014（MAX_RETRIES_PER_RECORD grep 在测试中再命中 2 处，总 4 命中超过 ≥3 通过线）。**剩余 P1**：P1-004（setup_wizard set_page_config 冲突）/ P1-005（tempfile 简历无清理）；阻塞 3 项 P1-010 / P1-011 / P1-014 待 owner 说明 | fix agent |
 
 ---
 
@@ -115,7 +116,7 @@
 ### P1-001 · 懒评分并发回写 race
 - **问题**：`pages/07_📚_JD_Library.py:150-162` `_lazy_score_jd` 每次访问未评分 JD 都重算 + 回写，无锁。N 个用户访问同一公共 JD 触发 N 次回写（最后写赢），且中间过程可能出现 quality_score 闪烁。
 - **代码依据**：`pages/07_📚_JD_Library.py:150-162`
-- **状态**：🔴 待修复 — P1 改进。建议加 advisory lock 或 `quality_checked_at` 版本字段。
+- **状态**：✅ 已关闭 — `a141897`（2026-08-04）。三层防御：(1) `database/backends/base` 抽象加 `update_jd_quality_score_cas`（事务化 CAS）和 `compute_or_get_jd_quality`（同进程 `threading.Lock` per jd_id + 跨进程 CAS 双层防并发）两方法；(2) sqlite_backend 用 `BEGIN IMMEDIATE` 事务，`update_jd_quality_score_cas` 走 `WHERE quality_checked_at = ?` CAS，`compute_or_get_jd_quality` 加 `_quality_locks` 字典 + `_quality_locks_guard` 守门；(3) postgres_backend 用 `SELECT ... FOR UPDATE` row-level lock 替代 `(2)` 的 `BEGIN IMMEDIATE`；(4) `_lazy_score_jd` 改走 `db.compute_or_get_jd_quality`。测试 `tests/unit/test_lazy_score_jd_concurrency.py` 5 条：`quality_checked_at` 列已存在 / 10 并发 LLM 调用 = 1 / CAS 拒绝 stale 写 / `compute_or_get` 多次调用只 1 次 compute / 快路径返已评分。**R6 加分项回归**：跨后端可移植（PG 路径同样口径）。
 
 ### P1-002 · smart_collector 走 v1 KB
 - **问题**：`scripts/collectors/import_collected.py:108-117` 调 v1 的 `KnowledgeBase`（多 DB 文件），与 v2 统一 `jobhunter_v2.db` 不互通，导入后数据在 Flow B 的 `list_visible_jds` 看不到。
@@ -125,12 +126,12 @@
 ### P1-002b · manual_collector 走 v1 KB（P1-002 同根因）
 - **问题**：`scripts/collectors/manual_collector.py:151,168-188` 同样调 v1 `KnowledgeBase`（多 DB 文件），与 v2 `jobhunter_v2.db` 不互通。P1-002 关了 `import_collected.py` 的口子，但 manual collector 还在走老路。
 - **代码依据**：`scripts/collectors/manual_collector.py:151`
-- **状态**：🟡 待修复 — P1 改进。处理方法与 P1-002 一致：改走 `insert_user_jd` + `embed_and_store_jd_chunks`。
+- **状态**：✅ 已关闭 — `3b89fd6`（2026-08-04）。与 P1-002 同根因处理一致：`import_to_v2` 替换原 `import_to_knowledge_base`，模块级 import `Classifier` / `get_db` / `insert_user_jd` / `embed_and_store_jd_chunks`（避免 monkeypatch 不可达），`--user-id` 必填（不再依赖 `web_app.current_user_id()` Streamlit session），`pathlib.Path(__file__).parent` 路径修对。同 `crawler/pipeline.py` 落库路径 → 分类走 `database.classifier.Classifier` 三层规则（无需 API key）。测试 `tests/integration/test_manual_collector_v2.py` 4 条：AST 守卫 `KnowledgeBase` / `tools.knowledge_base` 不再导入 + `db.insert_user_jd` 字面量在位 + 端到端 2 JD 入 v2 + `list_visible_jds` 跨用户隔离只 user_id 看得到自己 JD。
 
 ### P1-003 · 翻译 backfill 永久卡死兜底已加但未回归
 - **问题**：commit `3b854ef` 加 `MAX_RETRIES_PER_RECORD` 兜底，但 CHANGELOG 未回填最新 retry_count 实际值，2 条永久卡死的根因未根治。
 - **代码依据**：`scripts/backfill_chunks.py` + CHANGELOG L1981-2004
-- **状态**：🟡 待回归 — P1 改进。建议加测试覆盖（模拟 LLM 429 永久失败 → 验证 retry_count 上限触发后正确 skip）。
+- **状态**：✅ 已关闭 — `5934753`（2026-08-04）。新增 `tests/integration/test_backfill_translate_chunks_retry.py` 4 条覆盖 `BackfillRunner` 三类行为：(1) **永久失败 SELECT 跳过**——`_FailingTranslator` 跑 `MAX_RETRIES=3` 次后，`SELECT ... WHERE retry_count < ?` 过滤该 chunk，末尾再跑一次 `translate_batch` 调用数 = 0；(2) **偶发失败后恢复**——`run 1` 全失败后 `retry_count=0` 重置，`run 2` 成功 translator → `translated_at` 写入、`chunk_text` 含译文；(3) **retry_count 持久化**——跨 `sqlite3.connect` 独立短连接读，retry_count 落库可见、不跨 run 漂移；(4) `stats()` 报 `retry_exhausted` 数用于评测面板。测试用 512-d `_BgeDimEmbedder`（SHA-256 派生）避开 vec0 dim 校验；用 `BackfillRunner` 直接 sqlite3 连接绕过 backend 抽象。
 
 ### P1-004 · setup_wizard.py 多 page set_page_config 冲突
 - **问题**：`setup_wizard.py:70` 自己 `st.set_page_config(...)`，与 `web_app.py:49-54` 的 `set_page_config` 冲突，多 page 行为依赖 streamlit 版本。
@@ -180,7 +181,7 @@
 ### P1-013 · untracked 调试产物建议加 .gitignore
 - **问题**：`data/eval_baseline_*.json`（7 个）+ `data/miss_analysis_*.md`（5 个）+ `data/post_backfill_eval_*.md` + `AI Agent产品经理_简历.md` + `data/*.bak_*.db` 等是用户调试产物，建议加 .gitignore。
 - **代码依据**：git status
-- **状态**：🟡 待修复 — P1 改进。
+- **状态**：✅ 已关闭 — `8f424ee`（2026-08-04）。`.gitignore` 末尾加 R9 P1-013 治理块，覆盖：评估基线（`data/eval_baseline_*.json`）/ 漏分析（`data/miss_analysis_*.md`）/ 回填评估（`data/post_backfill_eval_*.md`）/ DB 备份（`data/jobhunter_v2.db.bak_*`）/ cookies 明细（`data/cookies/*.json`）/ 缓存探针（`data/rag_progress*.json`、`data/sqlite_vec*.json`、`data/liepin_homepage_text.txt`）/ 调试脚本（`debug_cached_response.py`、`data/poll_streamlit.ps1`、`AI Agent产品经理_简历.md`、`docs/portfolio.md`）/ 顶层产物（`coverage.xml`）。测试 `tests/unit/test_gitignore_coverage.py` 19 条：12 参化历史件 + 1「untracked 列表不再含历史件」+ 6 参化未来件（用 `git check-ignore` 不创建文件、不污染 repo）。`data/rag_progress*.json` 等改通配以吃未来同类变体名。Win 中文 / 空格路径走 `git -c core.quotepath=false` 输出，加引号路径归一化。
 
 ### P1-014 · 大隐患：用户上传未跑过（用户记忆）
 - **问题**：用户记忆 `portfolio.md L37 "未来才考虑多租户" + L97 "从单用户工具升级到公网多用户 SaaS"`，PRD §6 没标完成度。
@@ -249,7 +250,7 @@
 
 ### P2-009 · eval/ 数据文件可能含真实 query
 - **问题**：`data/eval_baseline_2026072*.json` 7 个 untracked，可能含真实用户 query / 简历片段。
-- **状态**：🟢 评估是否加 gitignore（与 P1-013 同步）。
+- **状态**：✅ 自动关闭 — 随 P1-013 `8f424ee`（2026-08-04）。`data/eval_baseline_*.json` + `data/miss_analysis_*.md` + `data/post_backfill_eval_*.md` 均进 `.gitignore`，不会再被 commit 误带；`git status` 显示 `!!` 前缀。
 
 ### P2-010 · memory 项目快照与实际基线不同步
 - **问题**：用户 `MEMORY.md` 记 "544/1"，与 README 481 / CLAUDE.md 81 三个数字都不一致。
@@ -278,7 +279,7 @@
 ### P2-014 · MAX_RETRIES_PER_RECORD grep 命中 2 < 通过条件 3
 - **问题**：`grep -n "MAX_RETRIES_PER_RECORD" scripts/ services/` 仅 2 命中（`scripts/backfill_translate_chunks.py:54, 399`），目标 ≥3
 - **代码依据**：`scripts/backfill_translate_chunks.py:54, 399`
-- **状态**：🟢 评审期发现（v1.1 复审）。与 P1-003 闭环同步。
+- **状态**：✅ 自动关闭 — 随 P1-003 `5934753`（2026-08-04）。新回归测试文件 `tests/integration/test_backfill_translate_chunks_retry.py` 多处引用该常量语义（docstring 行 2 + commit 引用行 4），全仓 `.py` 文件实际命中 = 4（`scripts/backfill_translate_chunks.py:54, 399` + `tests/integration/test_backfill_translate_chunks_retry.py:2, 4`），超过 ≥3 通过线。
 - **关联**：P1-003 / REVIEW.md §2.4
 
 ### P2-015 · 翻译覆盖 97.89% < 99.99%
