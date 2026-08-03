@@ -102,7 +102,7 @@ class FlowADraftService:
     the recoverable-draft policy used by Streamlit.
     """
 
-    def __init__(self, db: Any, user_id: str = "default") -> None:
+    def __init__(self, db: Any, user_id: str) -> None:
         self.db = db
         self.user_id = user_id
 

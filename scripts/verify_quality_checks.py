@@ -46,6 +46,7 @@ async def main() -> int:
         api_url=api_url,
         model=model,
         use_anthropic_format=use_anthropic,
+        user_id="verify_quality_checks_script",
     )
 
     msg = [LLMMessage(role="user", content="只回复一个汉字：好")]

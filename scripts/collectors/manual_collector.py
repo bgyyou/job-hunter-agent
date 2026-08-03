@@ -161,7 +161,8 @@ async def import_to_knowledge_base(jd_dir: Path):
             api_url=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1"),
             model=os.getenv("LLM_MODEL", "agnes-2.0-flash"),
             is_coding_api=True,
-            use_anthropic_format=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true"
+            use_anthropic_format=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true",
+            user_id="manual_collector_script",
         )
 
         kb = KnowledgeBase()

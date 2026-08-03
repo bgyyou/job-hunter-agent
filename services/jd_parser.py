@@ -56,10 +56,11 @@ class StructuredJD:
     source 必填，其余可选；responsibilities/requirements 始终为 list。
     needs_user_review 为 True 时表示数据不可信，前端必须给校对界面。
     parse_notes 记录降级 / OCR 警告等诊断信息。
+
+    不含 user_id：解析器无法知道归属用户，由持久化边界显式赋值。
     """
 
     jd_id: Optional[int] = None
-    user_id: str = "default"
     source: Literal["text", "image", "rag"] = "text"
     raw_text: str = ""
     company: Optional[str] = None
@@ -73,9 +74,11 @@ class StructuredJD:
     parse_notes: List[str] = field(default_factory=list)
 
     def to_db_dict(self) -> Dict[str, Any]:
-        """Convert to dict suitable for BaseBackend.insert_jd_structured."""
+        """Convert to dict suitable for BaseBackend.insert_jd_structured.
+
+        No ``user_id`` key — the caller must stamp it before persisting.
+        """
         return {
-            "user_id": self.user_id,
             "source": self.source,
             "raw_text": self.raw_text,
             "company": self.company,

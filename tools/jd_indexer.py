@@ -17,7 +17,8 @@ def embed_and_store_jd_chunks(
     db: Any,
     jd_id: str,
     raw_text: str,
-    user_id: str = "default",
+    *,
+    user_id: str,
 ) -> int:
     """切分 + 向量化 + 落库。返回写入的 chunk 数；失败返回 0。"""
     if not raw_text or not raw_text.strip():

@@ -32,6 +32,7 @@ def make_llm():
         api_key=os.environ["LLM_API_KEY"],
         api_url=os.getenv("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1").rstrip("/"),
         model=os.getenv("LLM_MODEL", "agnes-2.0-flash"),
+        user_id="verify_m2_5_script",
     )
 
 

@@ -94,11 +94,12 @@ def main():
         "parsed_sections": {"verify": "m3"},
         "tags": ["verify_m3"],
         "source": "verify_m3",
+        "user_id": "verify_m3_script",
     })
     print(f"  JD inserted: id={jd_id}")
 
     t0 = time.time()
-    n = embed_and_store_jd_chunks(db, jd_id, raw_text)
+    n = embed_and_store_jd_chunks(db, jd_id, raw_text, user_id="verify_m3_script")
     t1 = time.time()
     print(f"  embed_and_store: {n} chunks, {(t1 - t0) * 1000:.0f}ms")
     assert n >= 3, "向量化 chunk 数量异常"

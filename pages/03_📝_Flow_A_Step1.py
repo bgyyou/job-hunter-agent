@@ -59,8 +59,7 @@ def _jd_to_dict(jd_obj: Any) -> Dict[str, Any]:
         d["parse_notes"] = list(getattr(jd_obj, "parse_notes", []) or [])
         d["raw_text"] = getattr(jd_obj, "raw_text", "")
         d["level"] = getattr(jd_obj, "level", None)
-        # P0-008 同根因：不用 "default" 兜底 user_id，否则解析出的 JD 会落到共享账号下。
-        d["user_id"] = getattr(jd_obj, "user_id", None) or current_user_id()
+        d["user_id"] = current_user_id()
         return d
     if hasattr(jd_obj, "__dict__"):
         return vars(jd_obj)

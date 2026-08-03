@@ -34,7 +34,7 @@ def main():
     # 拉 jds 表所有未删除的 JD
     import sqlite3
     conn = sqlite3.connect("data/jobhunter_v2.db")
-    sql = "SELECT id, raw_text, source FROM jds WHERE deleted_at IS NULL"
+    sql = "SELECT id, raw_text, source, user_id FROM jds WHERE deleted_at IS NULL"
     if args.source:
         sql += " AND source = ?"
         rows = conn.execute(sql, (args.source,)).fetchall()
@@ -49,13 +49,13 @@ def main():
     skipped = 0
     failed = 0
 
-    for jd_id, raw_text, source in rows:
+    for jd_id, raw_text, source, jd_user_id in rows:
         if not raw_text or not raw_text.strip():
             skipped += 1
             continue
 
         try:
-            n = embed_and_store_jd_chunks(db, jd_id, raw_text)
+            n = embed_and_store_jd_chunks(db, jd_id, raw_text, user_id=jd_user_id)
             if n > 0:
                 total_chunks += n
                 ok += 1

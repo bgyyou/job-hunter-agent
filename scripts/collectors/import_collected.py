@@ -71,6 +71,7 @@ async def import_collected_jobs():
             model=model,
             is_coding_api=True,
             use_anthropic_format=os.getenv("LLM_USE_ANTHROPIC_FORMAT", "false").lower() == "true",
+            user_id="import_collected_script",
         )
         kb.set_llm_client(llm)
         print("✅ LLM 已初始化，将自动分类职位")

@@ -234,7 +234,7 @@ class LLMClient(ABC):
                 "error_type": "api_error" if error else None,
                 "error_message": error,
                 "metadata": {"cache_hit": cache_hit},
-                "user_id": getattr(self, "user_id", "default"),
+                "user_id": self.user_id,
             })
         except Exception as exc:
             # 埋点失败绝不影响业务
@@ -295,7 +295,8 @@ class OpenAICompatibleClient(LLMClient):
         pricing: Optional[Dict[str, float]] = None,
         is_coding_api: bool = False,
         use_anthropic_format: bool = False,
-        user_id: str = "default"
+        *,
+        user_id: str
     ):
         """
         初始化 OpenAI 兼容客户端
