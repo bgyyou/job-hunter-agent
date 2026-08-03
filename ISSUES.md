@@ -22,6 +22,7 @@
 | 2026-08-03 | v1 FROZEN — owner 拍板 Q1-Q4 + 终审 Q1-Q4 | pingce skill |
 | 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 | 2026-08-03 | **R3 关闭 P0-001 / P0-007 / P0-008**（commit `a4e11dd` / `d7cb50e` / `65c6625`）；测试基线 552 → 568 passed, 3 deselected；P2-010 / P2-016 随 P0-001 自动消解 | fix agent |
+| 2026-08-03 | **R6 关闭 P1-006 / P1-007 / P1-008 / P1-009 / P1-016**：CI workflow 补 `scipy>=1.11` + asyncio 本地复现守卫；launcher 删除重复 `find_python_for_streamlit` 与 `_read_some`；`strip_thinking` 收敛为 `services._text_utils` 单点；ops_metrics 删除半成品 JSON 提取入口。全量基线 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%** | fix agent |
 
 ---
 
@@ -137,22 +138,22 @@
 ### P1-006 · 死代码 `find_python_for_streamlit` 重复定义
 - **问题**：`scripts/jobhunter_launcher.py:41-80` `find_python_for_streamlit` 函数定义两次，第二次完全相同（copy-paste 残留）。
 - **代码依据**：`scripts/jobhunter_launcher.py:41-80`
-- **状态**：🟡 待修复 — P1 改进。删除第二次定义。
+- **状态**：✅ 已关闭 — `6c146f6`（2026-08-03）。删除第二次 `find_python_for_streamlit` 定义；launcher 保留唯一实现。
 
 ### P1-007 · 死代码 `_read_some`
 - **问题**：`scripts/jobhunter_launcher.py:203-214` `_read_some` 函数体立即 `return ""`，已用 threading `_drain` 替代。
 - **代码依据**：`scripts/jobhunter_launcher.py:203-214`
-- **状态**：🟡 待修复 — P1 改进。删除或注释掉。
+- **状态**：✅ 已关闭 — `77f5032`（2026-08-03）。删除立即返回空字符串的 `_read_some`；后台线程 `_drain` 保持唯一输出读取路径。
 
 ### P1-008 · services/_text_utils.py untracked
 - **问题**：`services/_text_utils.py` 是 untracked 新加文件，与 `services/translation_service.py:108` 已有的 `_strip_thinking` 功能重复，唯一非测试调用方是 `debug_cached_response.py`（也是 untracked）。
 - **代码依据**：`services/_text_utils.py` + `services/translation_service.py:108`
-- **状态**：🟡 待决策 — P1 改进。两个选项：1) 进 git 并清理 translation_service 的重复；2) 不进 git 作为本地调试。
+- **状态**：✅ 已关闭 — `4380c55`（2026-08-03）。`services/_text_utils.py` 纳入 git，`translation_service.py` 与 `debug_cached_response.py` 统一导入 `strip_thinking`；P2-011 随之自动解决。
 
 ### P1-009 · services/ops_metrics.py 半成品
 - **问题**：`services/ops_metrics.py:60` 仍 raise `NotImplementedError("use _json_extract_sqlite / _json_extract_pg directly")`，提示函数需走子函数。
 - **代码依据**：`services/ops_metrics.py:60`
-- **状态**：🟡 待修复 — P1 改进。建议重构或彻底删除该函数入口。
+- **状态**：✅ 已关闭 — `6be586a`（2026-08-03）。删除 `_json_extract_sql` 半成品入口；调用方继续直调 `_json_extract_sqlite` / `_json_extract_pg`。
 
 ### P1-010 · Flow B 是否同根因待确认（用户记忆）
 - **问题**：用户记忆提到 "Flow B 同根因待确认"（未在探查报告中找到具体证据，需要 owner 进一步说明）。
@@ -189,6 +190,14 @@
   - **白名单例外**：4 个系统级方法允许 `user_id: Optional[str] = None`（`get_llm_usage_today` 全局聚合 / `list_audit_logs` 系统级审计 / `vector_search` + `like_search_chunks` 跨用户 RAG 召回）
 - **状态**：✅ 已关闭 — R6 判定命令 1 使能机制就位；守卫测试 40 条保证不再回潮
 - **关联**：P0-008 / REVIEW.md R6 判定命令 1
+
+### P1-016 · CI tests 一直 fail（pytest-asyncio event loop + scipy 缺失）
+- **问题**：CI workflow 在 R4 (`fb36b15`) 和 R5 (`a296b8d`) 持续 fail，本地 pytest 通过
+- **代码依据**：
+  - `RuntimeError: There is no current event loop in thread 'MainThread'` — CI pytest-asyncio 配置与本地不一致
+  - `ModuleNotFoundError: No module named 'scipy'` — CI `pip install` 列表缺 scipy
+- **影响**：R1 红线 CI 健康（REVIEW §1 R1）未达
+- **状态**：✅ 已关闭 — `ff22f98`（2026-08-03）。CI workflow 增加 `scipy>=1.11`；`pytest.ini` 已启用 `asyncio_mode = auto`，新增 3 条本地 CI 复现守卫。Ubuntu GitHub Actions 需在 push 后确认 run 结果。
 
 ---
 
@@ -244,7 +253,7 @@
 ### P2-011 · services 模块覆盖率 76.9% < 80%
 - **问题**：`pytest --cov=services` 实测 76.9%（含 untracked `_text_utils.py` 0% 拉低），低于目标 80%
 - **代码依据**：`services/_text_utils.py`（untracked）与 `services/translation_service.py:108` `_strip_thinking` 重复
-- **状态**：🟢 评审期发现（v1.1 复审）。与 P1-008 决策绑定：按 P1-008 决议（进 git 并清理 translation_service 重复）后即解。
+- **状态**：✅ 自动解决 — 伴随 P1-008 `4380c55`（2026-08-03）；`services` 覆盖率实测由 76.9% 升至 81%。
 - **关联**：P1-008 / REVIEW.md §2.4 services ≥ 80%
 
 ### P2-012 · agents 整体覆盖率 10% < 16%

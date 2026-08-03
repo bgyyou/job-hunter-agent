@@ -22,6 +22,7 @@
   - `README.md:138` + `CLAUDE.md:38` 已同步到该数字（原为 481 / 81）；README 里过时的 "worktree 会看到 461 passed / 3 skipped" 换成 deselected 的真实成因
   - 连带关闭 ISSUES P2-010（memory 快照不同步）/ P2-016（544 vs 545 字面偏差）
   - **下次评审注意**：R1 的通过条件应改为"0 failed + deselected 仅限 real_llm"，不要再钉死绝对数字 —— 每加一条测试就得改一次 rubric，是这条红线反复失准的根因
+  - **CI 健康已修复（commit `ff22f98`）**：`.github/workflows/test.yml` minimal test deps 增加 `scipy>=1.11`；`pytest.ini` 已启用 `asyncio_mode = auto`；新增 `tests/integration/test_ci_local_repro.py` 覆盖 SciPy 依赖、asyncio 配置和事件循环 smoke test。GitHub Actions 的 Ubuntu run 需在 push 后确认。
 
 ### R2 · 真 LLM flake 必须修复（P0 红线）
 - **判定命令 1**：`grep -n "real_llm" pytest.ini`
@@ -186,6 +187,8 @@
 | gitleaks scan | 0 命中 | `gitleaks detect --source . --config .gitleaks.toml` |
 | 翻译 backfill 永不死循环 | 已实现 MAX_RETRIES_PER_RECORD | `grep -n "MAX_RETRIES_PER_RECORD" scripts/ services/` ≥ 3 命中 |
 
+- **services 覆盖率已修复（commit `4380c55`）**：`strip_thinking` 从 `translation_service.py` 重复实现收敛到已纳入 git 的 `services/_text_utils.py` 单点；本轮 `pytest tests/ --cov=services` 实测 **76.9% → 81%**，达到 80%+ 门槛。
+
 ---
 
 ## 3. 质量项（只记录不扣分）
@@ -341,6 +344,7 @@
 | 2026-08-03 | **R5-2 修复落地（commit `7925824` + `6b57427` + `376ec90`）**：P0-006 登录错误信息脱敏 + P0-009 README 行数 160→270；基线 552 passed / 3 deselected / 0 failed | fix agent |
 | 2026-08-03 | **v1.1 R4 增量修复** | **P0-003 / P0-004 关闭**（commit `f09c1d5` / `482b0c7` / `fe2d484` / `26d9cf6` / `6481880`），连带关闭 P2-017（45 行 legacy=1 残留随 018 DELETE 消解）；**R3 + R4 已修复备注就位**；基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）。注：migration 文件实际编号 017/018（plan 014/015 已被 vec0 / chunk_translation 占用）。**P0 全清** — 进入 P1 阶段，首批 P1-015（27 处 backend `user_id: str = "default"` 签名默认值清理，使能机制彻底堵死） | fix agent |
 | 2026-08-03 | **v1.1 R5 增量修复** | **P1-015 关闭**（commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323`）：R5-1 backends 27 处 `user_id: str = "default"` 改为 keyword-only `*, user_id: str` 必填；R5-2 services/tools StructuredJD 删 user_id 字段 + LLMClient 必填；R5-3 21 测试 fixture 切显式 + 新增 40 条守卫测试；R5-4 写路径 caller 全显式（pages/06 Flow_B + 7 scripts + agents/base.py）。**R6 判定命令 1 使能机制就位** — 下次 R6 跑判定命令 1 应 0 命中。基线 578 → **618 passed, 20 skipped, 3 deselected, 0 failed**（+40 守卫测试）。白名单 4 系统级方法（`get_llm_usage_today` / `list_audit_logs` / `vector_search` / `like_search_chunks`）说明在 `test_p1_015_no_default_user_id.py` | fix agent |
+| 2026-08-03 | **v1.1 R6 死代码与 CI 收口** | **P1-006 / P1-007 / P1-008 / P1-009 / P1-016 关闭**（commit `ff22f98` / `6c146f6` / `77f5032` / `4380c55` / `6be586a`）：CI 增加 `scipy>=1.11` 与 3 条本地复现守卫；launcher 删除重复定义与 `_read_some`；`strip_thinking` 统一到 `services._text_utils`；ops_metrics 删除泛化 NotImplementedError 入口。全量 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%**。下一阶段进入 P1 第二批：P1-001 / P1-002 / P1-003 / P1-012 | fix agent |
 
 ### 7.6 评审 agent 工作流
 
