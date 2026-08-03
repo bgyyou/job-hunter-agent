@@ -178,19 +178,6 @@ def main() -> int:
 
     print(f"[2/3] 等待服务就绪（{READY_TIMEOUT:.0f} 秒超时）...")
 
-    def _read_some():
-        if proc.stdout is None:
-            return ""
-        # 读一点不阻塞，超时 200ms
-        import select
-
-        try:
-            # Windows 上 select 只对 socket 有效、不适用于 named pipe。
-            # 改用线程后台读。
-            return ""
-        except Exception:
-            return ""
-
     # 简化：让 streamlit 输出业只在后台读，主线程走轮询。
     import threading
 
