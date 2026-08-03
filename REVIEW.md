@@ -16,6 +16,12 @@
 - **判定命令**：`pytest tests/ -q --tb=no`
 - **通过条件**：输出末行 = `544 passed, 1 failed`（或 `1 failed` 后跟 `544 passed`）；失败仅限 `tests/integration/test_flow_a_real_llm_3_scenarios.py::TestRealLLMScenarios::test_scenario_a_full_mode_a` 单条
 - **不通过处置**：先按 R2 修复后重测
+- **已修复（commit `65c6625`）**：
+  - 本条通过条件的字面值（`544 passed, 1 failed`）随 R2 的 real_llm 默认 deselect 已经失效。当前权威基线：`pytest tests/ -q --tb=no` 末行 = **`568 passed, 3 deselected, 1 warning`**，0 failed。
+  - 568 = v1 FROZEN 时 552 + 本轮 P0-007（12 条）+ P0-008（4 条）
+  - `README.md:138` + `CLAUDE.md:38` 已同步到该数字（原为 481 / 81）；README 里过时的 "worktree 会看到 461 passed / 3 skipped" 换成 deselected 的真实成因
+  - 连带关闭 ISSUES P2-010（memory 快照不同步）/ P2-016（544 vs 545 字面偏差）
+  - **下次评审注意**：R1 的通过条件应改为"0 failed + deselected 仅限 real_llm"，不要再钉死绝对数字 —— 每加一条测试就得改一次 rubric，是这条红线反复失准的根因
 
 ### R2 · 真 LLM flake 必须修复（P0 红线）
 - **判定命令 1**：`grep -n "real_llm" pytest.ini`
@@ -72,6 +78,13 @@
   - 通过条件：0 命中（除 gitleaks 白名单 `.env.example` / `tools/githooks/*` 等）
 - **判定命令 4**（简历粘贴长度上限）：`grep -n "st.text_area.*resume\|max_chars" pages/06_📄_Flow_B.py`
   - 通过条件：text_area 设 `max_chars`（建议 ≤ 20000 字符），超出截断并提示
+- **已修复（commit `a4e11dd`）**：
+  - 新增 `services/text_limits.py`：`MAX_USER_TEXT_CHARS = 20000` + `clamp_user_text()`（服务端真防线）
+  - **两层防线**：widget `max_chars=MAX_USER_TEXT_CHARS`（UI 即时反馈 + 字符计数器）+ 提交前 `clamp_user_text()` 截断 + `st.warning` 提示
+  - 覆盖 `pages/03_Flow_A_Step1`（JD 粘贴 + 复核表单职责/要求两栏）、`pages/06_Flow_B`、`pages/07_JD_Library` 三个粘贴入口
+  - **`max_chars` 单层不够**：浏览器端约束可被构造的 websocket 消息绕过，所以必须有服务端 `clamp_user_text`；Streamlit `AppTest.set_value()` 不校验 `max_chars`（原 plan 提的 AppTest 测 50k 字符会被截的方案在实现层不可行，已改为直接测 `clamp_user_text` + 静态扫描接线）
+  - 测试 `tests/unit/test_pages_text_area_length_cap.py` 12 条（limit 值/空/边界/超长 + 三个页面 widget + clamp 接线）
+  - 验证：`grep "max_chars" pages/06_📄_Flow_B.py` 命中 1 ✅
 - **不通过处置**：任一未达 → R5 未达
 
 ### R6 · 跨用户隔离（v4 多用户）
@@ -80,6 +93,12 @@
 - **判定命令 2**：读 `pages/08_📈_Application_History.py:159-176` 周围 30 行
   - 通过条件：用户无简历时**不再回退到 `"default"`**，显示空态 + 引导上传
 - **不通过处置**：标记 R6 未达
+- **已修复（commit `d7cb50e`）**：
+  - `pages/08_📈_Application_History.py:155-180` 删 `db.list_resumes("default")` 回退块，改 `st.info` 空态引导；连带删因此变成死代码的 `_resume_lib_effective_user`（全仓只写不读）
+  - **同根因 写侧兜底也一并堵**：`pages/03_📝_Flow_A_Step1.py:61` `_jd_to_dict` 把 `user_id` 兜底 `"default"`（解析出的 JD 会落共享账号），改为 `current_user_id()`
+  - 测试 `tests/unit/test_application_history_user_scoped.py` 4 条（08 页无 default 字面量 / 不直调 db.list_resumes / 03 页无 user_id="default" 兜底 + 引 current_user_id）
+  - 验证：判定命令 2 周围 30 行只有 `user_id = current_user_id()` + `list_resumes_flat(db, user_id)` + 空态 st.info，**无回退分支**
+  - **判定命令 1 仍 3 命中 ⚠️**：是 backend 签名 `def list_resumes(self, user_id: str = "default")` 默认值（sqlite_backend / postgres_backend / __init__），不属本工单范围；已登记为 **P1-015**（删默认值改必填位置参数，让漏传编译期 fail）。**这才是使能机制**，下次 R6 真正过必须连 P1-015 一起做
 
 ### R7 · RAG 评测基线不退化
 - **判定命令 1**：`pytest tests/integration/test_eval_rag.py -q --tb=no`（如存在）
@@ -283,9 +302,11 @@
 
 ### 7.4 跨文件口径记录
 
-- `MEMORY.md` 第 3 行写 "544/1"（实测），与 README:138 的 "481" 不一致 — **以 544 为准**
+- `README.md:138` + `CLAUDE.md:38` — 已统一为 `568 passed, 3 deselected`（2026-08-03 R3 commit `65c6625`）
+- `MEMORY.md` 第 3 行 — 同步为 `568 passed, 3 deselected`（任务完成后需手动刷新，AI 不改 memory）
 - `CHANGELOG.md` 多个里程碑的测试基线（487 / 481 / 478 / 520 / 542）— 历史快照，不作准
 - `docs/portfolio.md` 数字（"545 passed / 1500%"）— **不可信**，评审忽略
+- **下次评审规则**：R1 不再钉死绝对数字（每加测试就改一次 rubric 是反复失准根因），改为"0 failed + deselected 仅限 `real_llm` 标记"
 
 ### 7.5 评审节点
 
@@ -295,6 +316,7 @@
 |---|---|---|---|
 | 2026-08-03 | v1.1 PRELIMINARY 复审 | R7/R8 跳过实测（R7 命令过时 / R8 用户决策）；R1-R6 红线未达（6 项）；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9（≥3 红线未过触发下限）；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 | 2026-08-03 | v1.1 增量修复 | P0-002 + P0-005 + P2-018 关闭（commit `711618e` / `e105177` / `36bf4e6`）；R2 + R5-1 已修复备注；R1/R3/R4/R5-2/R5-4/R6 仍未达；待 v1.2 复审 | fix agent |
+| 2026-08-03 | **v1.1 R3 增量修复** | **P0-001 / P0-007 / P0-008 关闭**（commit `a4e11dd` / `d7cb50e` / `65c6625`），连带关闭 P2-010 / P2-016；**R1 + R5-4 + R6 已修复备注就位**；基线 552 → **568 passed, 3 deselected**（+16 新测试）。**R6 判定命令 1 仍 3 命中**（backend 签名 `user_id: str = "default"`）—— 是使能机制而非 P0-008 同级根因，已登记 **P1-015** 等下一轮处理。R3 / R4 / R5-2 仍未达，剩余 P0 = P0-003（README 裂缝 4 处）+ P0-004（铁律 3 处 + migration 014/015）；R4 准备就绪 | fix agent |
 | 2026-08-03 | **R2 修复落地（commit `711618e`）**：P0-002 真 LLM flake 关闭；基线 547 passed / 3 deselected / 0 failed | fix agent |
 | 2026-08-03 | **R5-2 修复落地（commit `7925824` + `6b57427` + `376ec90`）**：P0-006 登录错误信息脱敏 + P0-009 README 行数 160→270；基线 552 passed / 3 deselected / 0 failed | fix agent |
 

@@ -20,6 +20,7 @@
 | 2026-08-03 | P2-018 关闭：CI workflow 加 sqlite-vec==0.1.6（commit `36bf4e6`） | fix agent |
 | 2026-08-03 | v1 FROZEN — owner 拍板 Q1-Q4 + 终审 Q1-Q4 | pingce skill |
 | 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
+| 2026-08-03 | **R3 关闭 P0-001 / P0-007 / P0-008**（commit `a4e11dd` / `d7cb50e` / `65c6625`）；测试基线 552 → 568 passed, 3 deselected；P2-010 / P2-016 随 P0-001 自动消解 | fix agent |
 
 ---
 
@@ -31,7 +32,7 @@
   - `README.md:138` `pytest tests/ --cov=...` 注释 "基线：481 passed"
   - `CLAUDE.md:38` 自检要求 `pytest tests/ -q` 必须 81 passed
   - 实测 `pytest tests/ -q --tb=no` 输出末行 `544 passed, 1 failed`
-- **状态**：✅ 已决议 — owner 拍板"以实测 544 为准"（2026-08-03）。需后续 commit 同步修 README + CLAUDE.md。
+- **状态**：✅ **已关闭**（`65c6625`，2026-08-03）— README:138 + CLAUDE.md:38 同步为 `568 passed, 3 deselected`（本轮 +16 条新测试后的实测值）。README 里过时的 "worktree 461 passed / 3 skipped" 一并换成 deselected 的真实成因（`@pytest.mark.real_llm` 默认不选）。
 - **关联**：REVIEW.md R1
 
 ### P0-002 · 真 LLM flake（CI 一直红）
@@ -86,13 +87,13 @@
 ### P0-007 · 简历粘贴 text_area 无长度上限
 - **问题**：`pages/03_📝_Flow_A_Step1.py:163` 等处 `st.text_area` 无 `max_chars`，用户粘贴 100MB 直接爆 LLM。
 - **代码依据**：`pages/03_📝_Flow_A_Step1.py:163` + `pages/06_📄_Flow_B.py` JD text_area 同问题
-- **状态**：🔴 待修复 — P0 安全/稳定性。需新增 commit：所有 `text_area` 加 `max_chars`（建议 ≤ 20000 字符），超出截断 + 提示。
+- **状态**：✅ **已关闭**（`a4e11dd`，2026-08-03）— 新增 `services/text_limits.py`：`MAX_USER_TEXT_CHARS = 20000` + `clamp_user_text()`。**两层防线**：widget 加 `max_chars`（UI 即时反馈）+ 提交路径调 `clamp_user_text` 服务端截断并 `st.warning`。**只加 `max_chars` 不够** —— 它是浏览器端约束，构造 websocket 消息可绕过。覆盖三个粘贴入口：`03_Flow_A_Step1`（JD 粘贴 + 复核表单的职责/要求两栏）、`06_Flow_B`、`07_JD_Library`（原工单只点了 03/06，07 是同一条路径，一并堵上）。测试 `tests/unit/test_pages_text_area_length_cap.py`（12 条）。
 - **关联**：REVIEW.md R5-4
 
 ### P0-008 · 跨用户隔离：用户无简历回退到 default
 - **问题**：`pages/08_📈_Application_History.py:159-176` 当 `current_user_id` 下无简历，回退到 `db.list_resumes("default")` 展示。多人共享本机 SQLite 时出现"我看到别人简历"的数据串。
 - **代码依据**：`pages/08_📈_Application_History.py:159-176`
-- **状态**：🔴 待修复 — P0 多用户隔离。需新增 commit：用户无简历时显示空态 + 引导上传，不回退 default。
+- **状态**：✅ **已关闭**（`d7cb50e`，2026-08-03）— 删除 `db.list_resumes("default")` 回退块，改为空态 `st.info` 引导；连带删掉因此变成死代码的 `_resume_lib_effective_user`（全仓只写不读）。**根因是"查不到就退回共享账号"，不止一处**：`03_Flow_A_Step1.py:61` `_jd_to_dict` 把 `user_id` 兜底成 `"default"`（写侧同类泄漏，解析出的 JD 归属共享账号），一并改为 `current_user_id()`。测试 `tests/unit/test_application_history_user_scoped.py`（4 条，读写两侧各扫）。
 - **关联**：REVIEW.md R6
 
 ### P0-009 · launcher 脚本行数 README 夸大
@@ -174,6 +175,12 @@
 - **问题**：用户记忆 `portfolio.md L37 "未来才考虑多租户" + L97 "从单用户工具升级到公网多用户 SaaS"`，PRD §6 没标完成度。
 - **状态**：⏸ 阻塞 — 等 owner 说明"5 个真实用户跑通全流程"的现状。
 
+### P1-015 · DB 层 27 处 `user_id: str = "default"` 签名默认值
+- **问题**：`database/backends/{__init__,sqlite_backend,postgres_backend}.py` 共 27 个方法把 `user_id` 的默认值定成 `"default"`（`list_resumes` / `list_jds` / `get_jd_by_url` / `list_optimizations` / `get_latest_flow_a_draft` / `list_jds_structured` 等）。调用方漏传 `user_id` 时**不报错**，静默读写共享桶 —— 这正是 P0-008 那类跨用户串数据的**使能机制**，而不只是巧合。
+- **代码依据**：`grep -rn 'user_id: str = "default"' database/` = 27 命中；R6 判定命令 1 的 3 处残留命中即来源于此
+- **状态**：🔴 待修复 — 建议硬切：删掉默认值改为必填位置参数，让漏传变成 `TypeError`（编译期暴露）。影响面：`tests/unit/test_repository.py:64,67` 和 `tests/unit/test_sqlite_backend_extended.py:39,47` 四处 `list_resumes()` 无参调用需补 user_id。
+- **关联**：P0-008 / REVIEW.md R6 判定命令 1
+
 ---
 
 ## P2 · 改进或待确认
@@ -221,7 +228,7 @@
 
 ### P2-010 · memory 项目快照与实际基线不同步
 - **问题**：用户 `MEMORY.md` 记 "544/1"，与 README 481 / CLAUDE.md 81 三个数字都不一致。
-- **状态**：🟢 与 P0-001 同步后自动解决。
+- **状态**：✅ **已关闭**（随 P0-001 / `65c6625`）— README + CLAUDE.md 已统一为 `568 passed, 3 deselected`，memory 快照同步更新。唯一权威口径 = `pytest tests/ -q --tb=no` 末行。
 
 ---
 
@@ -258,7 +265,7 @@
 ### P2-016 · R1 字面通过条件数字偏差（544/1 vs 545/0）
 - **问题**：v1 FROZEN 字面写 "544 passed / 1 failed"，本次实测 `545 passed, 1 warning, 0 failed`（LLM 偶然命中"200/120/18"逃过 flake）
 - **代码依据**：`pytest tests/ -q --tb=no` 输出末行
-- **状态**：🟢 评审期发现（v1.1 复审）。v1 字面未达 / 实质达标。P0-001 / P0-002 commit 落地后解释消除。
+- **状态**：✅ **已关闭**（随 P0-001 / `65c6625`）— 偏差源于 real_llm flake 时好时坏。P0-002 把 real_llm 改为默认 deselect 后，基线变成确定值 `568 passed, 3 deselected`，不再随 LLM 输出漂移。
 - **关联**：P0-001 / P0-002 / REVIEW.md R1
 
 ### P2-017 · knowledge_chunks 仍有 45 行 legacy=1 残留数据
@@ -280,8 +287,8 @@
 
 ## P0 汇总（按 owner 决议分组）
 
-**P0-001 / 002 / 003 / 004** = 评审期已决议，需新增 commit 执行  
-**P0-005 / 006 / 007 / 008 / 009** = 评审期未决议，需修复后新增 commit  
+**已关闭**：P0-001 / P0-002 / P0-005 / P0-006 / P0-007 / P0-008 / P0-009  
+**剩余待办**：P0-003（README 裂缝 4 处）/ P0-004（铁律 3 处清理 + migration 014/015）  
 **P1-012** = 与 P0-004 协调（先 P0-004 删除再 P1-012 同步迁移清单）
 
 ---
