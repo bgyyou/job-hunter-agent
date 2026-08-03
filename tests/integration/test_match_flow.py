@@ -29,18 +29,16 @@ def test_full_match_flow(tmp_db, mock_embedder):
     from tools.jd_indexer import embed_and_store_jd_chunks
 
     # 1) 插简历 + JD
-    rid = tmp_db.insert_resume({
-        "user_id": "default", "name": "Leon",
+    rid = tmp_db.insert_resume({ "name": "Leon",
         "skills": ["LLM", "RAG", "Agent"],
         "experience_years": 3,
-    })
-    jid = tmp_db.insert_jd({
-        "user_id": "default", "url": "https://x/y", "title": "AI PM",
+    }, user_id="test")
+    jid = tmp_db.insert_jd({ "url": "https://x/y", "title": "AI PM",
         "company": "ACME", "raw_text": SAMPLE_JD,
-    })
+    }, user_id="test")
 
     # 2) 切分 + 向量化（用 mock embedder，8 维确定向量）
-    n = embed_and_store_jd_chunks(tmp_db, jid, SAMPLE_JD)
+    n = embed_and_store_jd_chunks(tmp_db, jid, SAMPLE_JD, user_id="test")
     assert n > 0
 
     chunks = tmp_db.get_chunks_by_jd(jid)
@@ -68,8 +66,8 @@ def test_full_match_flow(tmp_db, mock_embedder):
         "reasoning": "matched on LLM/RAG",
         "matched_skills": ["LLM", "RAG"],
         "missing_skills": ["ToB SaaS"],
-    })
-    matches = tmp_db.list_matches(jd_id=jid)
+    }, user_id="test")
+    matches = tmp_db.list_matches(jd_id=jid, user_id='test')
     assert len(matches) == 1 and matches[0]["id"] == mid
 
     # 5) 软删 JD → chunks 级联软删，检索不再命中
@@ -81,8 +79,8 @@ def test_full_match_flow(tmp_db, mock_embedder):
 def test_empty_raw_text_skipped(tmp_db, mock_embedder):
     """空 raw_text 不应崩，只是 0 chunks。"""
     from tools.jd_indexer import embed_and_store_jd_chunks
-    jid = tmp_db.insert_jd({"user_id": "default", "url": "u", "title": "t",
-                             "company": "c", "raw_text": ""})
-    n = embed_and_store_jd_chunks(tmp_db, jid, "")
+    jid = tmp_db.insert_jd({ "url": "u", "title": "t",
+                             "company": "c", "raw_text": ""}, user_id="test")
+    n = embed_and_store_jd_chunks(tmp_db, jid, "", user_id="test")
     assert n == 0
     assert tmp_db.get_chunks_by_jd(jid) == []

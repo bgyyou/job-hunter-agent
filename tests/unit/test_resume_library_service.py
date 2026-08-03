@@ -13,7 +13,7 @@ from services.resume_library_service import (
 )
 
 
-def _resume(name: str = "张三", summary: str = "AI 产品经理，5年经验", user_id: str = "u1"):
+def _resume(name: str = "张三", summary: str = "AI 产品经理，5年经验", user_id: str = "test"):
     return {
         "user_id": user_id,
         "name": name,
@@ -34,7 +34,7 @@ def test_list_versions_empty(tmp_db):
 
 
 def test_list_versions_single_root(tmp_db):
-    rid = tmp_db.insert_resume(_resume())
+    rid = tmp_db.insert_resume(_resume(user_id="u1"), user_id="u1")
     trees = list_resume_versions(tmp_db, "u1")
     assert len(trees) == 1
     assert trees[0]["root_id"] == rid
@@ -43,7 +43,7 @@ def test_list_versions_single_root(tmp_db):
 
 
 def test_clone_creates_chain(tmp_db):
-    r1 = tmp_db.insert_resume(_resume(name="v1"))
+    r1 = tmp_db.insert_resume(_resume(name="v1", user_id="u1"), user_id="u1")
     r2 = clone_resume(tmp_db, r1, "u1", version_label="改版针对 JD2")
     r3 = clone_resume(tmp_db, r2, "u1", version_label="再改")
 
@@ -59,8 +59,8 @@ def test_clone_creates_chain(tmp_db):
 
 def test_clone_independent_roots(tmp_db):
     """两个独立的简历（无 parent 关系）应各成一组。"""
-    r1 = tmp_db.insert_resume(_resume(name="A"))
-    r2 = tmp_db.insert_resume(_resume(name="B"))
+    r1 = tmp_db.insert_resume(_resume(name="A", user_id="u1"), user_id="u1")
+    r2 = tmp_db.insert_resume(_resume(name="B", user_id="u1"), user_id="u1")
     trees = list_resume_versions(tmp_db, "u1")
     assert len(trees) == 2
     root_ids = {t["root_id"] for t in trees}
@@ -68,8 +68,8 @@ def test_clone_independent_roots(tmp_db):
 
 
 def test_set_primary_switches(tmp_db):
-    r1 = tmp_db.insert_resume(_resume(name="A"))
-    r2 = tmp_db.insert_resume(_resume(name="B"))
+    r1 = tmp_db.insert_resume(_resume(name="A", user_id="u1"), user_id="u1")
+    r2 = tmp_db.insert_resume(_resume(name="B", user_id="u1"), user_id="u1")
     set_primary_resume(tmp_db, "u1", r1)
     assert get_primary_resume(tmp_db, "u1")["id"] == r1
 
@@ -82,29 +82,29 @@ def test_set_primary_switches(tmp_db):
 
 
 def test_set_primary_rejects_other_user(tmp_db):
-    r = tmp_db.insert_resume(_resume(user_id="u1"))
+    r = tmp_db.insert_resume(_resume(user_id="u1"), user_id="u1")
     # u2 不能把 u1 的简历设为主
     with pytest.raises(ResumeLibraryError):
         set_primary_resume(tmp_db, "u2", r)
 
 
 def test_clone_rejects_other_user(tmp_db):
-    r = tmp_db.insert_resume(_resume(user_id="u1"))
+    r = tmp_db.insert_resume(_resume(user_id="u1"), user_id="u1")
     with pytest.raises(ResumeLibraryError):
         clone_resume(tmp_db, r, "u2")
 
 
 def test_get_primary_fallback_to_latest(tmp_db):
     """没有任何 is_primary 时，fallback 到最新一份。"""
-    tmp_db.insert_resume(_resume(name="old"))
-    rid_new = tmp_db.insert_resume(_resume(name="new"))
+    tmp_db.insert_resume(_resume(name="old", user_id="u1"), user_id="u1")
+    rid_new = tmp_db.insert_resume(_resume(name="new", user_id="u1"), user_id="u1")
     primary = get_primary_resume(tmp_db, "u1")
     assert primary is not None
     assert primary["id"] == rid_new
 
 
 def test_clone_overrides_name(tmp_db):
-    r1 = tmp_db.insert_resume(_resume(name="orig"))
+    r1 = tmp_db.insert_resume(_resume(name="orig", user_id="u1"), user_id="u1")
     r2 = clone_resume(tmp_db, r1, "u1", overrides={"name": "v2改名"})
     fetched = tmp_db.get_resume(r2)
     assert fetched["name"] == "v2改名"

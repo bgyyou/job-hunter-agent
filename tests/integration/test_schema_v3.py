@@ -53,7 +53,7 @@ class TestJDSructuredCRUD:
             "level": "senior",
             "responsibilities": ["AI 产品规划", "跨部门协调"],
             "requirements": ["3年以上 AI 经验", "本科及以上"],
-        })
+        }, user_id="test")
         assert isinstance(jd_id, int) and jd_id > 0
 
         jd = tmp_db.get_jd_structured(jd_id)
@@ -64,14 +64,14 @@ class TestJDSructuredCRUD:
         assert jd["requirements"] == ["3年以上 AI 经验", "本科及以上"]
 
     def test_list_filtered_by_source(self, tmp_db):
-        tmp_db.insert_jd_structured({"source": "text", "title": "A"})
-        tmp_db.insert_jd_structured({"source": "image", "title": "B"})
-        tmp_db.insert_jd_structured({"source": "text", "title": "C"})
+        tmp_db.insert_jd_structured({"source": "text", "title": "A"}, user_id="test")
+        tmp_db.insert_jd_structured({"source": "image", "title": "B"}, user_id="test")
+        tmp_db.insert_jd_structured({"source": "text", "title": "C"}, user_id="test")
 
-        all_jds = tmp_db.list_jds_structured()
+        all_jds = tmp_db.list_jds_structured('test')
         assert len(all_jds) >= 3
 
-        text_only = tmp_db.list_jds_structured(source="text")
+        text_only = tmp_db.list_jds_structured('test', source="text")
         assert all(j["source"] == "text" for j in text_only)
 
     def test_get_missing_returns_none(self, tmp_db):
@@ -84,7 +84,7 @@ class TestRewriteHistoryCRUD:
 
     def test_insert_and_list(self, tmp_db):
         # 先建一个 resume 用于外键关联（虽然实际 SQL 没强制 FK，但语义需要）
-        resume_id = tmp_db.insert_resume({"name": "测试", "user_id": "default"})
+        resume_id = tmp_db.insert_resume({"name": "测试"}, user_id="test")
 
         rid = tmp_db.insert_rewrite_history({
             "resume_id": resume_id,
@@ -93,25 +93,25 @@ class TestRewriteHistoryCRUD:
             "input_snapshot": {"name": "张三"},
             "output_snapshot": {"rewrites": [{"section": "experience"}]},
             "rewrite_notes": {"mode_a_reason": "对接 AI 能力词"},
-        })
+        }, user_id="test")
         assert isinstance(rid, int) and rid > 0
 
-        rows = tmp_db.list_rewrite_history(resume_id=resume_id)
+        rows = tmp_db.list_rewrite_history(resume_id=resume_id, user_id='test')
         assert len(rows) >= 1
         # JSON 列应被反序列化回 Python 对象
         assert rows[0]["input_snapshot"] == {"name": "张三"}
         assert rows[0]["output_snapshot"]["rewrites"][0]["section"] == "experience"
 
     def test_mark_user_edited(self, tmp_db):
-        resume_id = tmp_db.insert_resume({"name": "测试"})
+        resume_id = tmp_db.insert_resume({"name": "测试"}, user_id="test")
         rid = tmp_db.insert_rewrite_history({
             "resume_id": resume_id,
             "mode": "B",
             "output_snapshot": {"templates": []},
-        })
+        }, user_id="test")
         tmp_db.mark_rewrite_user_edited(rid)
 
-        rows = tmp_db.list_rewrite_history(resume_id=resume_id)
+        rows = tmp_db.list_rewrite_history(resume_id=resume_id, user_id='test')
         target = next(r for r in rows if r["rewrite_id"] == rid)
         assert target["user_edited"] == 1
 
@@ -120,7 +120,7 @@ class TestResumeAchievementsCRUD:
     """resumes.achievements 顶层字段 + update_resume_achievements()。"""
 
     def test_update_achievements_persists(self, tmp_db):
-        resume_id = tmp_db.insert_resume({"name": "张三"})
+        resume_id = tmp_db.insert_resume({"name": "张三"}, user_id="test")
         tmp_db.update_resume_achievements(resume_id, ["促成 200 单成交", "GMV 120 万"])
 
         loaded = tmp_db.get_resume(resume_id)
@@ -128,7 +128,7 @@ class TestResumeAchievementsCRUD:
 
     def test_update_achievements_overwrites(self, tmp_db):
         """二次 update 应覆盖而不是追加。"""
-        resume_id = tmp_db.insert_resume({"name": "李四"})
+        resume_id = tmp_db.insert_resume({"name": "李四"}, user_id="test")
         tmp_db.update_resume_achievements(resume_id, ["A", "B"])
         tmp_db.update_resume_achievements(resume_id, ["C"])
         loaded = tmp_db.get_resume(resume_id)
@@ -136,7 +136,7 @@ class TestResumeAchievementsCRUD:
 
     def test_default_achievements_empty_list(self, tmp_db):
         """新简历不显式调 update 时 achievements 应为空列表。"""
-        resume_id = tmp_db.insert_resume({"name": "王五"})
+        resume_id = tmp_db.insert_resume({"name": "王五"}, user_id="test")
         loaded = tmp_db.get_resume(resume_id)
         # 默认值 '[]' → 反序列化为 []
         assert loaded["achievements"] == []
@@ -151,21 +151,21 @@ class TestJSONRoundTrip:
             "source": "rag",
             "responsibilities": ["A", "B", "C"],
             "requirements": ["X", "Y"],
-        })
+        }, user_id="test")
         loaded = tmp_db.get_jd_structured(jd_id)
         assert isinstance(loaded["responsibilities"], list)
         assert loaded["responsibilities"] == ["A", "B", "C"]
 
     def test_rewrite_history_snapshot_dict(self, tmp_db):
         """Dict 入库 → 出库仍为 dict。"""
-        resume_id = tmp_db.insert_resume({"name": "测试"})
+        resume_id = tmp_db.insert_resume({"name": "测试"}, user_id="test")
         rid = tmp_db.insert_rewrite_history({
             "resume_id": resume_id,
             "mode": "A+B",
             "input_snapshot": {"k": "v", "list": [1, 2, 3]},
             "output_snapshot": {"rewrites": [{"section": "exp"}]},
-        })
-        rows = tmp_db.list_rewrite_history(resume_id=resume_id)
+        }, user_id="test")
+        rows = tmp_db.list_rewrite_history(resume_id=resume_id, user_id='test')
         target = next(r for r in rows if r["rewrite_id"] == rid)
         assert target["input_snapshot"]["list"] == [1, 2, 3]
         assert isinstance(target["output_snapshot"], dict)

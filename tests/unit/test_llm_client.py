@@ -25,6 +25,7 @@ def _client(tmp_path, **overrides):
         api_url="https://example.invalid/v1",
         model="agnes-2.0-flash",
         cache_dir=str(tmp_path / "llm_cache"),
+        user_id="test",
     )
     kw.update(overrides)
     return OpenAICompatibleClient(**kw)

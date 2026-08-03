@@ -31,7 +31,7 @@ def test_live_snapshot_counts_inserted_jd(tmp_db, fresh_webapp):
          "industry_tag": "互联网", "raw_text": "text " * 100},
     ]
     for r in rows:
-        tmp_db.insert_jd(r)
+        tmp_db.insert_jd(r, user_id="test")
 
     snap = fresh_webapp._live_snapshot_from_db(tmp_db)
     assert snap["total"] == 3
@@ -45,7 +45,7 @@ def test_live_snapshot_soft_deleted_excluded(tmp_db, fresh_webapp):
         "title": "t",
         "source": "manual",
         "raw_text": "x",
-    })
+    }, user_id="test")
     tmp_db.soft_delete_jd(jid)
 
     snap = fresh_webapp._live_snapshot_from_db(tmp_db)
@@ -54,7 +54,7 @@ def test_live_snapshot_soft_deleted_excluded(tmp_db, fresh_webapp):
 
 def test_live_snapshot_handles_null_platform_and_industry(tmp_db, fresh_webapp):
     """platform / industry_tag 为 NULL 的 JD 不计入去重计数。"""
-    tmp_db.insert_jd({"url": "https://x/null", "title": "t", "source": "manual", "raw_text": "x"})
+    tmp_db.insert_jd({"url": "https://x/null", "title": "t", "source": "manual", "raw_text": "x"}, user_id="test")
     snap = fresh_webapp._live_snapshot_from_db(tmp_db)
     # total 仍计 1（只筛 deleted_at），platforms/industries 都是 0（NULL 不入 DISTINCT）
     assert snap["total"] == 1

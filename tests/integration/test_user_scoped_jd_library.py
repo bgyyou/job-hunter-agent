@@ -5,7 +5,7 @@ from services.auth_service import AuthService
 from services.jd_library_service import ensure_public_seed_jds, insert_user_jd, list_visible_jds
 
 
-def _jd(url: str, *, user_id: str = "default", source: str = "manual", title: str = "AI Product Manager"):
+def _jd(url: str, *, user_id: str = "test", source: str = "manual", title: str = "AI Product Manager"):
     return {
         "user_id": user_id,
         "url": url,
@@ -20,7 +20,7 @@ def _jd(url: str, *, user_id: str = "default", source: str = "manual", title: st
 
 
 def test_new_user_sees_public_crawled_jds_but_not_other_users_private_jds(tmp_db):
-    public_id = tmp_db.insert_jd(_jd("https://jobsdb.example/seed", source="jobsdb_batch"))
+    public_id = tmp_db.insert_jd(_jd("https://jobsdb.example/seed", source="jobsdb_batch", user_id="default"), user_id="default")
     other_private_id = insert_user_jd(tmp_db, "other-user", _jd("https://manual.example/other", user_id="other-user"))
 
     user = AuthService(tmp_db).register_user(email="new@example.com", password="password123")
@@ -34,7 +34,7 @@ def test_new_user_sees_public_crawled_jds_but_not_other_users_private_jds(tmp_db
 
 
 def test_user_uploaded_jd_is_visible_alongside_public_seed(tmp_db):
-    tmp_db.insert_jd(_jd("https://liepin.example/seed", source="liepin_batch"))
+    tmp_db.insert_jd(_jd("https://liepin.example/seed", source="liepin_batch", user_id="default"), user_id="default")
     user = AuthService(tmp_db).register_user(phone="13800138000", password="password123")
     own_id = insert_user_jd(tmp_db, user["id"], _jd("https://manual.example/own", title="Growth PM"))
     ensure_public_seed_jds(tmp_db)

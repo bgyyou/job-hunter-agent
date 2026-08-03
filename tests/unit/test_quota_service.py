@@ -25,9 +25,8 @@ def _insert_calls(db, user_id: str, n: int, tokens: int = 10) -> None:
         db.insert_llm_call({
             "model": "test-model",
             "operation": "analyze",
-            "total_tokens": tokens,
-            "user_id": user_id,
-        })
+            "total_tokens": tokens
+        }, user_id=user_id)
 
 
 def _limited_settings(monkeypatch, user_limit: int, global_limit: int) -> Settings:

@@ -85,6 +85,7 @@ def real_llm_client():
         api_url=os.environ.get("LLM_BASE_URL", "https://apihub.agnes-ai.com/v1"),
         model=os.environ.get("LLM_MODEL", "agnes-2.0-flash"),
         cache_dir=str(project_root / "data" / "llm_cache"),
+        user_id="test_flow_a_real_llm",
     )
 
 

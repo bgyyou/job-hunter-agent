@@ -32,19 +32,19 @@ def _jd(url="https://e.com/1"):
 # ----- resume CRUD -----
 
 def test_resume_insert_get_list(tmp_db):
-    rid = tmp_db.insert_resume(_resume())
+    rid = tmp_db.insert_resume(_resume(), user_id="test")
     got = tmp_db.get_resume(rid)
     assert got["name"] == "Leon"
     assert got["skills"] == ["Py"]
-    rows = tmp_db.list_resumes()
+    rows = tmp_db.list_resumes('test')
     assert len(rows) == 1
 
 
 def test_resume_soft_delete(tmp_db):
-    rid = tmp_db.insert_resume(_resume())
+    rid = tmp_db.insert_resume(_resume(), user_id="test")
     tmp_db.soft_delete_resume(rid)
     assert tmp_db.get_resume(rid) is None
-    assert tmp_db.list_resumes() == []
+    assert tmp_db.list_resumes('test') == []
 
 
 def test_resume_get_missing(tmp_db):
@@ -54,108 +54,108 @@ def test_resume_get_missing(tmp_db):
 # ----- JD CRUD -----
 
 def test_jd_insert_get_by_url(tmp_db):
-    jid = tmp_db.insert_jd(_jd("https://e.com/x"))
+    jid = tmp_db.insert_jd(_jd("https://e.com/x"), user_id="test")
     assert tmp_db.get_jd(jid)["title"] == "PM"
-    assert tmp_db.get_jd_by_url("https://e.com/x")["id"] == jid
+    assert tmp_db.get_jd_by_url("https://e.com/x", user_id='test')["id"] == jid
 
 
 def test_jd_list_filter(tmp_db):
-    tmp_db.insert_jd(_jd("https://e.com/a"))
+    tmp_db.insert_jd(_jd("https://e.com/a"), user_id="test")
     j2 = _jd("https://e.com/b"); j2["source"] = "crawler"
-    tmp_db.insert_jd(j2)
-    assert len(tmp_db.list_jds()) == 2
-    assert len(tmp_db.list_jds(source="crawler")) == 1
+    tmp_db.insert_jd(j2, user_id="test")
+    assert len(tmp_db.list_jds('test')) == 2
+    assert len(tmp_db.list_jds('test', source="crawler")) == 1
 
 
 def test_jd_search(tmp_db):
-    tmp_db.insert_jd(_jd("https://e.com/q1"))
-    rows = tmp_db.search_jds(keyword="ACME")
+    tmp_db.insert_jd(_jd("https://e.com/q1"), user_id="test")
+    rows = tmp_db.search_jds("ACME", user_id='test')
     assert len(rows) >= 1
 
 
 def test_jd_soft_delete(tmp_db):
-    jid = tmp_db.insert_jd(_jd())
+    jid = tmp_db.insert_jd(_jd(), user_id="test")
     tmp_db.soft_delete_jd(jid)
     assert tmp_db.get_jd(jid) is None
-    assert tmp_db.list_jds() == []
+    assert tmp_db.list_jds('test') == []
 
 
 def test_jd_get_missing(tmp_db):
     assert tmp_db.get_jd("missing") is None
-    assert tmp_db.get_jd_by_url("https://nowhere.example") is None
+    assert tmp_db.get_jd_by_url("https://nowhere.example", user_id='test') is None
 
 
 def test_jd_insert_duplicate_url_returns_real_id(tmp_db):
     """P0-2 回归：URL 重复时 insert_jd 必须返回数据库里的真实 id，
     而不是新生成的伪 UUID。这是 INSERT OR IGNORE 的静默跳过坑。"""
     url = "https://e.com/dup"
-    first_id = tmp_db.insert_jd(_jd(url))
-    second_id = tmp_db.insert_jd(_jd(url))
+    first_id = tmp_db.insert_jd(_jd(url), user_id="test")
+    second_id = tmp_db.insert_jd(_jd(url), user_id="test")
     assert first_id == second_id
     assert tmp_db.get_jd(first_id) is not None
     # 数据库里应该只有一条
-    assert len(tmp_db.list_jds()) == 1
+    assert len(tmp_db.list_jds('test')) == 1
 
 
 # ----- match -----
 
 def test_match_insert_list(tmp_db):
-    rid = tmp_db.insert_resume(_resume())
-    jid = tmp_db.insert_jd(_jd())
+    rid = tmp_db.insert_resume(_resume(), user_id="test")
+    jid = tmp_db.insert_jd(_jd(), user_id="test")
     mid = tmp_db.insert_match({
         "resume_id": rid, "jd_id": jid, "score": 91,
         "reasoning": "fit", "matched_skills": ["a"], "missing_skills": ["b"],
         "gaps": [], "recommendations": [],
-    })
-    rows = tmp_db.list_matches()
+    }, user_id="test")
+    rows = tmp_db.list_matches(user_id='test')
     assert rows[0]["id"] == mid
     assert rows[0]["score"] == 91
 
 
 def test_match_list_filter(tmp_db):
-    rid = tmp_db.insert_resume(_resume())
-    j1 = tmp_db.insert_jd(_jd("https://e.com/m1"))
-    j2 = tmp_db.insert_jd(_jd("https://e.com/m2"))
-    tmp_db.insert_match({"resume_id": rid, "jd_id": j1, "score": 80})
-    tmp_db.insert_match({"resume_id": rid, "jd_id": j2, "score": 70})
-    assert len(tmp_db.list_matches(jd_id=j1)) == 1
-    assert len(tmp_db.list_matches(resume_id=rid)) == 2
+    rid = tmp_db.insert_resume(_resume(), user_id="test")
+    j1 = tmp_db.insert_jd(_jd("https://e.com/m1"), user_id="test")
+    j2 = tmp_db.insert_jd(_jd("https://e.com/m2"), user_id="test")
+    tmp_db.insert_match({"resume_id": rid, "jd_id": j1, "score": 80}, user_id="test")
+    tmp_db.insert_match({"resume_id": rid, "jd_id": j2, "score": 70}, user_id="test")
+    assert len(tmp_db.list_matches(jd_id=j1, user_id='test')) == 1
+    assert len(tmp_db.list_matches(resume_id=rid, user_id='test')) == 2
 
 
 # ----- optimization -----
 
 def test_optimization_full_flow(tmp_db):
-    jid = tmp_db.insert_jd(_jd())
+    jid = tmp_db.insert_jd(_jd(), user_id="test")
     oid = tmp_db.insert_optimization({
         "jd_id": jid, "section": "skills",
         "original_content": "Py", "suggested_content": "Py, LLM",
         "reason": "JD",
-    })
-    rows = tmp_db.list_optimizations(jd_id=jid)
+    }, user_id="test")
+    rows = tmp_db.list_optimizations(jd_id=jid, user_id='test')
     assert rows[0]["id"] == oid
     assert rows[0]["user_adopted"] == 0
     tmp_db.update_optimization_adopted(oid, 1)
-    assert tmp_db.list_optimizations(jd_id=jid)[0]["user_adopted"] == 1
+    assert tmp_db.list_optimizations(jd_id=jid, user_id='test')[0]["user_adopted"] == 1
 
 
 # ----- chunks -----
 
 def test_chunk_insert_and_get(tmp_db):
-    jid = tmp_db.insert_jd(_jd())
+    jid = tmp_db.insert_jd(_jd(), user_id="test")
     cid = tmp_db.insert_chunk({
         "jd_id": jid, "chunk_index": 0, "chunk_text": "x",
         "chunk_type": "overview", "embedding": [0.1, 0.2],
-    })
+    }, user_id="test")
     assert isinstance(cid, str) and len(cid) > 8
 
 
 def test_chunks_batch_round_trip(tmp_db):
-    jid = tmp_db.insert_jd(_jd())
+    jid = tmp_db.insert_jd(_jd(), user_id="test")
     chunks = [
         {"chunk_text": "a", "chunk_type": "responsibility", "embedding": [0.1, 0.2]},
         {"chunk_text": "b", "chunk_type": "requirement", "embedding": [0.3, 0.4]},
     ]
-    ids = tmp_db.insert_chunks_batch(jid, chunks)
+    ids = tmp_db.insert_chunks_batch(jid, chunks, user_id="test")
     assert len(ids) == 2
     rows = tmp_db.get_chunks_by_jd(jid)
     assert len(rows) == 2
@@ -169,15 +169,15 @@ def test_quality_check_insert_list(tmp_db):
         "check_type": "llm_call", "target_table": "match_history",
         "target_id": "x", "score": 100,
         "details": {"latency_ms": 100, "tokens": 50},
-    })
+    }, user_id="test")
     assert isinstance(qid, int)
     rows = tmp_db.list_quality_checks(check_type="llm_call")
     assert rows[0]["details"]["tokens"] == 50
 
 
 def test_quality_check_filter_by_target(tmp_db):
-    tmp_db.insert_quality_check({"check_type": "a", "target_table": "tA", "score": 1})
-    tmp_db.insert_quality_check({"check_type": "a", "target_table": "tB", "score": 2})
+    tmp_db.insert_quality_check({"check_type": "a", "target_table": "tA", "score": 1}, user_id="test")
+    tmp_db.insert_quality_check({"check_type": "a", "target_table": "tB", "score": 2}, user_id="test")
     rows = tmp_db.list_quality_checks(target_table="tB")
     assert len(rows) == 1
 
@@ -192,7 +192,7 @@ def test_llm_call_insert_list(tmp_db):
         "latency_ms": 456,
         "status": "success",
         "metadata": {"cache_hit": False},
-    })
+    }, user_id="test")
     assert isinstance(lid, int)
     rows = tmp_db.list_llm_calls()
     assert len(rows) == 1
@@ -201,8 +201,8 @@ def test_llm_call_insert_list(tmp_db):
 
 
 def test_llm_call_filters(tmp_db):
-    tmp_db.insert_llm_call({"model": "m1", "operation": "a", "status": "success"})
-    tmp_db.insert_llm_call({"model": "m1", "operation": "b", "status": "error"})
+    tmp_db.insert_llm_call({"model": "m1", "operation": "a", "status": "success"}, user_id="test")
+    tmp_db.insert_llm_call({"model": "m1", "operation": "b", "status": "error"}, user_id="test")
     assert len(tmp_db.list_llm_calls(status="success")) == 1
     assert len(tmp_db.list_llm_calls(operation="b")) == 1
     assert len(tmp_db.list_llm_calls(model="m1")) == 2
@@ -212,12 +212,11 @@ def test_llm_call_filters(tmp_db):
 
 def test_audit_log_insert_list(tmp_db):
     aid = tmp_db.insert_audit_log({
-        "user_id": "u1",
         "action": "resume.create",
         "target_table": "resumes",
         "target_id": "r1",
         "details": {"flow": "a"},
-    })
+    }, user_id="u1")
     assert isinstance(aid, int)
     rows = tmp_db.list_audit_logs()
     assert len(rows) == 1
@@ -228,9 +227,9 @@ def test_audit_log_insert_list(tmp_db):
 
 
 def test_audit_log_filters(tmp_db):
-    tmp_db.insert_audit_log({"user_id": "u1", "action": "a1", "target_table": "t1"})
-    tmp_db.insert_audit_log({"user_id": "u2", "action": "a2", "target_table": "t2"})
-    tmp_db.insert_audit_log({"user_id": "u1", "action": "a3", "target_table": "t2"})
+    tmp_db.insert_audit_log({ "action": "a1", "target_table": "t1"}, user_id="u1")
+    tmp_db.insert_audit_log({ "action": "a2", "target_table": "t2"}, user_id="u2")
+    tmp_db.insert_audit_log({ "action": "a3", "target_table": "t2"}, user_id="u1")
     assert len(tmp_db.list_audit_logs()) == 3
     assert len(tmp_db.list_audit_logs(user_id="u1")) == 2
     assert len(tmp_db.list_audit_logs(action="a2")) == 1
@@ -239,12 +238,11 @@ def test_audit_log_filters(tmp_db):
 
 def test_audit_log_failure_status(tmp_db):
     tmp_db.insert_audit_log({
-        "user_id": "u1",
         "action": "user.login.failure",
         "status": "failure",
         "error_message": "bad_password",
         "details": {"identifier": "test@example.com"},
-    })
+    }, user_id="test")
     row = tmp_db.list_audit_logs()[0]
     assert row["status"] == "failure"
     assert row["error_message"] == "bad_password"
@@ -260,9 +258,9 @@ def test_get_stats_empty(tmp_db):
 
 
 def test_get_stats_after_insert(tmp_db):
-    rid = tmp_db.insert_resume(_resume())
-    jid = tmp_db.insert_jd(_jd())
-    tmp_db.insert_match({"resume_id": rid, "jd_id": jid, "score": 80})
+    rid = tmp_db.insert_resume(_resume(), user_id="test")
+    jid = tmp_db.insert_jd(_jd(), user_id="test")
+    tmp_db.insert_match({"resume_id": rid, "jd_id": jid, "score": 80}, user_id="test")
     stats = tmp_db.get_stats()
     assert stats["resumes"] == 1
     assert stats["jds"] == 1

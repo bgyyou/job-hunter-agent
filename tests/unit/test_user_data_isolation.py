@@ -57,23 +57,23 @@ def _jd_payload(user_id: str, title: str = "AI 产品经理"):
 
 class TestResumeIsolation:
     def test_b_cannot_list_a_resumes(self, tmp_db):
-        tmp_db.insert_resume(_resume(USER_A))
+        tmp_db.insert_resume(_resume(USER_A), user_id=USER_A)
         assert list_resume_versions(tmp_db, USER_B) == []
         assert len(list_resume_versions(tmp_db, USER_A)) == 1
 
     def test_b_cannot_get_a_primary_resume(self, tmp_db):
-        rid = tmp_db.insert_resume(_resume(USER_A))
+        rid = tmp_db.insert_resume(_resume(USER_A), user_id=USER_A)
         set_primary_resume(tmp_db, USER_A, rid)
         assert get_primary_resume(tmp_db, USER_B) is None
         assert get_primary_resume(tmp_db, USER_A) is not None
 
     def test_b_cannot_set_primary_on_a_resume(self, tmp_db):
-        rid = tmp_db.insert_resume(_resume(USER_A))
+        rid = tmp_db.insert_resume(_resume(USER_A), user_id=USER_A)
         with pytest.raises(ResumeLibraryError):
             set_primary_resume(tmp_db, USER_B, rid)
 
     def test_b_cannot_clone_a_resume(self, tmp_db):
-        rid = tmp_db.insert_resume(_resume(USER_A))
+        rid = tmp_db.insert_resume(_resume(USER_A), user_id=USER_A)
         with pytest.raises(ResumeLibraryError):
             clone_resume(tmp_db, rid, USER_B)
 

@@ -75,8 +75,11 @@ class TestJdToDict:
         assert out["parse_notes"] == ["单元测试"]
         assert out["raw_text"] == "我们需要 Python 工程师"
 
-    def test_object_with_to_db_dict(self, web_app_mod):
-        """有 to_db_dict() 方法的对象 → 走快速路径。"""
+    def test_object_with_to_db_dict(self, web_app_mod, monkeypatch):
+        """有 to_db_dict() 方法的对象 → 走快速路径；user_id 一律用 current_user_id()
+        （P1-015 后解析层不再带 user_id，由 session 强制盖印，防 "default" 静默漏写）。
+        """
+        monkeypatch.setattr(page_mod_1, "current_user_id", lambda: "u1")
         class FakeJD:
             def to_db_dict(self):
                 return {"company": "Fake", "title": "Dev"}
@@ -84,7 +87,6 @@ class TestJdToDict:
             parse_notes = ["note1"]
             raw_text = "raw"
             level = "mid"
-            user_id = "u1"
 
         out = page_mod_1._jd_to_dict(FakeJD())
         assert out["company"] == "Fake"
@@ -93,7 +95,7 @@ class TestJdToDict:
         assert out["needs_user_review"] is True
         assert out["parse_notes"] == ["note1"]
         assert out["level"] == "mid"
-        assert out["user_id"] == "u1"
+        assert out["user_id"] == "u1"  # 来自 current_user_id()，不是对象属性
 
 
 # ============================================================

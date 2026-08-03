@@ -128,7 +128,7 @@ class BaseAgent(ABC):
     # ==================== 核心能力：记忆 ====================
 
     @classmethod
-    def init_context(cls, user_id: str = "default"):
+    def init_context(cls, user_id: str):
         """初始化上下文管理器"""
         if cls._context_manager is None:
             cls._context_manager = ContextManager()
@@ -530,7 +530,7 @@ class BaseAgent(ABC):
 
 # ==================== 全局初始化 ====================
 
-def init_global_components(user_id: str = "default"):
+def init_global_components(user_id: str):
     """初始化全局组件"""
     BaseAgent._context_manager = ContextManager()
     BaseAgent._session_id = BaseAgent._context_manager.create_session(user_id)

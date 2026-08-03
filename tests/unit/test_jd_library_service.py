@@ -17,7 +17,7 @@ from services.jd_library_service import (
 )
 
 
-def _jd(url: str, *, user_id: str = "default", source: str = "manual", title: str = "AI PM"):
+def _jd(url: str, *, user_id: str = "test", source: str = "manual", title: str = "AI PM"):
     return {
         "user_id": user_id,
         "url": url,
@@ -32,8 +32,8 @@ def _jd(url: str, *, user_id: str = "default", source: str = "manual", title: st
 
 
 def test_public_seed_jds_visible_to_user(tmp_db):
-    public_id = tmp_db.insert_jd(_jd("https://jobsdb.example/1", source="jobsdb_batch"))
-    private_default_id = tmp_db.insert_jd(_jd("https://manual.example/1", source="manual"))
+    public_id = tmp_db.insert_jd(_jd("https://jobsdb.example/1", source="jobsdb_batch", user_id="default"), user_id="default")
+    private_default_id = tmp_db.insert_jd(_jd("https://manual.example/1", source="manual"), user_id="test")
 
     changed = ensure_public_seed_jds(tmp_db)
 
@@ -45,14 +45,14 @@ def test_public_seed_jds_visible_to_user(tmp_db):
 
 
 def test_insert_user_jd_is_private_to_user(tmp_db):
-    jid = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/u1"))
+    jid = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/u1", user_id="user-1"))
 
     assert get_visible_jd(tmp_db, "user-1", jid)["user_id"] == "user-1"
     assert get_visible_jd(tmp_db, "user-2", jid) is None
 
 
 def test_user_cannot_delete_public_jd(tmp_db):
-    jid = tmp_db.insert_jd(_jd("https://liepin.example/1", source="liepin_batch"))
+    jid = tmp_db.insert_jd(_jd("https://liepin.example/1", source="liepin_batch", user_id="default"), user_id="default")
     ensure_public_seed_jds(tmp_db)
 
     with pytest.raises(JdLibraryError):
@@ -61,7 +61,7 @@ def test_user_cannot_delete_public_jd(tmp_db):
 
 
 def test_user_can_delete_own_jd(tmp_db):
-    jid = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/u2"))
+    jid = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/u2", user_id="user-1"))
 
     delete_user_jd(tmp_db, "user-1", jid)
 
@@ -71,9 +71,9 @@ def test_user_can_delete_own_jd(tmp_db):
 
 
 def test_count_visible_jds_matches_filters(tmp_db):
-    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/pm", source="manual", title="AI PM"))
-    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/data", source="manual_batch", title="Data PM"))
-    insert_user_jd(tmp_db, "user-2", _jd("https://manual.example/other", source="manual", title="Other PM"))
+    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/pm", source="manual", title="AI PM", user_id="user-1"))
+    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/data", source="manual_batch", title="Data PM", user_id="user-1"))
+    insert_user_jd(tmp_db, "user-2", _jd("https://manual.example/other", source="manual", title="Other PM", user_id="user-2"))
 
     assert count_visible_jds(tmp_db, "user-1") == 2
     assert count_visible_jds(tmp_db, "user-1", source="manual_batch") == 1
@@ -82,7 +82,7 @@ def test_count_visible_jds_matches_filters(tmp_db):
 
 def test_list_visible_jds_pagination_after_100(tmp_db):
     for i in range(105):
-        insert_user_jd(tmp_db, "user-1", _jd(f"https://manual.example/{i}", title=f"PM {i:03d}"))
+        insert_user_jd(tmp_db, "user-1", _jd(f"https://manual.example/{i}", title=f"PM {i:03d}", user_id="user-1"))
 
     first_page = list_visible_jds(tmp_db, "user-1", limit=100, offset=0)
     second_page = list_visible_jds(tmp_db, "user-1", limit=20, offset=100)
@@ -110,9 +110,9 @@ def test_garbage_jd_detection_is_conservative():
 
 
 def test_cleanup_garbage_public_jds_soft_deletes_only_public_crawled(tmp_db):
-    garbage_id = tmp_db.insert_jd(_jd("https://liepin.example/verify", source="liepin_batch", title="安全验证"))
-    good_id = tmp_db.insert_jd(_jd("https://liepin.example/good", source="liepin_batch", title="AI 产品经理"))
-    manual_id = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/verify", source="manual", title="安全验证"))
+    garbage_id = tmp_db.insert_jd(_jd("https://liepin.example/verify", source="liepin_batch", title="安全验证", user_id="default"), user_id="default")
+    good_id = tmp_db.insert_jd(_jd("https://liepin.example/good", source="liepin_batch", title="AI 产品经理", user_id="default"), user_id="default")
+    manual_id = insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/verify", source="manual", title="安全验证", user_id="user-1"))
     ensure_public_seed_jds(tmp_db)
 
     conn = tmp_db._get_conn()
@@ -134,8 +134,8 @@ def test_cleanup_garbage_public_jds_soft_deletes_only_public_crawled(tmp_db):
 
 
 def test_search_and_source_filter(tmp_db):
-    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/rag", source="manual", title="RAG 产品经理"))
-    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/data", source="manual_batch", title="数据产品经理"))
+    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/rag", source="manual", title="RAG 产品经理", user_id="user-1"))
+    insert_user_jd(tmp_db, "user-1", _jd("https://manual.example/data", source="manual_batch", title="数据产品经理", user_id="user-1"))
 
     assert [r["title"] for r in list_visible_jds(tmp_db, "user-1", search="RAG 产品")] == ["RAG 产品经理"]
     assert {r["source"] for r in list_visible_jds(tmp_db, "user-1", source="manual_batch")} == {"manual_batch"}

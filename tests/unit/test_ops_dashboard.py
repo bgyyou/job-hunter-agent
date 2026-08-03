@@ -103,7 +103,7 @@ def _seed_one_judge_call(db, *, operation="judge_batch", status="success",
         "latency_ms": 100,
         "status": status,
         "error_message": error_message,
-    })
+    }, user_id="test")
 
 
 def _seed_one_quality_check(db, *, check_type="retrieval", details=None):
@@ -113,7 +113,7 @@ def _seed_one_quality_check(db, *, check_type="retrieval", details=None):
         "target_id": "x",
         "score": 1.0,
         "details": details or {"latency_ms": 200},
-    })
+    }, user_id="test")
 
 
 class TestJudgeMockFallbackAggregation:
@@ -218,21 +218,21 @@ class TestTopFailureCasesAggregation:
             tmp_db.insert_llm_call({
                 "model": "m", "operation": "analyze", "status": "error",
                 "error_type": "rate_limit", "latency_ms": 10,
-            })
+            }, user_id="test")
         for _ in range(3):
             tmp_db.insert_llm_call({
                 "model": "m", "operation": "judge_batch", "status": "error",
                 "error_type": "timeout", "latency_ms": 10,
-            })
+            }, user_id="test")
         tmp_db.insert_llm_call({
             "model": "m", "operation": "analyze", "status": "error",
             "error_type": "api_error", "latency_ms": 10,
-        })
+        }, user_id="test")
         # 非 error 不计入
         tmp_db.insert_llm_call({
             "model": "m", "operation": "analyze", "status": "success",
             "latency_ms": 10,
-        })
+        }, user_id="test")
 
         rows = top_failure_cases(tmp_db)
         # 第一名：analyze+rate_limit (5)
@@ -252,6 +252,6 @@ class TestTopFailureCasesAggregation:
             tmp_db.insert_llm_call({
                 "model": "m", "operation": f"op_{i}", "status": "error",
                 "error_type": "x", "latency_ms": 10,
-            })
+            }, user_id="test")
         rows = top_failure_cases(tmp_db, limit=2)
         assert len(rows) == 2

@@ -49,8 +49,8 @@ def test_jd_platform_label_inferred_from_platform_field():
 def test_jd_freshness_label_recent():
     from datetime import datetime, timezone, timedelta
 
-    now = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
-    three_days_ago = (now - timedelta(days=3)).isoformat()
+    now_real = datetime.now(timezone.utc)
+    three_days_ago = (now_real - timedelta(days=3)).isoformat()
     assert "天前" in page_mod_1._jd_freshness_label({"crawled_at": three_days_ago})
 
 
@@ -93,7 +93,6 @@ def test_lazy_score_jd_writes_back_when_missing(tmp_db):
     # 用 db 直接写，绕过 list 路径
     jd_id = tmp_db.insert_jd(
         {
-            "user_id": "default",
             "url": "https://example.com/test-quality",
             "title": row["title"],
             "company": row["company"],
@@ -105,7 +104,7 @@ def test_lazy_score_jd_writes_back_when_missing(tmp_db):
             "industry_tag": row["industry_tag"],
             "crawled_at": row["crawled_at"],
         }
-    )
+    , user_id="test")
 
     fetched = tmp_db.get_jd(jd_id)
     assert fetched["quality_score"] is None

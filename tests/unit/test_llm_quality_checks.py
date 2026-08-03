@@ -27,6 +27,7 @@ def _make_client(tmp_path):
         api_url="https://example.invalid/v1",
         model="agnes-2.0-flash",
         cache_dir=str(tmp_path / "llm_cache"),
+        user_id="test",
     )
 
 

@@ -45,7 +45,7 @@ def test_ingest_calls_classifier_and_insert_jd():
          patch("document_parser.Contextualizer", contextualizer), \
          patch("tools.embedder.Embedder") as MockEmb:
         MockEmb.return_value.embed_batch.return_value = [[0.1] * 8, [0.2] * 8]
-        out = PdfIngestionService(db=db, classifier=classifier).ingest("sample.pdf")
+        out = PdfIngestionService(db=db, classifier=classifier).ingest("sample.pdf", user_id="test")
 
     assert out == "jd-1"
     classifier.classify.assert_called_once()
@@ -70,7 +70,7 @@ def test_ingest_persists_chunks_with_embeddings():
          patch("document_parser.Contextualizer", contextualizer), \
          patch("tools.embedder.Embedder") as MockEmb:
         MockEmb.return_value.embed_batch.return_value = [[0.1] * 8, [0.2] * 8]
-        PdfIngestionService(db=db, classifier=None).ingest("sample.pdf")
+        PdfIngestionService(db=db, classifier=None).ingest("sample.pdf", user_id="test")
 
     db.insert_chunks_batch.assert_called_once()
     args = db.insert_chunks_batch.call_args[0]
@@ -97,7 +97,7 @@ def test_ingest_recovers_jd_id_when_get_returns_none():
          patch("document_parser.Contextualizer", contextualizer), \
          patch("tools.embedder.Embedder") as MockEmb:
         MockEmb.return_value.embed_batch.return_value = [[0.1] * 8, [0.2] * 8]
-        out = PdfIngestionService(db=db).ingest("sample.pdf")
+        out = PdfIngestionService(db=db).ingest("sample.pdf", user_id="test")
 
     assert out == "real-jd-id"
     db.get_jd_by_url.assert_called_once()

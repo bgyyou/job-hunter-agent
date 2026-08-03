@@ -14,7 +14,7 @@ import pytest
 
 def _sample_resume():
     return {
-        "user_id": "default",
+        "user_id": "test",
         "name": "Leon",
         "phone": "12345678",
         "email": "leon@example.com",
@@ -31,7 +31,7 @@ def _sample_resume():
 
 def _sample_jd():
     return {
-        "user_id": "default",
+        "user_id": "test",
         "url": "https://example.com/jd/123",
         "title": "AI Product Manager",
         "company": "ACME",
@@ -51,7 +51,7 @@ def _sample_jd():
 
 class TestResumeRoundTrip:
     def test_insert_get(self, tmp_db):
-        rid = tmp_db.insert_resume(_sample_resume())
+        rid = tmp_db.insert_resume(_sample_resume(), user_id="test")
         got = tmp_db.get_resume(rid)
         assert got is not None
         assert got["name"] == "Leon"
@@ -60,11 +60,11 @@ class TestResumeRoundTrip:
         assert got["education"] == [{"school": "CUHK", "degree": "MSc"}]
 
     def test_list_and_soft_delete(self, tmp_db):
-        rid = tmp_db.insert_resume(_sample_resume())
-        assert len(tmp_db.list_resumes()) == 1
+        rid = tmp_db.insert_resume(_sample_resume(), user_id="test")
+        assert len(tmp_db.list_resumes('test')) == 1
         tmp_db.soft_delete_resume(rid)
         assert tmp_db.get_resume(rid) is None
-        assert tmp_db.list_resumes() == []
+        assert tmp_db.list_resumes('test') == []
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ class TestResumeRoundTrip:
 
 class TestJDRoundTrip:
     def test_insert_get(self, tmp_db):
-        jid = tmp_db.insert_jd(_sample_jd())
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
         got = tmp_db.get_jd(jid)
         assert got is not None
         assert got["title"] == "AI Product Manager"
@@ -82,13 +82,13 @@ class TestJDRoundTrip:
         assert got["parsed_sections"]["skills"] == ["LLM", "PRD"]
 
     def test_get_by_url(self, tmp_db):
-        jid = tmp_db.insert_jd(_sample_jd())
-        got = tmp_db.get_jd_by_url("https://example.com/jd/123")
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
+        got = tmp_db.get_jd_by_url("https://example.com/jd/123", user_id='test')
         assert got is not None and got["id"] == jid
 
     def test_list(self, tmp_db):
-        tmp_db.insert_jd(_sample_jd())
-        rows = tmp_db.list_jds()
+        tmp_db.insert_jd(_sample_jd(), user_id="test")
+        rows = tmp_db.list_jds('test')
         assert len(rows) == 1
 
 
@@ -98,35 +98,35 @@ class TestJDRoundTrip:
 
 class TestMatchHistory:
     def test_insert_list(self, tmp_db):
-        rid = tmp_db.insert_resume(_sample_resume())
-        jid = tmp_db.insert_jd(_sample_jd())
+        rid = tmp_db.insert_resume(_sample_resume(), user_id="test")
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
         mid = tmp_db.insert_match({
             "resume_id": rid, "jd_id": jid, "score": 87,
             "reasoning": "good fit",
             "matched_skills": ["LLM"], "missing_skills": ["Java"],
             "gaps": ["Java"], "recommendations": [{"section": "skills", "text": "add"}],
-        })
-        rows = tmp_db.list_matches()
+        }, user_id="test")
+        rows = tmp_db.list_matches(user_id='test')
         assert len(rows) == 1
         assert rows[0]["id"] == mid
         assert rows[0]["score"] == 87
         assert rows[0]["matched_skills"] == ["LLM"]
 
     def test_update_applied(self, tmp_db):
-        rid = tmp_db.insert_resume(_sample_resume())
-        jid = tmp_db.insert_jd(_sample_jd())
-        mid = tmp_db.insert_match({"resume_id": rid, "jd_id": jid, "score": 80})
+        rid = tmp_db.insert_resume(_sample_resume(), user_id="test")
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
+        mid = tmp_db.insert_match({"resume_id": rid, "jd_id": jid, "score": 80}, user_id="test")
         tmp_db.update_match_applied(mid, applied=1)
-        rows = tmp_db.list_matches()
+        rows = tmp_db.list_matches(user_id='test')
         assert rows[0]["applied"] == 1
         assert rows[0]["applied_at"]  # 自动填了时间
 
     def test_update_feedback(self, tmp_db):
-        rid = tmp_db.insert_resume(_sample_resume())
-        jid = tmp_db.insert_jd(_sample_jd())
-        mid = tmp_db.insert_match({"resume_id": rid, "jd_id": jid, "score": 80})
+        rid = tmp_db.insert_resume(_sample_resume(), user_id="test")
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
+        mid = tmp_db.insert_match({"resume_id": rid, "jd_id": jid, "score": 80}, user_id="test")
         tmp_db.update_match_feedback(mid, "interview")
-        rows = tmp_db.list_matches()
+        rows = tmp_db.list_matches(user_id='test')
         assert rows[0]["user_feedback"] == "interview"
 
 
@@ -136,17 +136,17 @@ class TestMatchHistory:
 
 class TestOptimizations:
     def test_insert_list_adopt(self, tmp_db):
-        jid = tmp_db.insert_jd(_sample_jd())
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
         oid = tmp_db.insert_optimization({
             "jd_id": jid, "section": "skills",
             "original_content": "Python", "suggested_content": "Python, LLM",
             "reason": "JD 要求 LLM",
-        })
-        rows = tmp_db.list_optimizations(jd_id=jid)
+        }, user_id="test")
+        rows = tmp_db.list_optimizations(jd_id=jid, user_id='test')
         assert len(rows) == 1 and rows[0]["id"] == oid
         assert rows[0]["user_adopted"] == 0
         tmp_db.update_optimization_adopted(oid, 1)
-        rows2 = tmp_db.list_optimizations(jd_id=jid)
+        rows2 = tmp_db.list_optimizations(jd_id=jid, user_id='test')
         assert rows2[0]["user_adopted"] == 1
 
 
@@ -156,14 +156,14 @@ class TestOptimizations:
 
 class TestChunks:
     def test_insert_batch_round_trip(self, tmp_db):
-        jid = tmp_db.insert_jd(_sample_jd())
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
         chunks = [
             {"chunk_text": "负责 AI 产品规划", "chunk_type": "responsibility",
              "heading_path": ["岗位职责"], "embedding": [0.1, 0.2, 0.3, 0.4]},
             {"chunk_text": "3 年 PM 经验", "chunk_type": "requirement",
              "heading_path": ["任职要求"], "embedding": [0.5, 0.6, 0.7, 0.8]},
         ]
-        ids = tmp_db.insert_chunks_batch(jid, chunks)
+        ids = tmp_db.insert_chunks_batch(jid, chunks, user_id="test")
         assert len(ids) == 2
 
         rows = tmp_db.get_chunks_by_jd(jid)
@@ -177,10 +177,10 @@ class TestChunks:
         assert emb0 == pytest.approx([0.1, 0.2, 0.3, 0.4], abs=1e-6)
 
     def test_soft_delete_jd_cascades(self, tmp_db):
-        jid = tmp_db.insert_jd(_sample_jd())
+        jid = tmp_db.insert_jd(_sample_jd(), user_id="test")
         tmp_db.insert_chunks_batch(jid, [
             {"chunk_text": "x", "chunk_type": "overview", "embedding": [0.1] * 4}
-        ])
+        ], user_id="test")
         assert len(tmp_db.get_chunks_by_jd(jid)) == 1
         tmp_db.soft_delete_jd(jid)
         # 级联：chunks 也被软删
@@ -198,7 +198,7 @@ class TestQualityChecks:
             "check_type": "llm_latency", "target_table": "match_history",
             "target_id": "abc", "score": 100,
             "details": {"latency_ms": 1234, "tokens": 500},
-        })
+        }, user_id="test")
         assert isinstance(cid, int)
         rows = tmp_db.list_quality_checks(check_type="llm_latency")
         assert len(rows) == 1

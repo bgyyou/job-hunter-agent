@@ -23,7 +23,7 @@ def _jd_v3(url="https://e.com/v3"):
 
 
 def test_insert_with_parsed_sections_and_tags(tmp_db):
-    jid = tmp_db.insert_jd(_jd_v3())
+    jid = tmp_db.insert_jd(_jd_v3(), user_id="test")
     got = tmp_db.get_jd(jid)
     assert got["parsed_sections"]["requirements"] == ["Python", "5y"]
     assert got["parsed_sections"]["preferred"] == ["LLM"]
@@ -46,9 +46,9 @@ def test_no_legacy_columns_in_jds_table(tmp_db):
 
 
 def test_list_jds_roundtrip(tmp_db):
-    tmp_db.insert_jd(_jd_v3("https://e.com/a"))
-    tmp_db.insert_jd(_jd_v3("https://e.com/b"))
-    rows = tmp_db.list_jds()
+    tmp_db.insert_jd(_jd_v3("https://e.com/a"), user_id="test")
+    tmp_db.insert_jd(_jd_v3("https://e.com/b"), user_id="test")
+    rows = tmp_db.list_jds('test')
     assert len(rows) == 2
     for r in rows:
         assert isinstance(r["parsed_sections"], dict)
@@ -56,8 +56,8 @@ def test_list_jds_roundtrip(tmp_db):
 
 
 def test_search_jds_keyword(tmp_db):
-    tmp_db.insert_jd(_jd_v3())
-    rows = tmp_db.search_jds(keyword="LLM")
+    tmp_db.insert_jd(_jd_v3(), user_id="test")
+    rows = tmp_db.search_jds("LLM", user_id='test')
     assert len(rows) >= 1
     assert rows[0]["parsed_sections"]["preferred"] == ["LLM"]
 

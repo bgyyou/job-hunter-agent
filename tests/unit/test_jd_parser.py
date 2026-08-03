@@ -294,4 +294,4 @@ class TestStructuredJDToDb:
         assert d["source"] == "text"
         assert d["company"] == "字节"
         assert d["responsibilities"] == ["A"]
-        assert "user_id" in d
+        assert "user_id" not in d
