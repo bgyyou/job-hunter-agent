@@ -67,7 +67,9 @@ def run_if_needed() -> None:
     except Exception:
         pass
 
-    st.set_page_config(page_title="JobHunter 首次配置", page_icon="🛠️", layout="centered")
+    # M-v4-2 R10 P1-004：不调 page_config — 统一由 web_app.py 控制
+    # setup_wizard 多 page 模式下若自己 page_config 会与 web_app.py 冲突
+    # （新 streamlit 版本会抛 StreamlitAPIException）
     st.title("🛠️ 首次运行配置")
     st.caption("只需 2 分钟，配置完一次往后自动加载。")
 
