@@ -10,7 +10,11 @@ from services.resume_rewriter import ResumeRewriter, RewriteResult
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 # 模式 B 必须"绝不出现"的具体公司名 / 学校名黑名单
