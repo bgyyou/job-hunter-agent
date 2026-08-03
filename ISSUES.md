@@ -28,6 +28,7 @@
 | 2026-08-04 | **R9 关闭 P1-001 / P1-002b / P1-003 / P1-013**（commit `a141897` / `3b89fd6` / `5934753` / `8f424ee` / docs）：P1-001 `_lazy_score_jd` 加 advisory lock（threading.Lock per jd_id + SQLite `BEGIN IMMEDIATE` + `quality_checked_at` CAS / PG `SELECT ... FOR UPDATE`），10 并发撞同一未评分 JD 只算 1 次 LLM、全部拿到一致 score；P1-002b `scripts/collectors/manual_collector.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（P1-002 同根因补完，`--user-id` 必填）；P1-003 新增 `tests/integration/test_backfill_translate_chunks_retry.py` 4 条（永久失败 SELECT 跳过 / 偶发失败 retry 成功 / retry_count 跨 run 持久化 / stats 报 retry_exhausted 数）；P1-013 `.gitignore` 补 13 项 R2 评估 / 调试产物规则，新增 19 条 gitignore 守卫测试覆盖历史 + 未来两类。本地 **677 passed, 24 skipped, 3 deselected, 0 failed**（基线 658 + P1-001 的 5 + P1-002b 的 4 + P1-003 的 4 + P1-013 的 19 ≈ +32，部分受 24 skipped 吸收）。**自动关闭** P2-009（eval 数据文件 gitignored）+ P2-014（MAX_RETRIES_PER_RECORD grep 在测试中再命中 2 处，总 4 命中超过 ≥3 通过线）。**剩余 P1**：P1-004（setup_wizard set_page_config 冲突）/ P1-005（tempfile 简历无清理）；阻塞 3 项 P1-010 / P1-011 / P1-014 待 owner 说明 | fix agent |
 | 2026-08-04 | **R10 关闭 P1-004 / P1-005**（commit `8282929` / `586fee1` / docs）：P1-004 `setup_wizard.py:70` 移除 `st.set_page_config(...)`，统一由 `web_app.py:49-54` 控制，新 streamlit 多 page 模式不再抛 `StreamlitAPIException`；P1-005 `web_app.py` 加模块级清理机制（三层：命名规范 `prefix='jobhunter_resume_'` + atexit session 清理 + 启动 stale 清理 `>24h`），`pages/03_📝_Flow_A_Step1.py` 上传路径用 `_register_resume_tmp` 注册到 atexit 列表。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（基线 677 + P1-004 的 2 + P1-005 的 9 = +11）。**P1 阶段清零** — 阻塞 3 项 P1-010 / P1-011 / P1-014 仍待 owner 信息；R11 准备就绪：产品维度织入 REVIEW.md（5 条产品红线 + 基线测量 + §3 评分锚点修订 + §7 段位表加产品维度） | fix agent |
 | 2026-08-04 | **R11 关闭 P1-017**（commit `03f45c9` + docs）：P1-017 `test_gitignore_coverage.py` 12 条历史工件测试改写为直接调 `git check-ignore -v <path>`（不依赖 `git status --ignored` 输出 + 不依赖文件物理存在），CI 干净 Linux runner 上不再因工件文件未创建而 fail。**根因**：`git status --ignored` 只对仓库**实际存在**的路径报告 `!!` 前缀，CI runner 没把 `data/eval_baseline_*.json` 等工件文件 copy 过去 → 这些路径不在 ignored 列表里 → 12 条 assert 全部 fail。**修复**：删除 `_git_status_ignored_files` / `_git_status_untracked_files` helper；12 参化路径改走 `subprocess.run(['git', '-c', 'core.quotepath=false', 'check-ignore', '-v', path])`（rc=0 = 被忽略），不创建文件、不污染 repo、对路径是否物理存在完全无关。**路径调整**：原 plan 的 `debug_cached_response.py` 和 `services/_text_utils.py` 已在 P1-008（commit `4380c55`）入仓，`git check-ignore` 对 tracked 文件永远返 1 — 换成 `data/poll_streamlit.ps1`（R9 P1-013 在 .gitignore 已有）+ `docs/portfolio.md`（已在 .gitignore 第 136 行）。Win 中文 / 空格路径走 `git -c core.quotepath=false`。**CI 健康真正闭环**：GitHub Actions 3 workflow 全绿（tests `#30848039867` 1m4s + secret-scan `#30848039710` 19s + docker-build `#30848039594` 33s），R1 红线 CI 健康从"已修复"升级为"已修复 + 经 R10 后两次 docs commit 复测未回潮"。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（基线不变；测试数 19 = 12 historical + 1 combination guard + 6 future）。R12 准备就绪：产品维度织入 REVIEW.md（R11 主菜之后的体系升级） | fix agent |
+| 2026-08-04 | **R12 产品维度织入 REVIEW.md（无代码改动，docs commit）**：REVIEW.md 评测体系升级，**让"工程高≠产品好"循环在源头被掐断**。改动 4 处：(1) `§1` 红线列表追加 R9-P1 ~ R9-P5 五条产品红线（响应 ≤ 3s / 错误友好 / 升级无感 / 全流程首次通过 ≥ 60% / AI 1 次通过 ≥ 70%）；(2) `§3` 质量项表加"产品影响"列（20 行，每行 5-15 字，描述该项对最终用户的可感知影响）；(3) `§7.7` 综合段位计算新增，公式 = 工程段位 × 0.6 + 产品段位 × 0.4（权重可调，下轮评审前可重定）；(4) `§7.5` 节点表 +2 行 R12（fix agent 完成定义/修订/织入 + owner 待跑基线测量）。**ISSUES.md 同步**：P1-018 部分关闭（定义/修订/织入已落地，基线数字待 owner 回填），P1-014 从"阻塞"推为"推进中"（与 R12 基线测量联动）。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（纯文档改动，基线不变）。R13 docs commit 待 owner 跑 5 真人 + 故障注入 5 类 + 跨版本升级 + 50 query LLM-as-judge → 回填 R9-Px 数字 + 计算综合段位 | fix agent |
 
 ---
 
@@ -187,7 +188,7 @@
 
 ### P1-014 · 大隐患：用户上传未跑过（用户记忆）
 - **问题**：用户记忆 `portfolio.md L37 "未来才考虑多租户" + L97 "从单用户工具升级到公网多用户 SaaS"`，PRD §6 没标完成度。
-- **状态**：⏸ 阻塞 — 等 owner 说明"5 个真实用户跑通全流程"的现状。
+- **状态**：🟡 推进中 — R12 启动基线测量，REVIEW.md §1 新增 R9-P1~P5 五条产品红线（响应 ≤ 3s / 错误友好 / 升级无感 / 全流程首次通过率 ≥ 60% / AI 1 次通过率 ≥ 70%），§7.7 综合段位公式 = 工程 × 0.6 + 产品 × 0.4。owner 跑 5 真人 + 故障注入 5 类 + 跨版本升级 + 50 query LLM-as-judge 后回填基线数字 → R13 docs commit 算综合段位
 
 ### P1-015 · DB 层 27 处 `user_id: str = "default"` 签名默认值
 - **问题**：`database/backends/{__init__,sqlite_backend,postgres_backend}.py` 共 27 个方法把 `user_id` 的默认值定成 `"default"`（`list_resumes` / `list_jds` / `get_jd_by_url` / `list_optimizations` / `get_latest_flow_a_draft` / `list_jds_structured` 等）。调用方漏传 `user_id` 时**不报错**，静默读写共享桶 —— 这正是 P0-008 那类跨用户串数据的**使能机制**，而不只是巧合。
@@ -217,6 +218,18 @@
   - CI 证据：`#30844146217`（R10 docs）+ `#30839992404`（R9 docs）workflow `tests` 都标 `failure`
 - **影响**：R1 红线 CI 健康（REVIEW §1 R1）虽 R10 闭环过，但**未在 R9 / R10 两次 docs push 后复测**——所以 pre-existing 红条又回潮成 docs commit fail
 - **状态**：✅ 已关闭 — `03f45c9`（2026-08-04）。**改用 `git check-ignore -v <path>` 直接探测 .gitignore 规则覆盖**，不依赖文件物理存在（`git check-ignore` 对 .gitignore 模式 + 路径字面量做规则匹配，不读文件系统）。删除 `_git_status_ignored_files` / `_git_status_untracked_files` helper（连同 `test_no_historical_artifacts_remain_untracked` 一起删 — 它同样依赖物理存在）；12 参化路径改 `subprocess.run(['git', '-c', 'core.quotepath=false', 'check-ignore', '-v', path])`（rc=0 = 被忽略）。**路径调整**：原 plan 的 `debug_cached_response.py` 和 `services/_text_utils.py` 已在 P1-008（commit `4380c55`）入仓，`git check-ignore` 对 tracked 文件永远返 1 — 换成 `data/poll_streamlit.ps1`（R9 P1-013 在 .gitignore 已有）+ `docs/portfolio.md`（已在 .gitignore 第 136 行）。`TestNewArtifactsImmediatelyIgnored` 6 条保留（已用 `git check-ignore`、路径字面量不依赖物理存在），加 1 条组合守卫 `test_check_ignore_does_not_depend_on_physical_existence`（防止以后又有人把测试改回依赖 `git status --ignored`）。CI 验证：本机 `rm -f data/eval_baseline_*.json data/miss_analysis_*.md data/post_backfill_eval_*.md data/jobhunter_v2.db.bak_* data/rag_progress.json data/sqlite_vec_validation.json data/liepin_homepage_text.txt data/portfolio.md data/poll_streamlit.ps1 coverage.xml 'AI Agent产品经理_简历.md' docs/portfolio.md` 后本地 19 passed；GitHub Actions 3 workflow 全绿（tests `#30848039867` 1m4s + secret-scan `#30848039710` 19s + docker-build `#30848039594` 33s）。**R1 红线 CI 健康真正闭环** — 经 R10 docs commit 复测后再次 push 验证未回潮。
+
+### P1-018 · 产品维度织入 REVIEW.md（R12 评测体系升级）
+- **问题**：REVIEW.md 此前仅覆盖工程维度（R1-R8 红线 + §2 核心指标 + §5 段位），无产品维度。导致"工程 9.0 / 产品 4.0"也被默认判为可发布 —— **工程高 ≠ 产品好**的循环在源头无法被掐断
+- **代码依据**：`REVIEW.md §1` 红线列表仅 R1-R8（工程）；`§5` 段位表无产品维度；`§3` 质量项表无"产品影响"列
+- **状态**：🟡 **部分关闭**（2026-08-04）— R12 已落地 REVIEW.md 体系升级：
+  1. `§1` 追加 R9-P1 ~ R9-P5 五条产品红线（响应 ≤ 3s / 错误友好 / 升级无感 / 全流程首次通过 ≥ 60% / AI 1 次通过 ≥ 70%）
+  2. `§3` 质量项表加"产品影响"列（20 行，每行 5-15 字）
+  3. `§7.7` 综合段位公式 = 工程段位 × 0.6 + 产品段位 × 0.4
+  4. P1-014 状态从"阻塞"推为"推进中"（与基线测量联动）
+  - **未关闭部分**：5 条产品红线的基线数字（owner 跑 5 真人 + 故障注入 5 类 + 跨版本升级 + 50 query LLM-as-judge 后回填）—— R13 docs commit 完成最终闭环
+- **影响**：R13 起所有 fix commit **必须同时过工程 ⊕ 产品**，任一不达不再合并；"工程高≠产品好"循环打破
+- **关联**：REVIEW.md §1 R9-P1~P5 / §3 / §7.7 / §7.5 R12 节点
 
 ---
 

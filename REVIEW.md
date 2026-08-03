@@ -135,6 +135,31 @@
 - **通过条件**：进程退出码 = 0，`dist/JobHunter.exe` 重新生成且大小在 8.0-9.5 MB 区间
 - **不通过处置**：构建失败 → R8 未达
 
+### R9-P1 · 关键页面首次响应 ≤ 3s
+- **测量**：埋点 + 5 场景录屏（应届 / 跳槽 / 转行 / 海投 / 精投）
+- **基线**：待测（owner 跑完填数字）
+- **影响**：超过 3s 用户跳出率显著上升
+
+### R9-P2 · 错误有友好恢复路径（无裸 500）
+- **测量**：故障注入 5 类（LLM 429 / DB lock / 超长输入 / 并发 / 切库）
+- **基线**：待测
+- **影响**：裸 500 = 产品不可用判定
+
+### R9-P3 · 老 session 升级无感（草稿不丢）
+- **测量**：跨版本升级 e2e（v4.1 → v4.2 草稿迁移）
+- **基线**：待测
+- **影响**：用户草稿丢失 = 信任崩塌
+
+### R9-P4 · 全流程首次通过率 ≥ 60%
+- **测量**：5 真人跑通 Flow A → Flow B
+- **基线**：待测（owner 跑完填数字）
+- **影响**：低于 60% = 产品没人用
+
+### R9-P5 · AI 输出 1 次通过率 ≥ 70%（LLM-as-judge）
+- **测量**：50 query baseline + 真人评分
+- **基线**：待测
+- **影响**：低于 70% = 用户反复重写，体验差
+
 ---
 
 ## 2. 核心指标（考试卷：带数值目标）
@@ -196,28 +221,28 @@
 
 供评审 agent 了解项目当前做得好的地方 + 后续可能的优化方向。每项给"出处"便于交叉验证。
 
-| 类别 | 项 | 出处 |
-|---|---|---|
-| 架构 | 子模块化无 shim（coordinator 1390→5 子模块，applicant 883→5 子模块） | commit `723ea16` + `67b44ea` |
-| 架构 | Streamlit multipage 拆分（web_app 3865→1174 + pages/ 10 文件） | commit `ca219e4` + `861f162` |
-| 架构 | provider-neutral LLM（4 env 切 4 家） | `config/settings.py:23-29` + `CLAUDE.md:49-50` |
-| 架构 | SQLite 默认 + PG 可选双后端 | `database/factory.py` + `CLAUDE.md:52-54` |
-| 数据 | v3→v4 schema 平滑迁移（13 个 migration 文件） | `database/migrations/002-016` |
-| 数据 | 一次性硬切模式（CLAUDE.md 铁律执行） | 多处 commit message "无 shim" |
-| 检索 | sqlite-vec vec0 HNSW + cross-encoder rerank | commit `05df45e` + `services/retrieval_service.py` |
-| 检索 | chunk_type 加权（responsibility 1.2 / requirement 1.3） | `portfolio.md:125-156` |
-| 评测 | LLM-as-judge + 50 query baseline + Spearman 校准 | `eval/README.md` + commit `94af037` |
-| 可观测性 | Ops 面板 4 panel + 19 测试 | commit `3f96e25` + `pages/99_📊_Ops.py` |
-| 可观测性 | loguru 20MB/7d 轮转 | `config/settings.py:152-153` |
-| 可观测性 | 每次 LLM 调用埋点（latency / tokens / cache_hit / status） | `data/schema.sql:268-288` |
-| 安全 | pre-commit 防硬编码 key | `.gitleaks.toml` + `tools/githooks/install.sh` |
-| 安全 | internal_keys.json 内测机制 | `config/internal_keys.py:36-99` |
-| 安全 | PBKDF2 + 15min 锁定 + 配额熔断（v4 多用户） | `services/auth_service.py` + `services/quota_service.py` |
-| 工程 | `_text_utils.py` 等重复函数清理（在 R4 修复中） | R4 关联 |
-| 工程 | 类型注解覆盖（pydantic v2） | 多数 services/ + agents/ 子模块 |
-| 工程 | CI 跑 tests + secret-scan | `.github/workflows/` |
-| 部署 | Docker compose 3 服务（app + pgvector + caddy） | `docker-compose.prod.yml` |
-| 部署 | 一键 .exe（pyinstaller --onefile） | `scripts/build_launcher.bat` + `dist/JobHunter.exe` |
+| 类别 | 项 | 出处 | 产品影响 |
+|---|---|---|---|
+| 架构 | 子模块化无 shim（coordinator 1390→5 子模块，applicant 883→5 子模块） | commit `723ea16` + `67b44ea` | 5 子模块独立演进，单点改不动全栈 |
+| 架构 | Streamlit multipage 拆分（web_app 3865→1174 + pages/ 10 文件） | commit `ca219e4` + `861f162` | 单页崩溃不连坐全站 |
+| 架构 | provider-neutral LLM（4 env 切 4 家） | `config/settings.py:23-29` + `CLAUDE.md:49-50` | 换模型不锁死单家 |
+| 架构 | SQLite 默认 + PG 可选双后端 | `database/factory.py` + `CLAUDE.md:52-54` | 开发零配置，上线可扩 |
+| 数据 | v3→v4 schema 平滑迁移（13 个 migration 文件） | `database/migrations/002-016` | 升级不丢草稿 |
+| 数据 | 一次性硬切模式（CLAUDE.md 铁律执行） | 多处 commit message "无 shim" | 不留半生不熟的中间态 |
+| 检索 | sqlite-vec vec0 HNSW + cross-encoder rerank | commit `05df45e` + `services/retrieval_service.py` | 相关 JD 排得准 |
+| 检索 | chunk_type 加权（responsibility 1.2 / requirement 1.3） | `portfolio.md:125-156` | JD 关键要求被优先命中 |
+| 评测 | LLM-as-judge + 50 query baseline + Spearman 校准 | `eval/README.md` + commit `94af037` | 质量有数字说话 |
+| 可观测性 | Ops 面板 4 panel + 19 测试 | commit `3f96e25` + `pages/99_📊_Ops.py` | 故障定位 5 分钟内 |
+| 可观测性 | loguru 20MB/7d 轮转 | `config/settings.py:152-153` | 磁盘不爆炸 |
+| 可观测性 | 每次 LLM 调用埋点（latency / tokens / cache_hit / status） | `data/schema.sql:268-288` | token/延迟/缓存可回溯 |
+| 安全 | pre-commit 防硬编码 key | `.gitleaks.toml` + `tools/githooks/install.sh` | 密钥不进 git |
+| 安全 | internal_keys.json 内测机制 | `config/internal_keys.py:36-99` | 内测白名单可控 |
+| 安全 | PBKDF2 + 15min 锁定 + 配额熔断（v4 多用户） | `services/auth_service.py` + `services/quota_service.py` | 密码 15 分钟内 5 次防暴力 |
+| 工程 | `_text_utils.py` 等重复函数清理（在 R4 修复中） | R4 关联 | bug 修一处全栈受益 |
+| 工程 | 类型注解覆盖（pydantic v2） | 多数 services/ + agents/ 子模块 | IDE 自动补全 + 提前报错 |
+| 工程 | CI 跑 tests + secret-scan | `.github/workflows/` | push 即可测 + 防泄漏 |
+| 部署 | Docker compose 3 服务（app + pgvector + caddy） | `docker-compose.prod.yml` | app/db/反代 一键起 |
+| 部署 | 一键 .exe（pyinstaller --onefile） | `scripts/build_launcher.bat` + `dist/JobHunter.exe` | 双击即用，不装 Python |
 
 ---
 
@@ -351,6 +376,8 @@
 | 2026-08-04 | **v1.1 P1 第二批 R9 关闭 P1-001 / P1-002b / P1-003 / P1-013** | P1-001（commit `a141897`）：`_lazy_score_jd` 走 `db.compute_or_get_jd_quality`，后端抽象加 `update_jd_quality_score_cas`（事务化 CAS）+ `compute_or_get_jd_quality`（`threading.Lock` per jd_id 同进程 + 跨进程 CAS 双层）；sqlite_backend `BEGIN IMMEDIATE` + `quality_checked_at` CAS，postgres_backend `SELECT ... FOR UPDATE`。10 并发撞同一未评分 JD 实测 LLM 调用 = 1。P1-002b（commit `3b89fd6`）：`scripts/collectors/manual_collector.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（P1-002 同根因补完）。P1-003（commit `5934753`）：`tests/integration/test_backfill_translate_chunks_retry.py` 4 条——永久失败 SELECT 跳过 / 偶发失败 retry 成功 / retry_count 持久化 / stats 报 retry_exhausted。P1-013（commit `8f424ee`）：`.gitignore` 加 13 项 R2 评估 / 调试产物规则，新增 19 条 gitignore 守卫测试（历史 + 未来两层）。**自动关闭 P2-009（eval 数据 gitignored）+ P2-014（MAX_RETRIES_PER_RECORD grep 命中 = 4 超过 ≥3）**。本地 **677 passed, 24 skipped, 3 deselected, 0 failed**（基线 658 + 19）。**剩余 P1**：P1-004（setup_wizard set_page_config 冲突）/ P1-005（tempfile 简历无清理）+ 阻塞 3 项 P1-010 / P1-011 / P1-014（owner 说明待补） | fix agent |
 | 2026-08-04 | **v1.1 P1 第二批 R10 关闭 P1-004 / P1-005 + P1 阶段清零** | P1-004（commit `8282929`）：`setup_wizard.py:70` 移除 `st.set_page_config(...)`，统一由 `web_app.py:49-54` 控制，新 streamlit 多 page 模式不再抛 `StreamlitAPIException`；测试 `tests/unit/test_setup_wizard_no_page_config.py` 2 条——AST 静态扫描 setup_wizard.py 不含 `set_page_config` 字面量 + import smoke 不抛异常。P1-005（commit `586fee1`）：`web_app.py` 加模块级清理机制（三层：命名规范 `prefix='jobhunter_resume_'` + UUID 后缀 + atexit session 清理 + 启动 stale 清理 `>24h`），`pages/03_📝_Flow_A_Step1.py` 上传路径用 `_register_resume_tmp` 注册到 atexit 列表；模块级常量 `RESUME_TMP_PREFIX / RESUME_TMP_SUFFIXES / RESUME_TMP_STALE_SECONDS`；测试 `tests/unit/test_tempfile_resume_cleanup.py` 9 条——atexit handler 注册 + register 去重 + stale 清理只删 >24h + 空目录 / 非文件节点不抛 + 页面命名规范 wire + glob roundtrip。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（基线 677 + P1-004 的 2 + P1-005 的 9 = +11）。**P1 阶段清零** — 阻塞 3 项 P1-010 / P1-011 / P1-014 仍待 owner 信息；R11 准备就绪：产品维度织入 REVIEW.md（5 条产品红线 + 基线测量 + §3 评分锚点修订 + §7 段位表加产品维度），不修复任何工单，专门升评测体系 | fix agent |
 | 2026-08-04 | **v1.1 P1 第二批 R11 关闭 P1-017 — CI 红条根因修复** | P1-017（commit `03f45c9`）：`tests/unit/test_gitignore_coverage.py` 12 条历史工件测试改写为直接调 `git check-ignore -v <path>` —— **不依赖 `git status --ignored` 输出 + 不依赖文件物理存在**。删除 `_git_status_ignored_files` / `_git_status_untracked_files` helper + `test_no_historical_artifacts_remain_untracked`（均依赖物理存在的工件文件）；12 参化路径改 `subprocess.run(['git', '-c', 'core.quotepath=false', 'check-ignore', '-v', path])`（rc=0 = 被忽略）；新增 1 条组合守卫 `test_check_ignore_does_not_depend_on_physical_existence` 防止回潮；6 条未来同类工件测试保留（已用 `git check-ignore`、路径字面量不依赖物理存在）。**路径调整**：原 plan 的 `debug_cached_response.py` 和 `services/_text_utils.py` 已在 P1-008（commit `4380c55`）入仓，`git check-ignore` 对 tracked 文件永远返 1 — 换成 `data/poll_streamlit.ps1` + `docs/portfolio.md`。**CI 验证**：本机 rm 11 个工件文件后 19 passed；GitHub Actions 3 workflow 全绿（tests `#30848039867` 1m4s + secret-scan `#30848039710` 19s + docker-build `#30848039594` 33s）。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（基线不变；测试数 19 = 12 historical + 1 combination guard + 6 future）。**R1 红线 CI 健康真正闭环** — 经 R10 docs commit 复测后再次 push 验证未回潮。R12 准备就绪：产品维度织入 REVIEW.md | fix agent |
+| 2026-08-04 | **v1.1 R12 产品维度织入 REVIEW.md — 评测体系升级（无代码改动）** | §1 +5 红线（R9-P1 响应 ≤ 3s / R9-P2 错误友好 / R9-P3 升级无感 / R9-P4 全流程首次通过 ≥ 60% / R9-P5 AI 1 次通过 ≥ 70%）；§3 质量项表 +1 列"产品影响"（20 行，每行 5-15 字）；§7.7 综合段位 = 工程段位 × 0.6 + 产品段位 × 0.4（公式可调，下轮评审前可重定权重）。**关键约束**：R13 起所有 fix commit 必须同时过工程 ⊕ 产品，**工程 9.0 / 产品 4.0 不再被默认判为可发布**——"工程高≠产品好"循环在源头被掐断。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（纯文档改动，基线不变） | fix agent |
+| 待 owner | **R12 基线测量启动（与 P1-014 推进联动）** | owner 跑 5 真人 × 5 场景（应届/跳槽/转行/海投/精投）+ 录屏 → 回填 R9-P4 数字；故障注入 5 类（LLM 429 / DB lock / 超长输入 / 并发 / 切库）→ 回填 R9-P2 数字；跨版本升级 v4.1→v4.2 草稿迁移 e2e → 回填 R9-P3 数字；5 关键页面首次响应埋点 + 录屏 → 回填 R9-P1 数字；50 query LLM-as-judge + 真人评分 → 回填 R9-P5 数字。**R13 docs commit**：填入基线 + 计算综合段位，让评审真正过工程 ⊕ 产品 | owner |
 
 ### 7.6 评审 agent 工作流
 
@@ -361,3 +388,43 @@
 5. 写评审结论：每项"过 / 未达 / N/A"，未达项填入 `ISSUES.md` 的 P2 区
 6. 不修复代码，只发现
 7. 评审结束更新本节"评审节点"行（追加，不删旧）
+
+### 7.7 综合段位计算（R12 织入产品维度）
+
+**公式**：`综合段位 = 工程段位 × 0.6 + 产品段位 × 0.4`
+
+工程段位与产品段位各自从 0-10 计分，权重 0.6 / 0.4 —— 工程是产品的底盘（先过线才能谈体验），但产品是用户实际感知的（工程分高 ≠ 产品可用）。公式可调（下一轮评审前可重定权重），但织入产品维度是 R12 的核心改动。
+
+#### 工程段位（基于 R1-R8 工程红线）
+
+| 段位 | 含义 |
+|---|---|
+| 0.0-2.9 | ❌ 不可发布 |
+| 4.0-5.9 | ⚠️ 预发布 |
+| 7.5-8.9 | ✅ 可发布 |
+| 9.0+ | 🌟 生产级 |
+
+工程段位计算方法：每条 R1-R8 红线按"过 / 未达"赋 1 / -2 分，叠加后归一化到 0-10（详见 §5 段位定义）。
+
+#### 产品段位（基于 R9-P1 ~ R9-P5 五条产品红线）
+
+| 段位 | 含义 |
+|---|---|
+| 0.0-2.9 | ❌ 不可用 |
+| 4.0-5.9 | ⚠️ 难用 |
+| 7.5-8.9 | ✅ 可用 |
+| 9.0+ | 🌟 体验优秀 |
+
+产品段位计算方法：5 条产品红线（R9-P1 响应 ≤ 3s / R9-P2 错误友好 / R9-P3 升级无感 / R9-P4 首次通过率 ≥ 60% / R9-P5 AI 1 次通过率 ≥ 70%）每条按"过 / 未达"赋 2 分（5 × 2 = 10 总分），0-4 段位低于 5 条全过基础线。
+
+#### 当前示例（R11 闭环后）
+
+- **工程段位**：9.0（R1-R8 全部 ✅ + P1-015/016/017 已闭环，CI 健康从"已修复"升级为"已修复 + 复测不回潮"）
+- **产品段位**：待测（R12 启动基线测量，owner 跑完回填 5 条 R9-Px 实测数字）
+- **综合段位估算**：9.0 × 0.6 + 产品 × 0.4（产品基线未测前不计算；测完后按公式出综合段位）
+
+#### 关键约束
+
+- R12 起所有 fix commit **必须同时过工程 ⊕ 产品**（任一不达，循环打破前不再合并）—— "工程 9.0 / 产品 4.0" 不再被默认判为可发布
+- 产品段位基线由 owner 跑 5 真人 + 故障注入 5 类 + 跨版本升级 + 50 query LLM-as-judge 后回填；fix agent 不擅自跑基线
+- §3 评分锚点表每行"产品影响"列是产品维度的微观映射，工程红线修复时同时填写产品影响
