@@ -13,7 +13,7 @@
 | 日期 | 变更 | 操作者 |
 |---|---|---|
 | 2026-08-03 | v1 PRELIMINARY 创建（基于探查 27 文件 + 三路 subagent 报告） | pingce skill |
-| 2026-08-03 | P0-002 关闭：real_llm 默认 deselect + 断言放宽（commit `711618e`） | fix agent |
+| 2026-08-03 | **R4 关闭 P0-003 / P0-004**（commit `f09c1d5` / `482b0c7` / `fe2d484` / `26d9cf6` / `6481880` / docs）；测试基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）。注：plan 文本写 014/015 migration 但已被 vec0 / chunk_translation 占用，实际用 **017 / 018**。P2-017（45 行 legacy 残留）随 018 自动消解。**剩余 P0 全清** — 进 P1 阶段，首批 P1-015（27 处 backend `user_id: str = "default"` 签名默认值） | fix agent |
 | 2026-08-03 | P0-005 关闭：docker 明文密码改 env_file + POSTGRES_PASSWORD 强校验（commit `e105177`） | fix agent |
 | 2026-08-03 | P0-006 关闭：登录错误信息脱敏 — login_user 三场景统一对外文案（commit `7925824` / `6b57427`） | fix agent |
 | 2026-08-03 | P0-009 关闭：README launcher 行数 160→270（commit `376ec90`） | fix agent |
@@ -50,11 +50,11 @@
   - **采纳优化建议按钮**：`README.md:90` 声称"点'采纳'落 `user_adopted`"；`pages/06_📄_Flow_B.py` 全文未调 `update_optimization_adopted`；backend 方法存在 `database/backends/sqlite_backend.py:613-619`
   - **投递历史 + 接受/已读/拒绝反馈**：`README.md:91` 声称；`pages/08_📈_Application_History.py` 只管简历版本，无反馈 UI；backend 方法存在 `database/backends/sqlite_backend.py:565-575`
   - **爬虫 liepin / jobsdb**：`README.md:118-127` 展示命令；`crawler/run_crawler.py:46-47` `SUPPORTED_SITES` 标 "not yet implemented"，跑会 raise ValueError
-- **状态**：✅ 已决议 — owner 拍板"改 README 删行"（2026-08-03）。需新增 commit：
-  1. README 删除 "💬 AI 求职助手" 行
-  2. README "✏️ 优化建议" 行改写为"展示建议列表"（无采纳按钮）
-  3. README "📈 投递历史" 行改写为"简历版本管理"
-  4. README "爬虫" 节 liepin / jobsdb 命令改为"登录态辅助脚本（crawler 适配器 M-v5 补）"
+- **状态**：✅ **已关闭** — commit `f09c1d5`（2026-08-03）+ 测试 `tests/unit/test_readme_no_lying_features.py` 4 条静态扫描兜底。修复 4 处：
+  1. 主功能表删 "💬 AI 求职助手" 行
+  2. "✏️ 优化建议" 改写为"按段落生成改写建议，列表展示（无采纳按钮）"
+  3. "📈 投递历史" 改写为"📈 简历版本管理 — 简历版本时间线，版本树 + 主版本切换"
+  4. 爬虫节 liepin / jobsdb 命令改"liepin / jobsdb 当前仅提供登录态辅助脚本（`scripts/collectors/login_liepin.py` / `login_jobsdb.py`），爬虫适配器将在 M-v5 阶段补完"，只留 Boss 直聘示例
 - **关联**：REVIEW.md R3
 
 ### P0-004 · 铁律违反 3 处（Q4 owner 决议：P0 强制清理）
@@ -63,11 +63,13 @@
   - **dead schema**：`services/jd_parser.py:17-19` 注释 "rag_industry_function 表暂保留为 dead schema，不删"
   - **Step2 legacy 兜底**：`pages/04_📝_Flow_A_Step2.py:50-89` 整块 `legacy = st.session_state.get("fa_section_data") or {}` 兜底迁移
   - **knowledge_chunks.legacy 列**：`database/backends/sqlite_backend.py:137-141` 加列；`scripts/backfill_chunks.py:1-9` 把旧 chunk 标 `legacy=1` 保留；多处 SQL 带 `kc.legacy = 0` 过滤（sqlite_backend.py:858/864/914/965）
-- **状态**：✅ 已决议 — owner 拍板"P0 强制清理"（2026-08-03）。需新增 commit：
-  1. `database/migrations/014_drop_rag_industry_function.sql`（删表 + 删相关代码引用）
-  2. `database/migrations/015_drop_knowledge_chunks_legacy.sql`（DROP COLUMN + 全量重写 SQL 去掉 `legacy = 0`）
-  3. `pages/04_📝_Flow_A_Step2.py` 移除 legacy 兜底块
-  4. 加 migration 后置测试覆盖（migrate → smoke → 回滚预案）
+- **状态**：✅ **已关闭** — 4 commit + 1 test commit（2026-08-03）：
+  1. `482b0c7` 删 dead schema rag_industry_function + 全栈代码引用 — migration **017**（注：plan 文本写 014 但已被 `014_embedding_binary_vec0.sql` 占用）
+  2. `fe2d484` 删 knowledge_chunks.legacy 列 + SQL 过滤全清 — migration **018**（注：plan 文本写 015 但已被 `015_chunk_translation.sql` 占用）
+  3. `26d9cf6` Step2 删 `fa_section_data` legacy 兜底块 — 一次性硬切
+  4. `6481880` migration 017/018 后置测试 7 条（表 DROP / 列 DROP / 残留 DELETE / RAG smoke / 回滚预案）
+  5. docs commit（ISSUES 本行 + REVIEW.md R3/R4 备注 + §7.5 R4 节点）
+- **连带关闭**：P2-017（45 行 legacy 残留）随 018 自动消解
 - **关联**：REVIEW.md R4
 
 ### P0-005 · 明文 docker 密码
@@ -287,9 +289,9 @@
 
 ## P0 汇总（按 owner 决议分组）
 
-**已关闭**：P0-001 / P0-002 / P0-005 / P0-006 / P0-007 / P0-008 / P0-009  
-**剩余待办**：P0-003（README 裂缝 4 处）/ P0-004（铁律 3 处清理 + migration 014/015）  
-**P1-012** = 与 P0-004 协调（先 P0-004 删除再 P1-012 同步迁移清单）
+**已关闭**：P0-001 / P0-002 / P0-003 / P0-004 / P0-005 / P0-006 / P0-007 / P0-008 / P0-009  
+**剩余待办**：**无**（P0 全清，进入 P1 阶段，首批 P1-015 — 27 处 backend `user_id: str = "default"` 签名默认值清理）  
+**已结案联动**：P1-012 与 P0-004 协调（先 P0-004 删除 rag_industry_function，再 P1-012 同步迁移清单 — 现在 `migrate_sqlite_to_pg.py` 表清单不需补 rag_industry_function，自动一致）
 
 ---
 

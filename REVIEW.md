@@ -43,6 +43,14 @@
 - **额外判定**：`grep -n "is yet implemented" crawler/run_crawler.py`
   - 若 README 改完，crawler 代码应一致
 - **不通过处置**：标记 R3 未达
+- **已修复（commit `f09c1d5`，2026-08-03）**：
+  - 判定命令 1：`grep -nE "侧栏浮窗|采纳优化|接受/已读/拒绝反馈|liepin.*--site|jobsdb.*--site" README.md` 0 命中
+  - 主功能表删 "💬 AI 求职助手" 行
+  - "✏️ 优化建议" 改 "按段落生成改写建议，列表展示（无采纳按钮）"
+  - "📈 投递历史" 改 "📈 简历版本管理 — 简历版本时间线，版本树 + 主版本切换"
+  - 爬虫节：`liepin / jobsdb 命令全删，仅 Boss 直聘示例 + 顶部说明 "liepin / jobsdb 当前仅提供登录态辅助脚本，爬虫适配器 M-v5 阶段补"`
+  - 测试 `tests/unit/test_readme_no_lying_features.py` 5 条覆盖（4 类关键词 + liepin/jobsdb 命令）
+  - 判定命令 2：`grep "is yet implemented" crawler/run_crawler.py` 保持原状（代码不动）
 
 ### R4 · 铁律违反必须清理（3 处）
 - **判定命令 1**（dead schema）：`grep -n "rag_industry_function\|暂保留为 dead schema" database/ services/ agents/`
@@ -54,6 +62,18 @@
 - **额外判定**：`grep -rn "leave.*for.*compatibility\|temporarily.*kept\|暂保留" --include="*.py" .`
   - 通过条件：0 命中（或每条命中均在评审前必读节有例外豁免说明）
 - **不通过处置**：标记 R4 未达
+- **已修复（4 commit + 1 test commit，2026-08-03）**：
+  - 判定命令 1：`grep -n "rag_industry_function" --include="*.py" --include="*.sql" services/ pages/ scripts/ database/backends/` 仅剩 migration 011（历史）和 migration 017（清理脚本）两类；`数据库/services/agents/` 0 命中 `暂保留为 dead schema`
+  - 判定命令 2：`grep -n "fa_section_data" pages/04_Flow_A_Step2.py` 0 命中（注释 line "从旧 fa_section_data 兜底迁移" 全删；`web_app.py:607/772/854` 是 v3 draft 字段引用，与本工单无关保留）
+  - 判定命令 3：`grep "kc.legacy\|legacy = 0\|legacy = 1" services/ pages/ scripts/ database/backends/ eval/` 0 命中（业务代码全部移除 `kc.legacy = 0` 过滤；migration 018 落地）
+  - 额外判定：`grep -rn "leave.*for.*compatibility\|temporarily.*kept\|暂保留" --include="*.py" .` 0 命中
+  - commit 列表：
+    - `482b0c7` 删 dead schema rag_industry_function + 全栈代码引用 — migration **017**（plan 文本写 014 被 vec0 占）
+    - `fe2d484` 删 knowledge_chunks.legacy 列 + SQL 过滤全清 — migration **018**（plan 文本写 015 被 chunk_translation 占）
+    - `26d9cf6` Step2 删 fa_section_data legacy 兜底块 — 一次性硬切
+    - `6481880` migration 017/018 后置测试 7 条
+  - 测试基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）
+  - **P2-017**（45 行 legacy=1 残留）随 018 自动消解
 
 ### R5 · 安全红线
 - **判定命令 1**（明文 docker 密码）：`grep -n "POSTGRES_PASSWORD.*jobhunter\|PASSWORD.*=.*jobhunter" docker-compose.yml docker-compose.prod.yml`
@@ -281,7 +301,7 @@
 | 测试基线 | **544 passed / 1 failed**（实测 pytest，R2 修复后转 545 passed） | 2026-08-03 Q1 |
 | 真 LLM flake | **P0 红线**：real_llm marker 默认 deselect + 改断言"保留数字"为更宽松条件 | 2026-08-03 Q2 |
 | README vs 代码裂缝 4 处 | **改 README 删行**（不是补代码）：AI 助手浮窗/采纳按钮/反馈按钮/liepin 爬虫 | 2026-08-03 Q3 |
-| 铁律违反 3 处 | **P0 强制清理**：migration 014 删 rag_industry_function 表 + migration 015 删 knowledge_chunks.legacy 列 + 删 Step2 legacy 兜底 | 2026-08-03 Q4 |
+| 铁律违反 3 处 | **P0 强制清理**：migration **017** 删 rag_industry_function 表 + migration **018** 删 knowledge_chunks.legacy 列 + 删 Step2 legacy 兜底（注：plan 014/015 已被 vec0 / chunk_translation 占用） | 2026-08-03 Q4 |
 | 文件位置 | 项目根（与 README/CLAUDE.md 并排） | 2026-08-03 Q3 |
 | 是否 commit | commit + push | 2026-08-03 Q4 |
 
@@ -319,6 +339,7 @@
 | 2026-08-03 | **v1.1 R3 增量修复** | **P0-001 / P0-007 / P0-008 关闭**（commit `a4e11dd` / `d7cb50e` / `65c6625`），连带关闭 P2-010 / P2-016；**R1 + R5-4 + R6 已修复备注就位**；基线 552 → **568 passed, 3 deselected**（+16 新测试）。**R6 判定命令 1 仍 3 命中**（backend 签名 `user_id: str = "default"`）—— 是使能机制而非 P0-008 同级根因，已登记 **P1-015** 等下一轮处理。R3 / R4 / R5-2 仍未达，剩余 P0 = P0-003（README 裂缝 4 处）+ P0-004（铁律 3 处 + migration 014/015）；R4 准备就绪 | fix agent |
 | 2026-08-03 | **R2 修复落地（commit `711618e`）**：P0-002 真 LLM flake 关闭；基线 547 passed / 3 deselected / 0 failed | fix agent |
 | 2026-08-03 | **R5-2 修复落地（commit `7925824` + `6b57427` + `376ec90`）**：P0-006 登录错误信息脱敏 + P0-009 README 行数 160→270；基线 552 passed / 3 deselected / 0 failed | fix agent |
+| 2026-08-03 | **v1.1 R4 增量修复** | **P0-003 / P0-004 关闭**（commit `f09c1d5` / `482b0c7` / `fe2d484` / `26d9cf6` / `6481880`），连带关闭 P2-017（45 行 legacy=1 残留随 018 DELETE 消解）；**R3 + R4 已修复备注就位**；基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）。注：migration 文件实际编号 017/018（plan 014/015 已被 vec0 / chunk_translation 占用）。**P0 全清** — 进入 P1 阶段，首批 P1-015（27 处 backend `user_id: str = "default"` 签名默认值清理，使能机制彻底堵死） | fix agent |
 
 ### 7.6 评审 agent 工作流
 
