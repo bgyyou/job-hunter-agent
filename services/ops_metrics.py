@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 # 阈值常量（与 pages/99_📊_Ops.py 共用，避免两边漂移）
@@ -48,16 +48,6 @@ def _is_sqlite(backend: Any) -> bool:
 def _is_postgres(backend: Any) -> bool:
     cls_name = type(backend).__name__
     return cls_name == "PostgresBackend"
-
-
-def _json_extract_sql(col: str, key: str) -> Tuple[str, Tuple[Any, ...]]:
-    """跨 dialect 提取 JSON 列里的字段。
-
-    SQLite: json_extract(col, '$.key')。PG: (col->>'key')。
-    返回 (sql_expr, params)：调用方负责把 sql_expr 嵌进 SELECT 子句。
-    """
-    # 简单实现：调用方传入 backend，决定走哪条分支。本函数是占位实现。
-    raise NotImplementedError("use _json_extract_sqlite / _json_extract_pg directly")
 
 
 def _json_extract_sqlite(col: str, key: str) -> str:
