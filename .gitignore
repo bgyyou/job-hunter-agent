@@ -118,3 +118,19 @@ data/knowledge_bases/
 
 # 推送清单（仅本地使用，不入仓库历史）
 PUSH_CHECKLIST.md
+
+# R9 P1-013：评测 / 调试产物治理（不入仓库，与 data/* 调试残留分账）
+data/eval_baseline_*.json
+data/miss_analysis_*.md
+data/post_backfill_eval_*.md
+data/jobhunter_v2.db.bak_*
+data/cookies/*.json
+data/rag_progress*.json
+data/sqlite_vec*.json
+data/liepin_homepage_text.txt
+data/portfolio.md
+data/poll_streamlit.ps1
+coverage.xml
+debug_cached_response.py
+AI Agent产品经理_简历.md
+docs/portfolio.md
