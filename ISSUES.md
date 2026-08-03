@@ -13,6 +13,7 @@
 | 日期 | 变更 | 操作者 |
 |---|---|---|
 | 2026-08-03 | v1 PRELIMINARY 创建（基于探查 27 文件 + 三路 subagent 报告） | pingce skill |
+| 2026-08-03 | P0-002 关闭：real_llm 默认 deselect + 断言放宽（commit `711618e`） | fix agent |
 | 2026-08-03 | v1 FROZEN — owner 拍板 Q1-Q4 + 终审 Q1-Q4 | pingce skill |
 | 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 
@@ -34,7 +35,7 @@
 - **代码依据**：
   - `tests/integration/test_flow_a_real_llm_3_scenarios.py:186` 周围断言
   - `pytest.ini:1-19` markers 配置
-- **状态**：✅ 已决议 — owner 拍板"P0 红线必须修"（2026-08-03）。修复路径：1) `pytest.ini` 加 `addopts = -m "not real_llm"`；2) 测试断言改为"输出含 ≥1 个原简历关键数字"或"多 case 取并集"。需新增 commit。
+- **状态**：✅ 已关闭 — `711618e`（2026-08-03）。修复：1) `pytest.ini` addopts 加 `-m "not real_llm"`；2) 场景 A 断言改为"≥1 数字保留"（must_have 列表取 1）；3) 新增 `tests/unit/test_pytest_ini_real_llm_default_skip.py` 5 条覆盖（addopts 静态 + markers 段 + 断言源码静态 + --collect-only 动态双向）。测试基线 547 passed / 3 deselected / 0 failed。
 - **关联**：REVIEW.md R2 / 用户记忆"真 LLM flake 未根治"
 
 ### P0-003 · README vs 代码裂缝 4 处（Q3 owner 决议：改 README 删行）

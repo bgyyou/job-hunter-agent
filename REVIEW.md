@@ -25,6 +25,11 @@
 - **判定命令 3**：读 `tests/integration/test_flow_a_real_llm_3_scenarios.py:186` 周围 30 行
   - 通过条件：断言不再是"模式 A 必须保留原数字 200"这种硬要求；改为"输出含 ≥1 个原简历关键数字"或"多 case 取并集后 ≥1 数字出现"
 - **不通过处置**：标记 R2 未达；R1 即便数字对也判不合格
+- **已修复（commit `711618e`）**：
+  - 判定命令 1：`pytest.ini:14-15` addopts 含 `-m "not real_llm"`，CI 默认 deselect；显式 `pytest -m real_llm` opt-in 仍可跑（多 `-m` 后者覆盖前者）
+  - 判定命令 2：`pytest tests/ -q --tb=no` 输出末行 = `547 passed, 3 deselected, 1 warning`（3 deselected = real_llm 默认跳过；基线从 544 → 547 是 +5 新测试 − 3 跳过 − 1 偶发命中浮动）
+  - 判定命令 3：`tests/integration/test_flow_a_real_llm_3_scenarios.py:213-220` 断言改为 `must_have = ["200", "120", "18"]; kept = [n for n in must_have if n in all_text]; assert len(kept) >= 1`
+  - 覆盖：`tests/unit/test_pytest_ini_real_llm_default_skip.py` 5 条（addopts 静态 / markers 段 / 断言源码 / --collect-only 双向动态）
 
 ### R3 · README vs 代码裂缝必须收口
 - **判定命令**：`grep -nE "侧栏浮窗|采纳优化|接受/已读/拒绝反馈|liepin.*--site|jobsdb.*--site" README.md`
@@ -275,6 +280,7 @@
 | 日期 | 节点 | 关键结论 | 操作 |
 |---|---|---|---|
 | 2026-08-03 | v1.1 PRELIMINARY 复审 | R7/R8 跳过实测（R7 命令过时 / R8 用户决策）；R1-R6 红线未达（6 项）；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9（≥3 红线未过触发下限）；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
+| 2026-08-03 | **R2 修复落地（commit `711618e`）**：P0-002 真 LLM flake 关闭；基线 547 passed / 3 deselected / 0 failed | fix agent |
 
 ### 7.6 评审 agent 工作流
 
