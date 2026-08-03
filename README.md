@@ -66,7 +66,7 @@ pip install pyinstaller
 pyinstaller --onefile --name JobHunter --distpath dist scripts/jobhunter_launcher.py
 ```
 
-> `scripts/jobhunter_launcher.py` 是 160 行的 Python 脚本：子进程跑 streamlit → 轮询 60s 等就绪 → `webbrowser.open` 自动开浏览器 → 关闭 launcher 即停服务。打包后约 8.6MB。
+> `scripts/jobhunter_launcher.py` 是 270 行的 Python 脚本：子进程跑 streamlit → 轮询 60s 等就绪 → `webbrowser.open` 自动开浏览器 → 关闭 launcher 即停服务。打包后约 8.6MB。
 
 ### 3. （可选）启用 pre-commit 钩子
 
