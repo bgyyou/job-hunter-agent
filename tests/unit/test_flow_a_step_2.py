@@ -7,9 +7,14 @@
 - 技能/证书/语言/作品集折叠区
 - 必填校验
 
+M-v4-2 变更：
+- _ensure_step2_form 不再从 legacy fa_section_data 兜底迁移
+  （owner P0-004 决议：一次性硬切，不留 legacy 兜底）
+- target_role 从 fa_jd_structured / fa_position 派生
+
 覆盖（≥ 6 条）：
 1. _ensure_step2_form 默认初始化（1 段教育 + 1 段工作 + 0 段项目）
-2. _ensure_step2_form 从 legacy fa_section_data 迁移
+2. _ensure_step2_form target_role 从 fa_jd_structured 派生
 3. _ensure_step2_form 已存在则复用
 4. _validate_step2_form 缺姓名 → 报错
 5. _validate_step2_form 缺手机+邮箱 → 报错
@@ -59,34 +64,25 @@ class TestEnsureStep2Form:
         assert "languages_text" in form
         assert "portfolio" in form
 
-    def test_migrate_from_legacy(self, web_app_mod, monkeypatch):
-        """从旧 fa_section_data 迁移（用户在 Step 1 后用过 legacy 路径）。"""
+    def test_target_role_from_fa_jd_structured(self, web_app_mod, monkeypatch):
+        """target_role 应从 fa_jd_structured.title 派生（不再走 legacy）。"""
         state = _FakeSession()
-        state["fa_section_data"] = {
-            "header": {
-                "name": "张三",
-                "contact": {"phone": "13800138000", "email": "z@z.com"},
-                "location": "北京",
-            },
-            "education": [{"school": "北大", "degree": "本科", "major": "CS"}],
-            "experience": [
-                {"company": "字节", "title": "PM", "description": "做产品",
-                 "achievements": ["促成 200 单成交"]},
-            ],
-            "skills": ["Python", "LLM"],
-            "languages": ["中文", "英语"],
-        }
+        state["fa_jd_structured"] = {"title": "AI 产品经理"}
         monkeypatch.setattr(web_app_mod.st, "session_state", state)
         form = page_mod_1._ensure_step2_form()
-        assert form["basic"]["name"] == "张三"
-        assert form["basic"]["phone"] == "13800138000"
-        assert form["basic"]["email"] == "z@z.com"
-        assert len(form["education"]) == 1
-        assert form["education"][0]["school"] == "北大"
-        assert len(form["work"]) == 1
-        assert form["work"][0]["company"] == "字节"
-        assert form["skills_text"] == "Python, LLM"
-        assert form["languages_text"] == "中文, 英语"
+        assert form["basic"]["target_role"] == "AI 产品经理"
+        # 非遗留：basic 字段全空，没有任何 fa_section_data 兜底
+        assert form["basic"]["name"] == ""
+        assert form["basic"]["phone"] == ""
+        assert form["skills_text"] == ""
+
+    def test_target_role_fallback_to_fa_position(self, web_app_mod, monkeypatch):
+        """fa_jd_structured 缺时回退 fa_position。"""
+        state = _FakeSession()
+        state["fa_position"] = "Data Scientist"
+        monkeypatch.setattr(web_app_mod.st, "session_state", state)
+        form = page_mod_1._ensure_step2_form()
+        assert form["basic"]["target_role"] == "Data Scientist"
 
     def test_reuse_existing(self, web_app_mod, monkeypatch):
         """已存在 → 复用，不重新初始化。"""

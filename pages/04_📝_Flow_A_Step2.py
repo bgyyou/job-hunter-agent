@@ -47,47 +47,39 @@ def _ensure_step2_form() -> Dict[str, Any]:
     if "fa_step2_form" in st.session_state and st.session_state.fa_step2_form:
         return st.session_state.fa_step2_form
 
-    # 从旧 fa_section_data 兜底迁移（如果用户在 Step 1 后回头用过 legacy 路径）
-    legacy = st.session_state.get("fa_section_data") or {}
-    legacy_header = legacy.get("header") or {}
-
     form = {
         "basic": {
-            "name": legacy_header.get("name", ""),
+            "name": "",
             "gender": "",
-            "phone": legacy_header.get("contact", {}).get("phone", ""),
-            "email": legacy_header.get("contact", {}).get("email", ""),
-            "location": legacy_header.get("location", ""),
+            "phone": "",
+            "email": "",
+            "location": "",
             "target_role": (
                 (st.session_state.get("fa_jd_structured") or {}).get("title")
                 or st.session_state.get("fa_position") or ""
             ),
             "birth_year": "",
         },
-        "education": _seed_education(legacy.get("education")),
-        "work": _seed_work(legacy.get("experience")),
-        "projects": _seed_projects(legacy.get("projects")),
-        "skills_text": ", ".join(legacy.get("skills") or []),
+        "education": _seed_education(),
+        "work": _seed_work(),
+        "projects": _seed_projects(),
+        "skills_text": "",
         "certifications_text": "",
-        "languages_text": ", ".join(legacy.get("languages") or []),
+        "languages_text": "",
         "portfolio": "",
     }
     st.session_state.fa_step2_form = form
     return form
 
 
-def _seed_education(legacy_edu: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    if legacy_edu:
-        return [dict(e) for e in legacy_edu]
+def _seed_education() -> List[Dict[str, Any]]:
     return [{
         "school": "", "degree": "", "major": "",
         "start_year": "", "end_year": "", "gpa": "",
     }]
 
 
-def _seed_work(legacy_exp: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    if legacy_exp:
-        return [dict(e) for e in legacy_exp]
+def _seed_work() -> List[Dict[str, Any]]:
     return [{
         "company": "", "title": "",
         "start_date": "", "end_date": "至今",
@@ -95,9 +87,7 @@ def _seed_work(legacy_exp: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any
     }]
 
 
-def _seed_projects(legacy_proj: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    if legacy_proj:
-        return [dict(p) for p in legacy_proj]
+def _seed_projects() -> List[Dict[str, Any]]:
     return []
 
 
