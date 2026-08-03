@@ -85,11 +85,10 @@ bash tools/githooks/install.sh
 | Tab | 能力 |
 |-----|------|
 | 📄 上传简历 | PDF/Markdown 简历 → LLM 结构化抽取（姓名、技能、项目、经验年限） |
-| 🌐 JD 来源 | 单条粘贴 / 批量粘贴（M6.A.2） / URL 抓取 / 站点爬虫（Boss、JobsDB、猎聘） |
+| 🌐 JD 来源 | 单条粘贴 / 批量粘贴（M6.A.2） / URL 抓取 |
 | 🎯 匹配分析 | 简历 vs JD 匹配评分 + 缺口清单，结果落 `match_history` |
-| ✏️ 优化建议 | 按段落生成改写建议；点"采纳"落 `optimizations.user_adopted` |
-| 📈 投递历史 | 已匹配 JD 时间线 + 用户反馈（接受/已读/拒绝） |
-| 💬 AI 求职助手 | 侧栏浮窗对话，自动注入当前简历/JD/匹配分作为上下文（M6.A.3） |
+| ✏️ 优化建议 | 按段落生成改写建议，列表展示（无采纳按钮） |
+| 📈 简历版本管理 | 简历版本时间线，版本树 + 主版本切换 |
 
 ### 演示视频
 
@@ -115,15 +114,11 @@ bash tools/githooks/install.sh
 
 ## 爬虫
 
+Boss 直聘已可用。liepin / jobsdb 当前仅提供**登录态辅助脚本**（`python scripts/collectors/login_liepin.py` / `login_jobsdb.py`），爬虫适配器将在 M-v5 阶段补完。
+
 ```bash
 # Boss 直聘（推荐先 python scripts/collectors/login_jobsdb.py 同款流程登录）
 python crawler/run_crawler.py --site boss --keyword "AI产品经理" --limit 20 --use-browser
-
-# JobsDB（香港）
-python crawler/run_crawler.py --site jobsdb --keyword "Product Manager" --limit 20
-
-# 猎聘（M6.B.3.2 新增；先 python scripts/collectors/login_liepin.py 登录）
-python crawler/run_crawler.py --site liepin --keyword "AI产品经理" --limit 10
 ```
 
 爬虫的反爬策略（速率限制、并发上限、UA 轮换）在 `.env` 中配置，详见 `.env.example` 注释。
