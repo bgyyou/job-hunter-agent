@@ -14,6 +14,7 @@
 |---|---|---|
 | 2026-08-03 | v1 PRELIMINARY 创建（基于探查 27 文件 + 三路 subagent 报告） | pingce skill |
 | 2026-08-03 | v1 FROZEN — owner 拍板 Q1-Q4 + 终审 Q1-Q4 | pingce skill |
+| 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 
 ---
 
@@ -216,6 +217,50 @@
 ### P2-010 · memory 项目快照与实际基线不同步
 - **问题**：用户 `MEMORY.md` 记 "544/1"，与 README 481 / CLAUDE.md 81 三个数字都不一致。
 - **状态**：🟢 与 P0-001 同步后自动解决。
+
+---
+
+### P2-011 · services 模块覆盖率 76.9% < 80%
+- **问题**：`pytest --cov=services` 实测 76.9%（含 untracked `_text_utils.py` 0% 拉低），低于目标 80%
+- **代码依据**：`services/_text_utils.py`（untracked）与 `services/translation_service.py:108` `_strip_thinking` 重复
+- **状态**：🟢 评审期发现（v1.1 复审）。与 P1-008 决策绑定：按 P1-008 决议（进 git 并清理 translation_service 重复）后即解。
+- **关联**：P1-008 / REVIEW.md §2.4 services ≥ 80%
+
+### P2-012 · agents 整体覆盖率 10% < 16%
+- **问题**：`pytest --cov=agents` 实测 10%，低于目标 16%
+- **代码依据**：agents/coordinator 与 agents/applicant 子模块化后大量 0%
+- **状态**：🟢 评审期发现（v1.1 复审）。与 §2.2 "applicant 子流程完成率 N/A" 联动，缺测。
+- **关联**：REVIEW.md §2.2 / §2.4
+
+### P2-013 · crawler 覆盖率 0% < 5%
+- **问题**：boss/indeed/lagou 三站均 0%，低于目标 5%
+- **代码依据**：`crawler/` 全靠 `scripts/collectors/login_*` 绕过测试
+- **状态**：🟢 评审期发现（v1.1 复审）。
+- **关联**：REVIEW.md §2.4
+
+### P2-014 · MAX_RETRIES_PER_RECORD grep 命中 2 < 通过条件 3
+- **问题**：`grep -n "MAX_RETRIES_PER_RECORD" scripts/ services/` 仅 2 命中（`scripts/backfill_translate_chunks.py:54, 399`），目标 ≥3
+- **代码依据**：`scripts/backfill_translate_chunks.py:54, 399`
+- **状态**：🟢 评审期发现（v1.1 复审）。与 P1-003 闭环同步。
+- **关联**：P1-003 / REVIEW.md §2.4
+
+### P2-015 · 翻译覆盖 97.89% < 99.99%
+- **问题**：实测 24010/24527 = 97.89%，194 条含英文未翻译。目标 ≥ 99.99%
+- **代码依据**：`SELECT translated_at FROM knowledge_chunks` 实测
+- **状态**：🟢 评审期发现（v1.1 复审）。与 P2-014 同步 backfill。
+- **关联**：REVIEW.md §2.1 翻译覆盖
+
+### P2-016 · R1 字面通过条件数字偏差（544/1 vs 545/0）
+- **问题**：v1 FROZEN 字面写 "544 passed / 1 failed"，本次实测 `545 passed, 1 warning, 0 failed`（LLM 偶然命中"200/120/18"逃过 flake）
+- **代码依据**：`pytest tests/ -q --tb=no` 输出末行
+- **状态**：🟢 评审期发现（v1.1 复审）。v1 字面未达 / 实质达标。P0-001 / P0-002 commit 落地后解释消除。
+- **关联**：P0-001 / P0-002 / REVIEW.md R1
+
+### P2-017 · knowledge_chunks 仍有 45 行 legacy=1 残留数据
+- **问题**：`SELECT count(*) FROM knowledge_chunks WHERE legacy=1` = 45，旧 chunk 未清理
+- **代码依据**：`SELECT count(*) FROM knowledge_chunks WHERE legacy=1`
+- **状态**：🟢 评审期发现（v1.1 复审）。跟随 P0-004 commit 同步清理（migration 015）。
+- **关联**：P0-004 / REVIEW.md R4
 
 ---
 
