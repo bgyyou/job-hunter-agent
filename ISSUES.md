@@ -263,6 +263,15 @@
 - **状态**：🟢 评审期发现（v1.1 复审）。跟随 P0-004 commit 同步清理（migration 015）。
 - **关联**：P0-004 / REVIEW.md R4
 
+### P2-018 · CI tests 一直 fail（环境问题，与代码无关）
+- **问题**：`tests/integration/test_flow_a_real_llm_3_scenarios.py` 等多个测试在 collection 阶段 `sqlite3.OperationalError: no such module: vec0`；`tests/unit/test_translation_service.py` 顶部 `import sqlite_vec` → `ModuleNotFoundError: No module named 'sqlite_vec'`。CI 已 fail 至少 5 条 commit（`39908c0` / `5b1897a` / `404cb46` / `9413665` / `711618e` / `5a8933a` 全部 tests workflow 失败）。
+- **代码依据**：
+  - `tests/unit/test_translation_service.py:5` 直接 `import sqlite_vec`（CI minimal-deps 不装）
+  - `database/migrations/014_embedding_binary_vec0.sql` migration 需要 sqlite-vec extension
+  - `database/backends/sqlite_backend.py:115` 走 numpy fallback 但 collection 时仍触发 migration
+- **状态**：🟢 修复 P0-002 时发现（2026-08-03）。`pytest tests/ -q` 本地 547 passed，CI 红是环境问题（CI runner 没装 sqlite-vec）非代码回归。建议方案：a) CI workflow 加 `pip install sqlite-vec`；b) `test_translation_service.py` 改为 try/except import；c) 跳过有 vec0 依赖的测试（需 marker）。待 owner 决策。
+- **关联**：CI 历史（`gh run list --limit 30`）
+
 ---
 
 ## P0 汇总（按 owner 决议分组）
