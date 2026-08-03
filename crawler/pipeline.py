@@ -21,8 +21,9 @@ from database.factory import get_db
 class CrawlPipeline:
     """End-to-end pipeline from job-site crawling to database insertion."""
 
-    def __init__(self, crawler: BaseCrawler, classifier: Optional[Classifier] = None):
+    def __init__(self, crawler: BaseCrawler, user_id: str, classifier: Optional[Classifier] = None):
         self.crawler = crawler
+        self.user_id = user_id
         self.classifier = classifier or Classifier()
         self.db = get_db()
         self._inserted = 0
@@ -78,7 +79,7 @@ class CrawlPipeline:
             return
 
         # Dedup: check if URL already exists
-        existing = self.db.get_jd_by_url(url)
+        existing = self.db.get_jd_by_url(url, user_id=self.user_id)
         if existing:
             self._skipped_dedup += 1
             logger.debug(f"[Pipeline] Skipped (duplicate URL): {url}")
@@ -86,6 +87,7 @@ class CrawlPipeline:
 
         # Normalize fields
         cleaned = self._clean(job)
+        cleaned["user_id"] = self.user_id
 
         # Auto-classify
         try:
@@ -118,7 +120,7 @@ class CrawlPipeline:
         # v2.1 M3.4: JD 入库后语义切分 + 向量化
         try:
             from tools.jd_indexer import embed_and_store_jd_chunks
-            embed_and_store_jd_chunks(self.db, jd_id, cleaned.get("raw_text", ""))
+            embed_and_store_jd_chunks(self.db, jd_id, cleaned.get("raw_text", ""), user_id=self.user_id)
         except Exception as exc:
             logger.warning(f"[Pipeline] Indexing failed for {jd_id}: {exc}")
 

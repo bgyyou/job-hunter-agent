@@ -50,7 +50,7 @@ class BaseBackend(ABC):
         """
 
     @abstractmethod
-    def list_resumes(self, user_id: str = "default") -> List[Dict]:
+    def list_resumes(self, user_id: str) -> List[Dict]:
         """List all (non-deleted) resumes for a user, newest ``updated_at`` first."""
 
     @abstractmethod
@@ -78,18 +78,18 @@ class BaseBackend(ABC):
         """Fetch a JD by id; returns ``None`` if missing or soft-deleted."""
 
     @abstractmethod
-    def list_jds(self, user_id: str = "default", source: Optional[str] = None,
+    def list_jds(self, user_id: str, source: Optional[str] = None,
                  limit: int = 100) -> List[Dict]:
         """List recent JDs, optionally filtered by source (e.g. ``boss``, ``jobsdb``)."""
 
     @abstractmethod
-    def get_jd_by_url(self, url: str, user_id: str = "default") -> Optional[Dict]:
+    def get_jd_by_url(self, url: str, *, user_id: str) -> Optional[Dict]:
         """Lookup a JD by its source URL (the unique key for dedup)."""
 
     @abstractmethod
     def search_jds(self, keyword: str, industry_tag: Optional[str] = None,
                    function_tag: Optional[str] = None, position_tag: Optional[str] = None,
-                   user_id: str = "default", limit: int = 50) -> List[Dict]:
+                   *, user_id: str, limit: int = 50) -> List[Dict]:
         """Keyword + tag search over title/company/raw_text. Substring match (LIKE)."""
 
     @abstractmethod
@@ -122,7 +122,7 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def list_matches(self, resume_id: Optional[str] = None, jd_id: Optional[str] = None,
-                     user_id: str = "default", limit: int = 100) -> List[Dict]:
+                     *, user_id: str, limit: int = 100) -> List[Dict]:
         """List match records, optionally filtered by resume or JD, newest first."""
 
     @abstractmethod
@@ -150,7 +150,7 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def list_optimizations(self, jd_id: Optional[str] = None,
-                           user_id: str = "default") -> List[Dict]:
+                           *, user_id: str) -> List[Dict]:
         """List optimization suggestions, optionally for a specific JD."""
 
     @abstractmethod
@@ -259,7 +259,7 @@ class BaseBackend(ABC):
         """Fetch one non-deleted Flow A draft with JSON columns parsed."""
 
     @abstractmethod
-    def get_latest_flow_a_draft(self, user_id: str = "default",
+    def get_latest_flow_a_draft(self, user_id: str,
                                 statuses: Optional[tuple[str, ...]] = None) -> Optional[Dict[str, Any]]:
         """Fetch the latest recoverable Flow A draft for a user."""
 
@@ -354,7 +354,7 @@ class BaseBackend(ABC):
         """Fetch one structured JD by id; returns None if missing/soft-deleted."""
 
     @abstractmethod
-    def list_jds_structured(self, user_id: str = "default",
+    def list_jds_structured(self, user_id: str,
                             source: Optional[str] = None,
                             limit: int = 100) -> List[Dict]:
         """List recent structured JDs, optionally filtered by source."""
@@ -374,7 +374,7 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def list_rewrite_history(self, resume_id: Optional[str] = None,
-                             user_id: str = "default",
+                             *, user_id: str,
                              limit: int = 100) -> List[Dict]:
         """List recent rewrites, optionally filtered by resume."""
 

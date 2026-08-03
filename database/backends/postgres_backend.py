@@ -164,7 +164,7 @@ class PostgresBackend(BaseBackend):
             return None
         return self._deserialize_list(rows[0], ["skills", "domains", "target_roles", "preferred_locations", "education", "projects"])
 
-    def list_resumes(self, user_id: str = "default") -> List[Dict]:
+    def list_resumes(self, user_id: str) -> List[Dict]:
         rows = self._fetchall(
             "SELECT * FROM resumes WHERE user_id = %s AND deleted_at IS NULL ORDER BY updated_at DESC", (user_id,)
         )
@@ -211,7 +211,7 @@ class PostgresBackend(BaseBackend):
             return None
         return self._deserialize_list(rows[0], ["parsed_sections", "tags"])
 
-    def list_jds(self, user_id: str = "default", source: Optional[str] = None, limit: int = 100) -> List[Dict]:
+    def list_jds(self, user_id: str, source: Optional[str] = None, limit: int = 100) -> List[Dict]:
         query = "SELECT * FROM jds WHERE user_id = %s AND deleted_at IS NULL"
         params = [user_id]
         if source:
@@ -220,7 +220,7 @@ class PostgresBackend(BaseBackend):
         rows = self._fetchall(query, params)
         return [self._deserialize_list(r, ["parsed_sections", "tags"]) for r in rows]
 
-    def get_jd_by_url(self, url: str, user_id: str = "default") -> Optional[Dict]:
+    def get_jd_by_url(self, url: str, *, user_id: str) -> Optional[Dict]:
         rows = self._fetchall(
             "SELECT * FROM jds WHERE url = %s AND user_id = %s AND deleted_at IS NULL", (url, user_id)
         )
@@ -230,7 +230,7 @@ class PostgresBackend(BaseBackend):
 
     def search_jds(self, keyword: str, industry_tag: Optional[str] = None,
                    function_tag: Optional[str] = None, position_tag: Optional[str] = None,
-                   user_id: str = "default", limit: int = 50) -> List[Dict]:
+                   *, user_id: str, limit: int = 50) -> List[Dict]:
         conditions = ["user_id = %s AND deleted_at IS NULL AND (title LIKE %s OR company LIKE %s OR raw_text LIKE %s)"]
         params = [user_id, f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"]
         if industry_tag:
@@ -285,7 +285,7 @@ class PostgresBackend(BaseBackend):
         return match_id
 
     def list_matches(self, resume_id: Optional[str] = None, jd_id: Optional[str] = None,
-                     user_id: str = "default", limit: int = 100) -> List[Dict]:
+                     *, user_id: str, limit: int = 100) -> List[Dict]:
         conditions = ["user_id = %s AND deleted_at IS NULL"]
         params = [user_id]
         if resume_id:
@@ -336,7 +336,7 @@ class PostgresBackend(BaseBackend):
         )
         return opt_id
 
-    def list_optimizations(self, jd_id: Optional[str] = None, user_id: str = "default") -> List[Dict]:
+    def list_optimizations(self, jd_id: Optional[str] = None, *, user_id: str) -> List[Dict]:
         conditions = ["user_id = %s"]
         params = [user_id]
         if jd_id:
@@ -760,7 +760,7 @@ class PostgresBackend(BaseBackend):
         )
         return self._deserialize_flow_a_draft(rows[0]) if rows else None
 
-    def get_latest_flow_a_draft(self, user_id: str = "default",
+    def get_latest_flow_a_draft(self, user_id: str,
                                 statuses: Optional[tuple[str, ...]] = None) -> Optional[Dict[str, Any]]:
         statuses = statuses or ("draft", "generating", "failed")
         rows = self._fetchall(
@@ -862,7 +862,7 @@ class PostgresBackend(BaseBackend):
             return None
         return self._deserialize_list(rows[0], ["responsibilities", "requirements"])
 
-    def list_jds_structured(self, user_id: str = "default",
+    def list_jds_structured(self, user_id: str,
                             source: Optional[str] = None,
                             limit: int = 100) -> List[Dict]:
         sql = "SELECT * FROM jd_structured WHERE user_id = %s AND deleted_at IS NULL"
@@ -896,7 +896,7 @@ class PostgresBackend(BaseBackend):
         return row[0] if row else 0
 
     def list_rewrite_history(self, resume_id: Optional[str] = None,
-                             user_id: str = "default",
+                             *, user_id: str,
                              limit: int = 100) -> List[Dict]:
         sql = "SELECT * FROM rewrite_history WHERE user_id = %s"
         params: List[Any] = [user_id]

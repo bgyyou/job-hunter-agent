@@ -290,7 +290,7 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-    def list_resumes(self, user_id: str = "default") -> List[Dict]:
+    def list_resumes(self, user_id: str) -> List[Dict]:
         conn = self._get_conn()
         try:
             rows = conn.execute(
@@ -432,7 +432,7 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-    def list_jds(self, user_id: str = "default", source: Optional[str] = None, limit: int = 100) -> List[Dict]:
+    def list_jds(self, user_id: str, source: Optional[str] = None, limit: int = 100) -> List[Dict]:
         conn = self._get_conn()
         try:
             query = "SELECT * FROM jds WHERE user_id = ? AND deleted_at IS NULL"
@@ -445,7 +445,7 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-    def get_jd_by_url(self, url: str, user_id: str = "default") -> Optional[Dict]:
+    def get_jd_by_url(self, url: str, *, user_id: str) -> Optional[Dict]:
         conn = self._get_conn()
         try:
             row = conn.execute("SELECT * FROM jds WHERE url = ? AND user_id = ? AND deleted_at IS NULL", (url, user_id)).fetchone()
@@ -460,7 +460,7 @@ class SqliteBackend(BaseBackend):
 
     def search_jds(self, keyword: str, industry_tag: Optional[str] = None,
                    function_tag: Optional[str] = None, position_tag: Optional[str] = None,
-                   user_id: str = "default", limit: int = 50) -> List[Dict]:
+                   *, user_id: str, limit: int = 50) -> List[Dict]:
         conn = self._get_conn()
         try:
             conditions = ["user_id = ? AND deleted_at IS NULL AND (title LIKE ? OR company LIKE ? OR raw_text LIKE ?)"]
@@ -533,7 +533,7 @@ class SqliteBackend(BaseBackend):
         return match_id
 
     def list_matches(self, resume_id: Optional[str] = None, jd_id: Optional[str] = None,
-                     user_id: str = "default", limit: int = 100) -> List[Dict]:
+                     *, user_id: str, limit: int = 100) -> List[Dict]:
         conn = self._get_conn()
         try:
             conditions = ["user_id = ? AND deleted_at IS NULL"]
@@ -599,7 +599,7 @@ class SqliteBackend(BaseBackend):
             conn.close()
         return opt_id
 
-    def list_optimizations(self, jd_id: Optional[str] = None, user_id: str = "default") -> List[Dict]:
+    def list_optimizations(self, jd_id: Optional[str] = None, *, user_id: str) -> List[Dict]:
         conn = self._get_conn()
         try:
             conditions = ["user_id = ?"]
@@ -1236,7 +1236,7 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-    def get_latest_flow_a_draft(self, user_id: str = "default",
+    def get_latest_flow_a_draft(self, user_id: str,
                                 statuses: Optional[tuple[str, ...]] = None) -> Optional[Dict[str, Any]]:
         statuses = statuses or ("draft", "generating", "failed")
         placeholders = ",".join("?" for _ in statuses)
@@ -1387,7 +1387,7 @@ class SqliteBackend(BaseBackend):
         finally:
             conn.close()
 
-    def list_jds_structured(self, user_id: str = "default",
+    def list_jds_structured(self, user_id: str,
                             source: Optional[str] = None,
                             limit: int = 100) -> List[Dict]:
         """List recent structured JDs, optionally filtered by source."""
@@ -1437,7 +1437,7 @@ class SqliteBackend(BaseBackend):
             conn.close()
 
     def list_rewrite_history(self, resume_id: Optional[str] = None,
-                             user_id: str = "default",
+                             *, user_id: str,
                              limit: int = 100) -> List[Dict]:
         """List recent rewrites, optionally filtered by resume, newest first."""
         conn = self._get_conn()

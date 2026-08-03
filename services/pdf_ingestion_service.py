@@ -44,7 +44,7 @@ class PdfIngestionService:
             self._db = get_db()
         return self._db
 
-    def ingest(self, pdf_path: str, user_id: str = "default") -> str:
+    def ingest(self, pdf_path: str, user_id: str) -> str:
         """End-to-end pipeline. Returns the persisted `jd_id`."""
         db = self._get_db()
 
@@ -62,7 +62,7 @@ class PdfIngestionService:
         # Defensive: re-resolve id via URL (INSERT OR IGNORE may have skipped)
         existing = db.get_jd(jd_id)
         if existing is None:
-            existing = db.get_jd_by_url(jd_data["url"])
+            existing = db.get_jd_by_url(jd_data["url"], user_id=user_id)
             if existing:
                 jd_id = existing["id"]
                 logger.info(f"JD already exists by URL: {jd_id}")

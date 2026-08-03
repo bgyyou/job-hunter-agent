@@ -57,7 +57,7 @@ def backup_old_db(dry_run: bool):
 # Phase 2: Merge crawled_jobs and crawled_jds
 # ================================================================
 
-def migrate_crawled_data(db, dry_run: bool) -> Dict[str, int]:
+def migrate_crawled_data(db, dry_run: bool, user_id: str) -> Dict[str, int]:
     """Merge crawled_jobs + crawled_jds from crawler.db into new jds table."""
     if not OLD_DB.exists():
         logger.info("No old crawler.db found, skipping crawl migration.")
@@ -90,7 +90,7 @@ def migrate_crawled_data(db, dry_run: bool) -> Dict[str, int]:
             "search_keyword": row.get("search_keyword"),
             "crawled_at": row.get("crawled_at"),
         }
-        _insert_jd_with_classification(db, jd_data, counts, dry_run, "crawler")
+        _insert_jd_with_classification(db, jd_data, counts, dry_run, "crawler", user_id)
 
     # --- crawled_jds ---
     rows = conn.execute("SELECT * FROM crawled_jds").fetchall()
@@ -110,14 +110,14 @@ def migrate_crawled_data(db, dry_run: bool) -> Dict[str, int]:
             "search_keyword": row.get("search_keyword"),
             "crawled_at": row.get("crawled_at"),
         }
-        _insert_jd_with_classification(db, jd_data, counts, dry_run, "jd_crawler")
+        _insert_jd_with_classification(db, jd_data, counts, dry_run, "jd_crawler", user_id)
 
     conn.close()
     return counts
 
 
 def _insert_jd_with_classification(
-    db, jd_data: Dict, counts: Dict, dry_run: bool, default_source: str
+    db, jd_data: Dict, counts: Dict, dry_run: bool, default_source: str, user_id: str
 ):
     """Insert a JD into new DB, classifying it first."""
     url = jd_data.get("url", "")
@@ -125,7 +125,7 @@ def _insert_jd_with_classification(
         return
 
     # Check if already exists (from crawled_jobs or crawled_jds)
-    existing = db.get_jd_by_url(url)
+    existing = db.get_jd_by_url(url, user_id=user_id)
     if existing:
         counts["jds_duplicate"] += 1
         return
@@ -142,6 +142,7 @@ def _insert_jd_with_classification(
         return
 
     jd_data["source"] = default_source
+    jd_data["user_id"] = user_id
     db.insert_jd(jd_data)
     logger.debug(f"  Inserted: {title}")
 
@@ -150,7 +151,7 @@ def _insert_jd_with_classification(
 # Phase 3: Import KnowledgeBase JSON files
 # ================================================================
 
-def migrate_knowledge_base(db, dry_run: bool) -> Dict[str, int]:
+def migrate_knowledge_base(db, dry_run: bool, user_id: str) -> Dict[str, int]:
     """Import all JSON files from data/knowledge_bases/ into jds table."""
     if not KB_DIR.exists():
         logger.info("No knowledge_bases directory found, skipping KB migration.")
@@ -209,11 +210,12 @@ def migrate_knowledge_base(db, dry_run: bool) -> Dict[str, int]:
             if dry_run:
                 logger.debug(f"  [DRY-RUN] Would import: {jd_data.get('title', '?')}")
             else:
-                existing = db.get_jd_by_url(url)
+                existing = db.get_jd_by_url(url, user_id=user_id)
                 if existing:
                     counts["duplicate"] += 1
                     logger.debug(f"  Duplicate: {jd_data.get('title', '?')}")
                 else:
+                    jd_data["user_id"] = user_id
                     db.insert_jd(jd_data)
                     counts["imported"] += 1
                     logger.debug(f"  Imported: {jd_data.get('title', '?')}")
@@ -286,6 +288,7 @@ def print_report(
 def main():
     parser = argparse.ArgumentParser(description="Migrate all data to jobhunter_v2.db")
     parser.add_argument("--dry-run", action="store_true", help="Preview migration without writing")
+    parser.add_argument("--user-id", required=True, help="Owner of migrated rows (required — data is user-scoped)")
     args = parser.parse_args()
 
     logger.info("Starting migration...")
@@ -304,13 +307,13 @@ def main():
 
     # Phase 2: Merge crawled data
     if db:
-        crawl_counts = migrate_crawled_data(db, args.dry_run)
+        crawl_counts = migrate_crawled_data(db, args.dry_run, args.user_id)
     else:
         crawl_counts = {"crawled_jobs": 0, "crawled_jds": 0, "jds_inserted": 0, "jds_duplicate": 0}
 
     # Phase 3: Import KnowledgeBase
     if db:
-        kb_counts = migrate_knowledge_base(db, args.dry_run)
+        kb_counts = migrate_knowledge_base(db, args.dry_run, args.user_id)
     else:
         kb_counts = {"dirs": 0, "files": 0, "imported": 0, "duplicate": 0}
 

@@ -3,7 +3,7 @@
 
 Usage:
     # Crawl Boss直聘 for "AI产品经理"
-    python crawler/run_crawler.py --site boss --keyword "AI产品经理" --limit 20
+    python crawler/run_crawler.py --site boss --keyword "AI产品经理" --limit 20 --user-id alice
 
     # Crawl Lagou
     python crawler/run_crawler.py --site lagou --keyword "AI产品经理" --limit 20
@@ -105,6 +105,10 @@ def _run_interactive() -> None:
         return
 
     keyword = input("Search keyword [AI产品经理]: ").strip() or "AI产品经理"
+    user_id = input("Owner user id: ").strip()
+    if not user_id:
+        logger.error("user id is required — crawled JDs are user-scoped")
+        return
     limit_str = input("Limit [20]: ").strip()
     limit = int(limit_str) if limit_str.isdigit() else 20
 
@@ -122,7 +126,7 @@ def _run_interactive() -> None:
     try:
         crawler_cls = _resolve_crawler_class(site)
         crawler = _create_crawler(site, crawler_cls, cookies, use_browser)
-        pipeline = CrawlPipeline(crawler=crawler)
+        pipeline = CrawlPipeline(crawler=crawler, user_id=user_id)
         result = pipeline.run(keyword=keyword, limit=limit, city=city)
         print(f"\nResult: {result}")
     except Exception as exc:
@@ -156,7 +160,7 @@ def _run_direct(args: argparse.Namespace) -> None:
 
     # Create crawler and pipeline
     crawler = _create_crawler(site, crawler_cls, cookies, use_browser)
-    pipeline = CrawlPipeline(crawler=crawler)
+    pipeline = CrawlPipeline(crawler=crawler, user_id=args.user_id)
 
     # Run
     result = pipeline.run(keyword=keyword, limit=limit, city=city)
@@ -173,7 +177,7 @@ def main():
         epilog="""
 Examples:
   # Crawl Boss直聘 for "AI产品经理"
-  python crawler/run_crawler.py --site boss --keyword "AI产品经理" --limit 20
+  python crawler/run_crawler.py --site boss --keyword "AI产品经理" --limit 20 --user-id alice
 
   # With cookies
   python crawler/run_crawler.py --site boss --keyword "Python" --limit 10 \\
@@ -203,6 +207,11 @@ Examples:
         type=int,
         default=20,
         help="Max JDs to fetch (default: 20)",
+    )
+    parser.add_argument(
+        "--user-id",
+        required=True,
+        help="Owner of the crawled JDs (required — crawled rows are user-scoped)",
     )
     parser.add_argument(
         "--city",
