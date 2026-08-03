@@ -1,14 +1,16 @@
 """v3 M-rebuild-1: schema + CRUD 集成测试
 
-覆盖 4 张新表（jd_structured / rewrite_history / rag_industry_function / interview_questions）
-+ 9 个新 CRUD 接口 + resumes.achievements 顶层字段持久化 + JSON 列双向序列化。
+覆盖 3 张新表（jd_structured / rewrite_history / interview_questions）
++ 7 个新 CRUD 接口 + resumes.achievements 顶层字段持久化 + JSON 列双向序列化。
+
+注：rag_industry_function 表 017 迁移已 DROP，相关 CRUD 断言从本文件移除。
 """
 import pytest
 import json
 
 
 class TestV3TablesExist:
-    """4 张 v3 表真实存在于 SQLite。"""
+    """3 张 v3 表真实存在于 SQLite（rag_industry_function 017 已 DROP）。"""
 
     def test_jd_structured_table(self, tmp_db):
         rows = tmp_db._get_conn().execute(
@@ -21,12 +23,6 @@ class TestV3TablesExist:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='rewrite_history'"
         ).fetchall()
         assert rows, "rewrite_history 表未创建"
-
-    def test_rag_industry_function_table(self, tmp_db):
-        rows = tmp_db._get_conn().execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='rag_industry_function'"
-        ).fetchall()
-        assert rows, "rag_industry_function 表未创建"
 
     def test_interview_questions_table(self, tmp_db):
         rows = tmp_db._get_conn().execute(
@@ -118,50 +114,6 @@ class TestRewriteHistoryCRUD:
         rows = tmp_db.list_rewrite_history(resume_id=resume_id)
         target = next(r for r in rows if r["rewrite_id"] == rid)
         assert target["user_edited"] == 1
-
-
-class TestRAGIndustryFunctionCRUD:
-    """rag_industry_function：2 个方法（upsert / list）。"""
-
-    def test_upsert_and_list(self, tmp_db):
-        payload = {
-            "industry": "互联网",
-            "function": "产品",
-            "level": "senior",
-            "sample_jds": [{"company": "字节跳动", "title": "AI PM"}],
-            "scoring_rubric": {"维度": ["业务理解", "执行力"]},
-            "source": "user_contributed",
-        }
-        row_id_1 = tmp_db.upsert_rag_industry_function(payload)
-        assert isinstance(row_id_1, int) and row_id_1 > 0
-
-        # upsert 同 (industry, function, level) → 覆盖（id 保持 id）
-        row_id_2 = tmp_db.upsert_rag_industry_function(payload)
-        assert row_id_2 == row_id_1, "upsert 应保持 id 稳定"
-
-        rows = tmp_db.list_rag_by_industry_function("互联网", "产品", level="senior")
-        assert len(rows) >= 1
-        # JSON 应反序列化
-        assert isinstance(rows[0]["sample_jds"], list)
-        assert isinstance(rows[0]["scoring_rubric"], dict)
-        assert rows[0]["scoring_rubric"]["维度"] == ["业务理解", "执行力"]
-
-    def test_list_filtered_by_level(self, tmp_db):
-        tmp_db.upsert_rag_industry_function({
-            "industry": "金融",
-            "function": "风控",
-            "level": "mid",
-            "sample_jds": [],
-        })
-        tmp_db.upsert_rag_industry_function({
-            "industry": "金融",
-            "function": "风控",
-            "level": "senior",
-            "sample_jds": [],
-        })
-
-        rows = tmp_db.list_rag_by_industry_function("金融", "风控", level="senior")
-        assert all(r["level"] == "senior" for r in rows)
 
 
 class TestResumeAchievementsCRUD:

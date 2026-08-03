@@ -382,25 +382,6 @@ class BaseBackend(ABC):
     def mark_rewrite_user_edited(self, rewrite_id: int) -> None:
         """Mark a rewrite as user-edited (sets ``user_edited = 1``)."""
 
-    # -------------------- v3 M-rebuild-2: RAG Library --------------------
-
-    @abstractmethod
-    def upsert_rag_industry_function(self, data: Dict) -> int:
-        """Upsert one RAG row keyed by (industry, function, level).
-
-        Required: ``industry``, ``function``. Optional: ``level``,
-        ``sample_jds`` (List), ``sample_resumes`` (List),
-        ``scoring_rubric`` (Dict), ``source``.
-
-        Returns the row id.
-        """
-
-    @abstractmethod
-    def list_rag_by_industry_function(self, industry: str, function: str,
-                                      level: Optional[str] = None,
-                                      limit: int = 50) -> List[Dict]:
-        """Look up RAG rows by industry/function/level."""
-
     # -------------------- v3 M-rebuild-1: Resume Achievements --------------------
 
     @abstractmethod

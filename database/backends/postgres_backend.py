@@ -917,51 +917,6 @@ class PostgresBackend(BaseBackend):
             (rewrite_id,),
         )
 
-    # ==================== v3 M-rebuild-2: RAG Industry×Function Library ====================
-
-    def upsert_rag_industry_function(self, data: Dict) -> int:
-        """Upsert one RAG library row. Returns the row id."""
-        self._execute(
-            """INSERT INTO rag_industry_function
-               (industry, function, level, sample_jds, sample_resumes,
-                scoring_rubric, source)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (industry, function, level) DO UPDATE SET
-                sample_jds = EXCLUDED.sample_jds,
-                sample_resumes = EXCLUDED.sample_resumes,
-                scoring_rubric = EXCLUDED.scoring_rubric,
-                source = EXCLUDED.source,
-                updated_at = NOW()""",
-            (data["industry"], data["function"], data.get("level"),
-             self._json_serialize(data.get("sample_jds", [])),
-             self._json_serialize(data.get("sample_resumes", [])),
-             self._json_serialize(data.get("scoring_rubric")),
-             data.get("source")),
-        )
-        rows = self._fetchall(
-            """SELECT id FROM rag_industry_function
-               WHERE industry = %s AND function = %s
-                 AND ((%s IS NULL AND level IS NULL) OR level = %s)""",
-            (data["industry"], data["function"], data.get("level"), data.get("level")),
-        )
-        return rows[0]["id"] if rows else 0
-
-    def list_rag_by_industry_function(self, industry: str, function: str,
-                                      level: Optional[str] = None,
-                                      limit: int = 50) -> List[Dict]:
-        sql = "SELECT * FROM rag_industry_function WHERE industry = %s AND function = %s"
-        params: List[Any] = [industry, function]
-        if level:
-            sql += " AND level = %s"
-            params.append(level)
-        sql += " LIMIT %s"
-        params.append(limit)
-        rows = self._fetchall(sql, params)
-        return [
-            self._deserialize_list(r, ["sample_jds", "sample_resumes", "scoring_rubric"])
-            for r in rows
-        ]
-
     # ==================== v3 M-rebuild-1: Resume Achievements Top-Level ====================
 
     def update_resume_achievements(self, resume_id: str, achievements: List[str]) -> None:

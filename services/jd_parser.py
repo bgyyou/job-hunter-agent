@@ -4,7 +4,7 @@
 
 - TextJDParser:    粘贴文本 + 关键词 + LLM 抽结构（LLM 失败降级到关键词）
 - ImageJDParser:   PaddleOCR + LLM 抽结构（强制 needs_user_review=True）
-- RAGJDRetriever:  从 knowledge_chunks 走 Retriever 语义检索（v4-2 fix）
+- RAGJDRetriever:  从 knowledge_chunks 走 Retriever 语义检索
 - JDParserRouter:  按 source 路由
 
 设计原则：
@@ -16,7 +16,6 @@
 - 原 M-rebuild-1 设计：从 rag_industry_function 表查"行业×职能×级别"预填样本
 - 现实：rag_industry_function 仅 1 行（user_contributed），永远是 0 召回
 - 新设计：直接走 Retriever 语义检索，从 24k+ chunks 拉真结果
-- rag_industry_function 表暂保留为 dead schema，不删（避免破坏 schema_version）
 """
 
 from __future__ import annotations
@@ -299,7 +298,7 @@ class ImageJDParser:
 class RAGJDRetriever:
     """RAG 库检索：从 knowledge_chunks 走 Retriever 语义检索合成 JD。
 
-    v4-2 修复（2026-07-29）：原设计查 rag_industry_function 表（仅 1 行 → 永远 0 召回）。
+    v4-2 修复（2026-07-29）：原设计查 rag_industry_function 表（仅 1 行 → 永远 0 召回），改走 Retriever。
     现改走 Retriever，从 24k+ chunks 拉 top-K 召回结果，按 chunk_type 拆出
     responsibilities / requirements，组装成 StructuredJD。
     """
