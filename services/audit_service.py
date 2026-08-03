@@ -42,14 +42,16 @@ def log_action(
         details: 任意 JSON-serializable dict，用于补充上下文
     """
     try:
-        db.insert_audit_log({
-            "user_id": user_id,
-            "action": action,
-            "target_table": target_table,
-            "target_id": target_id,
-            "status": status,
-            "error_message": error_message,
-            "details": details,
-        })
+        db.insert_audit_log(
+            {
+                "action": action,
+                "target_table": target_table,
+                "target_id": target_id,
+                "status": status,
+                "error_message": error_message,
+                "details": details,
+            },
+            user_id=user_id,
+        )
     except Exception as exc:
         logger.debug(f"audit_log record skipped: {exc}")

@@ -109,7 +109,7 @@ class CrawlPipeline:
 
         # Insert into DB
         try:
-            jd_id = self.db.insert_jd(cleaned)
+            jd_id = self.db.insert_jd(cleaned, user_id=self.user_id)
             self._inserted += 1
             logger.info(f"[Pipeline] Inserted JD #{self._inserted}: "
                         f"'{cleaned['title']}' @ {cleaned['company']} (id={jd_id})")

@@ -212,7 +212,7 @@ async def crawl_one_keyword(
             # insert_jd 用 INSERT OR IGNORE，重复 URL 静默跳过；
             # 返回值不区分真插入 vs 被忽略，所以 inserted 计数会偏高。
             # 数据正确性由 DB UNIQUE(url, user_id) 保证，统计仅作参考。
-            db.insert_jd(row)
+            db.insert_jd(row, user_id="batch_jobsdb_script")
             stats["inserted"] += 1
             stats["fetched"] += 1
         except Exception as exc:

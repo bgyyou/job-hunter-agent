@@ -93,9 +93,8 @@ def main():
         "raw_text": raw_text,
         "parsed_sections": {"verify": "m3"},
         "tags": ["verify_m3"],
-        "source": "verify_m3",
-        "user_id": "verify_m3_script",
-    })
+        "source": "verify_m3"
+    }, user_id=verify_m3_script)
     print(f"  JD inserted: id={jd_id}")
 
     t0 = time.time()

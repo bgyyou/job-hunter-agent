@@ -143,7 +143,7 @@ def _insert_jd_with_classification(
 
     jd_data["source"] = default_source
     jd_data["user_id"] = user_id
-    db.insert_jd(jd_data)
+    db.insert_jd(jd_data, user_id=user_id)
     logger.debug(f"  Inserted: {title}")
 
 
@@ -216,7 +216,7 @@ def migrate_knowledge_base(db, dry_run: bool, user_id: str) -> Dict[str, int]:
                     logger.debug(f"  Duplicate: {jd_data.get('title', '?')}")
                 else:
                     jd_data["user_id"] = user_id
-                    db.insert_jd(jd_data)
+                    db.insert_jd(jd_data, user_id=user_id)
                     counts["imported"] += 1
                     logger.debug(f"  Imported: {jd_data.get('title', '?')}")
 

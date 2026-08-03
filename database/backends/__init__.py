@@ -28,7 +28,7 @@ class BaseBackend(ABC):
     # -------------------- Resumes --------------------
 
     @abstractmethod
-    def insert_resume(self, data: Dict) -> str:
+    def insert_resume(self, data: Dict, *, user_id: str) -> str:
         """Insert or upsert a resume profile.
 
         Args:
@@ -63,7 +63,7 @@ class BaseBackend(ABC):
     # -------------------- JDs --------------------
 
     @abstractmethod
-    def insert_jd(self, data: Dict) -> str:
+    def insert_jd(self, data: Dict, *, user_id: str) -> str:
         """Insert or upsert a JD by ``url`` (unique key).
 
         Required keys: ``url``, ``title``. Optional: ``company``, ``location``,
@@ -112,7 +112,7 @@ class BaseBackend(ABC):
     # -------------------- Matches --------------------
 
     @abstractmethod
-    def insert_match(self, data: Dict) -> str:
+    def insert_match(self, data: Dict, *, user_id: str) -> str:
         """Persist a resume↔JD match scoring run (M2 write-back).
 
         Required keys: ``resume_id``, ``jd_id``, ``score`` (0-100). Optional:
@@ -140,7 +140,7 @@ class BaseBackend(ABC):
     # -------------------- Optimizations --------------------
 
     @abstractmethod
-    def insert_optimization(self, data: Dict) -> str:
+    def insert_optimization(self, data: Dict, *, user_id: str) -> str:
         """Save one LLM-generated optimization suggestion (one row per suggestion).
 
         Required: ``jd_id``, ``section`` (e.g. ``'skills'``), ``original_content``,
@@ -160,7 +160,7 @@ class BaseBackend(ABC):
     # -------------------- Knowledge Chunks (RAG) --------------------
 
     @abstractmethod
-    def insert_chunk(self, data: Dict) -> str:
+    def insert_chunk(self, data: Dict, *, user_id: str) -> str:
         """Insert a single semantic chunk + embedding for a JD.
 
         Required: ``jd_id``, ``content``, ``chunk_type`` (one of
@@ -170,7 +170,7 @@ class BaseBackend(ABC):
         """
 
     @abstractmethod
-    def insert_chunks_batch(self, jd_id: str, chunks: List[Dict]) -> List[str]:
+    def insert_chunks_batch(self, jd_id: str, chunks: List[Dict], *, user_id: str) -> List[str]:
         """Bulk-insert chunks for a JD in one transaction. Returns chunk ids in order."""
 
     @abstractmethod
@@ -180,7 +180,7 @@ class BaseBackend(ABC):
     # -------------------- Quality Checks (Observability) --------------------
 
     @abstractmethod
-    def insert_quality_check(self, data: Dict) -> int:
+    def insert_quality_check(self, data: Dict, *, user_id: str) -> int:
         """Append one observability event (LLM call latency, scoring deviation, etc.).
 
         Required: ``check_type`` (e.g. ``'llm_call'``), ``target_table``, ``score``.
@@ -216,7 +216,7 @@ class BaseBackend(ABC):
     # -------------------- LLM Observability --------------------
 
     @abstractmethod
-    def insert_llm_call(self, data: Dict[str, Any]) -> int:
+    def insert_llm_call(self, data: Dict[str, Any], *, user_id: str) -> int:
         """Append one LLM invocation observability record.
 
         Required: ``model``, ``operation``. Optional: ``request_id``,
@@ -247,7 +247,7 @@ class BaseBackend(ABC):
     # -------------------- Flow A Drafts --------------------
 
     @abstractmethod
-    def upsert_flow_a_draft(self, data: Dict[str, Any]) -> str:
+    def upsert_flow_a_draft(self, data: Dict[str, Any], *, user_id: str) -> str:
         """Create or update a recoverable Flow A draft.
 
         JSON fields: ``section_data``, ``section_messages``, ``section_status``,
@@ -270,7 +270,7 @@ class BaseBackend(ABC):
     # -------------------- Audit Logs --------------------
 
     @abstractmethod
-    def insert_audit_log(self, data: Dict) -> int:
+    def insert_audit_log(self, data: Dict, *, user_id: str) -> int:
         """Append one user action audit event (login / resume CRUD / JD upload / etc.).
 
         Required: ``action`` (e.g. ``'user.login.success'``). Optional: ``user_id``
@@ -338,7 +338,7 @@ class BaseBackend(ABC):
     # -------------------- v3 M-rebuild-1: Structured JDs --------------------
 
     @abstractmethod
-    def insert_jd_structured(self, data: Dict) -> int:
+    def insert_jd_structured(self, data: Dict, *, user_id: str) -> int:
         """Insert one structured JD record.
 
         Required: ``source`` (``'text'``/``'image'``/``'rag'``). Optional:
@@ -362,7 +362,7 @@ class BaseBackend(ABC):
     # -------------------- v3 M-rebuild-2: Rewrite History --------------------
 
     @abstractmethod
-    def insert_rewrite_history(self, data: Dict) -> int:
+    def insert_rewrite_history(self, data: Dict, *, user_id: str) -> int:
         """Persist one rewrite run (mode A/B/A+B).
 
         Required: ``resume_id``, ``mode``. Optional: ``user_id``, ``jd_id``,

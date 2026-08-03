@@ -114,7 +114,7 @@ class FlowADraftService:
         payload.setdefault("section_messages", {})
         payload.setdefault("section_status", {})
         payload.setdefault("generation_state", {})
-        return self.db.upsert_flow_a_draft(payload)
+        return self.db.upsert_flow_a_draft(payload, user_id=self.user_id)
 
     def get_draft(self, draft_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not draft_id:

@@ -147,7 +147,7 @@ def insert_user_jd(db: Any, user_id: str, jd_payload: Dict[str, Any]) -> str:
     payload = dict(jd_payload)
     payload["user_id"] = user_id
     payload["is_public"] = 0
-    return db.insert_jd(payload)
+    return db.insert_jd(payload, user_id=user_id)
 
 
 def delete_user_jd(db: Any, user_id: str, jd_id: str) -> None:

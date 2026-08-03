@@ -63,7 +63,7 @@ def embed_and_store_jd_chunks(
         })
 
     try:
-        ids = db.insert_chunks_batch(jd_id, records)
+        ids = db.insert_chunks_batch(jd_id, records, user_id=user_id)
     except Exception as exc:
         logger.warning(f"[indexer] insert_chunks_batch failed for jd_id={jd_id}: {exc}")
         return 0

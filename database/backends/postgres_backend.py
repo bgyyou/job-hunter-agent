@@ -134,7 +134,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== Resumes ====================
 
-    def insert_resume(self, data: Dict) -> str:
+    def insert_resume(self, data: Dict, *, user_id: str) -> str:
         resume_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         self._execute(
@@ -144,7 +144,7 @@ class PostgresBackend(BaseBackend):
                 education, projects, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO UPDATE SET updated_at = EXCLUDED.updated_at""",
-            (resume_id, data.get("user_id", "default"), data.get("name", ""),
+            (resume_id, user_id, data.get("name", ""),
              data.get("phone"), data.get("email"), data.get("summary"),
              self._json_serialize(data.get("skills", [])),
              data.get("experience_years", 0),
@@ -178,7 +178,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== JDs ====================
 
-    def insert_jd(self, data: Dict) -> str:
+    def insert_jd(self, data: Dict, *, user_id: str) -> str:
         jd_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         self._execute(
@@ -191,7 +191,7 @@ class PostgresBackend(BaseBackend):
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (url, user_id) DO NOTHING""",
-            (jd_id, data.get("user_id", "default"), data.get("url", ""),
+            (jd_id, user_id, data.get("url", ""),
              data.get("title", ""), data.get("company", ""), data.get("location", ""),
              data.get("salary_str"), data.get("salary_min"), data.get("salary_max"),
              self._json_serialize(data.get("parsed_sections", {})),
@@ -263,7 +263,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== Match History ====================
 
-    def insert_match(self, data: Dict) -> str:
+    def insert_match(self, data: Dict, *, user_id: str) -> str:
         match_id = data.get("id") or str(uuid.uuid4())
         self._execute(
             """INSERT INTO match_history
@@ -272,7 +272,7 @@ class PostgresBackend(BaseBackend):
                 skill_mapping, should_apply, user_feedback, applied, applied_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO UPDATE SET should_apply = EXCLUDED.should_apply""",
-            (match_id, data.get("user_id", "default"), data["resume_id"], data["jd_id"],
+            (match_id, user_id, data["resume_id"], data["jd_id"],
              data["score"], data.get("reasoning", ""),
              self._json_serialize(data.get("matched_skills", [])),
              self._json_serialize(data.get("missing_skills", [])),
@@ -320,7 +320,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== Optimizations ====================
 
-    def insert_optimization(self, data: Dict) -> str:
+    def insert_optimization(self, data: Dict, *, user_id: str) -> str:
         opt_id = data.get("id") or str(uuid.uuid4())
         self._execute(
             """INSERT INTO optimizations
@@ -328,7 +328,7 @@ class PostgresBackend(BaseBackend):
                 optimization_type, section, original_content,
                 suggested_content, reason, user_adopted, user_rating)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (opt_id, data.get("user_id", "default"), data.get("resume_id"),
+            (opt_id, user_id, data.get("resume_id"),
              data["jd_id"], data.get("chunk_id"),
              data.get("optimization_type", "modify"), data.get("section"),
              data.get("original_content"), data.get("suggested_content"),
@@ -350,14 +350,14 @@ class PostgresBackend(BaseBackend):
 
     # ==================== Knowledge Chunks ====================
 
-    def insert_chunk(self, data: Dict) -> str:
+    def insert_chunk(self, data: Dict, *, user_id: str) -> str:
         chunk_id = data.get("id") or str(uuid.uuid4())
         self._execute(
             """INSERT INTO knowledge_chunks
                (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
                 keywords, embedding, embedding_dim, context, heading_path)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (chunk_id, data.get("user_id", "default"), data["jd_id"],
+            (chunk_id, user_id, data["jd_id"],
              data["chunk_index"], data["chunk_text"],
              data.get("chunk_type", "full"),
              self._json_serialize(data.get("keywords", [])),
@@ -368,12 +368,13 @@ class PostgresBackend(BaseBackend):
         )
         return chunk_id
 
-    def insert_chunks_batch(self, jd_id: str, chunks: List[Dict]) -> List[str]:
+    def insert_chunks_batch(self, jd_id: str, chunks: List[Dict], *, user_id: str) -> List[str]:
         ids = []
         cursor = self._conn.cursor()
         try:
             for i, chunk in enumerate(chunks):
                 chunk["jd_id"] = jd_id
+                chunk["user_id"] = user_id
                 chunk["chunk_index"] = i
                 chunk_id = chunk.get("id") or str(uuid.uuid4())
                 cursor.execute(
@@ -381,7 +382,7 @@ class PostgresBackend(BaseBackend):
                        (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
                         keywords, embedding, embedding_dim, context, heading_path)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (chunk_id, chunk.get("user_id", "default"), jd_id, i,
+                    (chunk_id, chunk.get("user_id"), jd_id, i,
                      chunk["chunk_text"], chunk.get("chunk_type", "full"),
                      self._json_serialize(chunk.get("keywords", [])),
                      self._embedding_to_pgvector(chunk.get("embedding")),
@@ -415,7 +416,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== Quality Checks ====================
 
-    def insert_quality_check(self, data: Dict) -> int:
+    def insert_quality_check(self, data: Dict, *, user_id: str) -> int:
         conn = self._get_conn()
         try:
             with conn.cursor() as cur:
@@ -426,7 +427,7 @@ class PostgresBackend(BaseBackend):
                        RETURNING id""",
                     (data["check_type"], data.get("target_table"), data.get("target_id"),
                      data.get("score"), self._json_serialize(data.get("details", {})),
-                     data.get("user_id", "default")),
+                     user_id),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -619,7 +620,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== LLM Observability ====================
 
-    def insert_llm_call(self, data: Dict[str, Any]) -> int:
+    def insert_llm_call(self, data: Dict[str, Any], *, user_id: str) -> int:
         rows = self._fetchall(
             """
             INSERT INTO llm_calls
@@ -643,7 +644,7 @@ class PostgresBackend(BaseBackend):
                 data.get("error_type"),
                 data.get("error_message"),
                 self._json_serialize(data.get("metadata", {})),
-                data.get("user_id", "default"),
+                user_id,
             ),
         )
         return rows[0]["id"] if rows else 0
@@ -696,7 +697,7 @@ class PostgresBackend(BaseBackend):
                 row[field] = {}
         return row
 
-    def upsert_flow_a_draft(self, data: Dict[str, Any]) -> str:
+    def upsert_flow_a_draft(self, data: Dict[str, Any], *, user_id: str) -> str:
         draft_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         status = data.get("status", "draft")
@@ -733,7 +734,7 @@ class PostgresBackend(BaseBackend):
             """,
             (
                 draft_id,
-                data.get("user_id", "default"),
+                user_id,
                 status,
                 data.get("industry"),
                 data.get("function"),
@@ -789,7 +790,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== Audit Logs ====================
 
-    def insert_audit_log(self, data: Dict) -> int:
+    def insert_audit_log(self, data: Dict, *, user_id: str) -> int:
         rows = self._fetchall(
             """
             INSERT INTO audit_logs
@@ -800,7 +801,7 @@ class PostgresBackend(BaseBackend):
             RETURNING id
             """,
             (
-                data.get("user_id", "default"),
+                user_id,
                 data["action"],
                 data.get("target_table"),
                 data.get("target_id"),
@@ -836,7 +837,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== v3 M-rebuild-1: Structured JDs ====================
 
-    def insert_jd_structured(self, data: Dict) -> int:
+    def insert_jd_structured(self, data: Dict, *, user_id: str) -> int:
         """Insert a structured JD record. Returns the new ``jd_id``."""
         cur = self._execute(
             """INSERT INTO jd_structured
@@ -844,7 +845,7 @@ class PostgresBackend(BaseBackend):
                 responsibilities, requirements)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING jd_id""",
-            (data.get("user_id", "default"), data["source"], data.get("raw_text"),
+            (user_id, data["source"], data.get("raw_text"),
              data.get("company"), data.get("title"), data.get("industry"),
              data.get("function"), data.get("level"),
              self._json_serialize(data.get("responsibilities", [])),
@@ -877,7 +878,7 @@ class PostgresBackend(BaseBackend):
 
     # ==================== v3 M-rebuild-2: Rewrite History ====================
 
-    def insert_rewrite_history(self, data: Dict) -> int:
+    def insert_rewrite_history(self, data: Dict, *, user_id: str) -> int:
         """Persist one rewrite run. Returns the new ``rewrite_id``."""
         cur = self._execute(
             """INSERT INTO rewrite_history
@@ -885,7 +886,7 @@ class PostgresBackend(BaseBackend):
                 input_snapshot, output_snapshot, rewrite_notes, user_edited)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING rewrite_id""",
-            (data.get("user_id", "default"), data["resume_id"], data.get("jd_id"),
+            (user_id, data["resume_id"], data.get("jd_id"),
              data["mode"],
              self._json_serialize(data.get("input_snapshot", {})),
              self._json_serialize(data.get("output_snapshot", {})),

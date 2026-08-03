@@ -221,21 +221,23 @@ class LLMClient(ABC):
         try:
             from database.factory import get_db
             db = get_db()
-            db.insert_llm_call({
-                "request_id": None,
-                "model": self.model,
-                "endpoint": getattr(self, "api_url", None),
-                "operation": operation,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": tokens,
-                "latency_ms": latency_ms,
-                "status": "cache_hit" if cache_hit else ("success" if ok else "error"),
-                "error_type": "api_error" if error else None,
-                "error_message": error,
-                "metadata": {"cache_hit": cache_hit},
-                "user_id": self.user_id,
-            })
+            db.insert_llm_call(
+                {
+                    "request_id": None,
+                    "model": self.model,
+                    "endpoint": getattr(self, "api_url", None),
+                    "operation": operation,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": tokens,
+                    "latency_ms": latency_ms,
+                    "status": "cache_hit" if cache_hit else ("success" if ok else "error"),
+                    "error_type": "api_error" if error else None,
+                    "error_message": error,
+                    "metadata": {"cache_hit": cache_hit},
+                },
+                user_id=self.user_id,
+            )
         except Exception as exc:
             # 埋点失败绝不影响业务
             self.logger.debug(f"llm_calls record skipped: {exc}")

@@ -133,7 +133,7 @@ async def crawl_one_keyword(
             stats["skipped"] += 1
             continue
         try:
-            db.insert_jd(row)
+            db.insert_jd(row, user_id="batch_liepin_script")
             stats["inserted"] += 1
             stats["fetched"] += 1
         except Exception as exc:

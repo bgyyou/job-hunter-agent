@@ -97,8 +97,8 @@ def main() -> int:
                             "is_garbage": result.get("is_garbage", False),
                             "backfill": True,
                         },
-                        "user_id": row.get("user_id", "default"),
-                    }
+                    },
+                    user_id="backfill_jd_quality_script",
                 )
             except Exception as exc:
                 logger.warning(f"quality_checks write failed for {row['id']}: {exc}")

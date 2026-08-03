@@ -250,7 +250,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Resumes ====================
 
-    def insert_resume(self, data: Dict) -> str:
+    def insert_resume(self, data: Dict, *, user_id: str) -> str:
         resume_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         conn = self._get_conn()
@@ -261,7 +261,7 @@ class SqliteBackend(BaseBackend):
                     experience_years, experience, domains, target_roles, preferred_locations,
                     education, projects, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (resume_id, data.get("user_id", "default"), data.get("name", ""),
+                (resume_id, user_id, data.get("name", ""),
                  data.get("phone"), data.get("email"), data.get("summary"),
                  self._json_serialize(data.get("skills", [])),
                  data.get("experience_years", 0),
@@ -377,7 +377,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== JDs ====================
 
-    def insert_jd(self, data: Dict) -> str:
+    def insert_jd(self, data: Dict, *, user_id: str) -> str:
         jd_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         conn = self._get_conn()
@@ -391,7 +391,7 @@ class SqliteBackend(BaseBackend):
                     is_public, crawled_at, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (jd_id, data.get("user_id", "default"), data.get("url", ""),
+                (jd_id, user_id, data.get("url", ""),
                  data.get("title", ""), data.get("company", ""), data.get("location", ""),
                  data.get("salary_str"), data.get("salary_min"), data.get("salary_max"),
                  self._json_serialize(data.get("parsed_sections", {})),
@@ -407,7 +407,6 @@ class SqliteBackend(BaseBackend):
             # INSERT OR IGNORE 在 UNIQUE(url, user_id) 冲突时静默跳过，
             # 此处查出真实 id 返回，而非本地伪造的新 UUID
             url = data.get("url", "")
-            user_id = data.get("user_id", "default")
             if url:
                 row = conn.execute(
                     "SELECT id FROM jds WHERE url = ? AND user_id = ? AND deleted_at IS NULL",
@@ -507,7 +506,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Match History ====================
 
-    def insert_match(self, data: Dict) -> str:
+    def insert_match(self, data: Dict, *, user_id: str) -> str:
         match_id = data.get("id") or str(uuid.uuid4())
         conn = self._get_conn()
         try:
@@ -517,7 +516,7 @@ class SqliteBackend(BaseBackend):
                     matched_skills, missing_skills, gaps, recommendations,
                     skill_mapping, should_apply, user_feedback, applied, applied_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (match_id, data.get("user_id", "default"), data["resume_id"], data["jd_id"],
+                (match_id, user_id, data["resume_id"], data["jd_id"],
                  data["score"], data.get("reasoning", ""),
                  self._json_serialize(data.get("matched_skills", [])),
                  self._json_serialize(data.get("missing_skills", [])),
@@ -578,7 +577,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Optimizations ====================
 
-    def insert_optimization(self, data: Dict) -> str:
+    def insert_optimization(self, data: Dict, *, user_id: str) -> str:
         opt_id = data.get("id") or str(uuid.uuid4())
         conn = self._get_conn()
         try:
@@ -588,7 +587,7 @@ class SqliteBackend(BaseBackend):
                     optimization_type, section, original_content,
                     suggested_content, reason, user_adopted, user_rating)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (opt_id, data.get("user_id", "default"), data.get("resume_id"),
+                (opt_id, user_id, data.get("resume_id"),
                  data["jd_id"], data.get("chunk_id"),
                  data.get("optimization_type", "modify"), data.get("section"),
                  data.get("original_content"), data.get("suggested_content"),
@@ -622,7 +621,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Knowledge Chunks ====================
 
-    def insert_chunk(self, data: Dict) -> str:
+    def insert_chunk(self, data: Dict, *, user_id: str) -> str:
         chunk_id = data.get("id") or str(uuid.uuid4())
         emb_blob = self._embedding_to_blob(data.get("embedding"))
         emb_dim = data.get("embedding_dim")
@@ -635,7 +634,7 @@ class SqliteBackend(BaseBackend):
                    (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
                     keywords, embedding, embedding_dim, context, heading_path)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (chunk_id, data.get("user_id", "default"), data["jd_id"],
+                (chunk_id, user_id, data["jd_id"],
                  data["chunk_index"], data["chunk_text"],
                  data.get("chunk_type", "full"),
                  self._json_serialize(data.get("keywords", [])),
@@ -649,13 +648,14 @@ class SqliteBackend(BaseBackend):
             conn.close()
         return chunk_id
 
-    def insert_chunks_batch(self, jd_id: str, chunks: List[Dict]) -> List[str]:
+    def insert_chunks_batch(self, jd_id: str, chunks: List[Dict], *, user_id: str) -> List[str]:
         ids = []
         conn = self._get_conn()
         try:
             vec0_writes: List[Tuple[int, Optional[bytes], Optional[int]]] = []
             for i, chunk in enumerate(chunks):
                 chunk["jd_id"] = jd_id
+                chunk["user_id"] = user_id
                 chunk["chunk_index"] = i
                 chunk_id = chunk.get("id") or str(uuid.uuid4())
                 emb_blob = self._embedding_to_blob(chunk.get("embedding"))
@@ -667,7 +667,7 @@ class SqliteBackend(BaseBackend):
                        (id, user_id, jd_id, chunk_index, chunk_text, chunk_type,
                         keywords, embedding, embedding_dim, context, heading_path)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (chunk_id, chunk.get("user_id", "default"), jd_id, i,
+                    (chunk_id, chunk.get("user_id"), jd_id, i,
                      chunk["chunk_text"], chunk.get("chunk_type", "full"),
                      self._json_serialize(chunk.get("keywords", [])),
                      emb_blob, emb_dim,
@@ -737,7 +737,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Quality Checks ====================
 
-    def insert_quality_check(self, data: Dict) -> int:
+    def insert_quality_check(self, data: Dict, *, user_id: str) -> int:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
@@ -746,7 +746,7 @@ class SqliteBackend(BaseBackend):
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (data["check_type"], data.get("target_table"), data.get("target_id"),
                  data.get("score"), self._json_serialize(data.get("details", {})),
-                 data.get("user_id", "default")),
+                 user_id),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1071,7 +1071,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== LLM Observability ====================
 
-    def insert_llm_call(self, data: Dict[str, Any]) -> int:
+    def insert_llm_call(self, data: Dict[str, Any], *, user_id: str) -> int:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
@@ -1096,7 +1096,7 @@ class SqliteBackend(BaseBackend):
                     data.get("error_type"),
                     data.get("error_message"),
                     self._json_serialize(data.get("metadata")),
-                    data.get("user_id", "default"),
+                    user_id,
                 ),
             )
             conn.commit()
@@ -1164,7 +1164,7 @@ class SqliteBackend(BaseBackend):
                 d[field] = {}
         return d
 
-    def upsert_flow_a_draft(self, data: Dict[str, Any]) -> str:
+    def upsert_flow_a_draft(self, data: Dict[str, Any], *, user_id: str) -> str:
         draft_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         status = data.get("status", "draft")
@@ -1202,7 +1202,7 @@ class SqliteBackend(BaseBackend):
                 """,
                 (
                     draft_id,
-                    data.get("user_id", "default"),
+                    user_id,
                     status,
                     data.get("industry"),
                     data.get("function"),
@@ -1275,7 +1275,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== Audit Logs ====================
 
-    def insert_audit_log(self, data: Dict) -> int:
+    def insert_audit_log(self, data: Dict, *, user_id: str) -> int:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
@@ -1287,7 +1287,7 @@ class SqliteBackend(BaseBackend):
                     (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    data.get("user_id", "default"),
+                    user_id,
                     data["action"],
                     data.get("target_table"),
                     data.get("target_id"),
@@ -1345,7 +1345,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== v3 M-rebuild-1: Structured JDs ====================
 
-    def insert_jd_structured(self, data: Dict) -> int:
+    def insert_jd_structured(self, data: Dict, *, user_id: str) -> int:
         """Insert a structured JD record (text/image/rag parsed).
 
         Required: ``source`` (``'text'``/``'image'``/``'rag'``). Optional:
@@ -1362,7 +1362,7 @@ class SqliteBackend(BaseBackend):
                    (user_id, source, raw_text, company, title, industry, function, level,
                     responsibilities, requirements)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (data.get("user_id", "default"), data["source"], data.get("raw_text"),
+                (user_id, data["source"], data.get("raw_text"),
                  data.get("company"), data.get("title"), data.get("industry"),
                  data.get("function"), data.get("level"),
                  self._json_serialize(data.get("responsibilities", [])),
@@ -1407,7 +1407,7 @@ class SqliteBackend(BaseBackend):
 
     # ==================== v3 M-rebuild-2: Rewrite History ====================
 
-    def insert_rewrite_history(self, data: Dict) -> int:
+    def insert_rewrite_history(self, data: Dict, *, user_id: str) -> int:
         """Persist one rewrite run (mode A/B/A+B) with input/output snapshots.
 
         Required: ``resume_id``, ``mode`` (``'A'``/``'B'``/``'A+B'``). Optional:
@@ -1424,7 +1424,7 @@ class SqliteBackend(BaseBackend):
                    (user_id, resume_id, jd_id, mode,
                     input_snapshot, output_snapshot, rewrite_notes, user_edited)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (data.get("user_id", "default"), data["resume_id"], data.get("jd_id"),
+                (user_id, data["resume_id"], data.get("jd_id"),
                  data["mode"],
                  self._json_serialize(data.get("input_snapshot", {})),
                  self._json_serialize(data.get("output_snapshot", {})),

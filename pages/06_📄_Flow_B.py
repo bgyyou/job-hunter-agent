@@ -200,7 +200,8 @@ def render_flow_b() -> None:
                 resume_data = run_async(parser.parse(str(temp_path)))
                 st.session_state.resume_data = resume_data
                 st.session_state.resume_id = st.session_state.db.insert_resume(
-                    resume_to_db_payload(resume_data, current_user_id())
+                    resume_to_db_payload(resume_data, current_user_id()),
+                    user_id=current_user_id(),
                 )
                 log_action(
                     st.session_state.db,
@@ -361,18 +362,20 @@ def render_flow_b() -> None:
                 score = match_result.get("score", 0)
                 st.session_state.last_match_score = score
                 if st.session_state.resume_id and st.session_state.jd_id:
-                    st.session_state.last_match_id = st.session_state.db.insert_match({
-                        "user_id": current_user_id(),
-                        "resume_id": st.session_state.resume_id,
-                        "jd_id": st.session_state.jd_id,
-                        "score": score,
-                        "reasoning": match_result.get("reasoning", ""),
-                        "matched_skills": match_result.get("matched_skills", []),
-                        "missing_skills": match_result.get("missing_skills", []),
-                        "gaps": match_result.get("gaps", []),
-                        "recommendations": match_result.get("recommendations", []),
-                        "skill_mapping": match_result.get("skill_mapping", []),
-                    })
+                    st.session_state.last_match_id = st.session_state.db.insert_match(
+                        {
+                            "resume_id": st.session_state.resume_id,
+                            "jd_id": st.session_state.jd_id,
+                            "score": score,
+                            "reasoning": match_result.get("reasoning", ""),
+                            "matched_skills": match_result.get("matched_skills", []),
+                            "missing_skills": match_result.get("missing_skills", []),
+                            "gaps": match_result.get("gaps", []),
+                            "recommendations": match_result.get("recommendations", []),
+                            "skill_mapping": match_result.get("skill_mapping", []),
+                        },
+                        user_id=current_user_id(),
+                    )
                     log_action(
                         st.session_state.db,
                         user_id=current_user_id(),
@@ -383,16 +386,18 @@ def render_flow_b() -> None:
                     )
                     opt_ids = []
                     for rec in match_result.get("recommendations", []):
-                        opt_ids.append(st.session_state.db.insert_optimization({
-                            "user_id": current_user_id(),
-                            "resume_id": st.session_state.resume_id,
-                            "jd_id": st.session_state.jd_id,
-                            "optimization_type": rec.get("type", "modify"),
-                            "section": rec.get("section", ""),
-                            "original_content": rec.get("original", ""),
-                            "suggested_content": rec.get("suggestion", ""),
-                            "reason": rec.get("reason", ""),
-                        }))
+                        opt_ids.append(st.session_state.db.insert_optimization(
+                            {
+                                "resume_id": st.session_state.resume_id,
+                                "jd_id": st.session_state.jd_id,
+                                "optimization_type": rec.get("type", "modify"),
+                                "section": rec.get("section", ""),
+                                "original_content": rec.get("original", ""),
+                                "suggested_content": rec.get("suggestion", ""),
+                                "reason": rec.get("reason", ""),
+                            },
+                            user_id=current_user_id(),
+                        ))
                     if opt_ids:
                         log_action(
                             st.session_state.db,

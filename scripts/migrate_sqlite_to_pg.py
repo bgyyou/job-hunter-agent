@@ -71,12 +71,12 @@ def _reembed_chunks(rows):
     return out
 
 
-def _migrate_resumes(dst, rows):
+def _migrate_resumes(dst, rows, user_id: str):
     n = 0
     for r in rows:
         # JsonB fields：sqlite 侧存为 JSON 字符串，PG backend 接收后自动按 str 处理
         dst.insert_resume({
-            "id": r["id"], "user_id": r["user_id"], "name": r["name"],
+            "id": r["id"], "name": r["name"],
             "phone": r.get("phone"), "email": r.get("email"),
             "summary": r.get("summary"),
             "skills": _safe_json(r.get("skills")),
@@ -86,16 +86,16 @@ def _migrate_resumes(dst, rows):
             "preferred_locations": _safe_json(r.get("preferred_locations")),
             "education": _safe_json(r.get("education")),
             "projects": _safe_json(r.get("projects")),
-        })
+        }, user_id=user_id)
         n += 1
     return n
 
 
-def _migrate_jds(dst, rows):
+def _migrate_jds(dst, rows, user_id: str):
     n = 0
     for r in rows:
         dst.insert_jd({
-            "id": r["id"], "user_id": r["user_id"], "url": r.get("url", ""),
+            "id": r["id"], "url": r.get("url", ""),
             "title": r.get("title", ""), "company": r.get("company", ""),
             "location": r.get("location", ""),
             "salary_str": r.get("salary_str"),
@@ -117,17 +117,17 @@ def _migrate_jds(dst, rows):
             "auto_classified": r.get("auto_classified", 1),
             "is_public": r.get("is_public", 0),
             "crawled_at": r.get("crawled_at"),
-        })
+        }, user_id=user_id)
         n += 1
     return n
 
 
-def _migrate_chunks(dst, rows):
+def _migrate_chunks(dst, rows, user_id: str):
     """chunks 已在 _reembed_chunks 中被注入 embedding；逐条 insert_chunk。"""
     n = 0
     for r in rows:
         dst.insert_chunk({
-            "id": r["id"], "user_id": r["user_id"], "jd_id": r["jd_id"],
+            "id": r["id"], "jd_id": r["jd_id"],
             "chunk_index": r.get("chunk_index", n),
             "chunk_text": r.get("chunk_text", ""),
             "chunk_type": r.get("chunk_type", "full"),
@@ -136,16 +136,16 @@ def _migrate_chunks(dst, rows):
             "embedding_dim": r.get("embedding_dim"),
             "context": r.get("context", ""),
             "heading_path": _safe_json(r.get("heading_path")),
-        })
+        }, user_id=user_id)
         n += 1
     return n
 
 
-def _migrate_matches(dst, rows):
+def _migrate_matches(dst, rows, user_id: str):
     n = 0
     for r in rows:
         dst.insert_match({
-            "id": r["id"], "user_id": r["user_id"],
+            "id": r["id"],
             "resume_id": r["resume_id"], "jd_id": r["jd_id"],
             "score": r["score"], "reasoning": r.get("reasoning", ""),
             "matched_skills": _safe_json(r.get("matched_skills")),
@@ -156,16 +156,16 @@ def _migrate_matches(dst, rows):
             "should_apply": r.get("should_apply", 0),
             "user_feedback": r.get("user_feedback"),
             "applied": r.get("applied", 0), "applied_at": r.get("applied_at"),
-        })
+        }, user_id=user_id)
         n += 1
     return n
 
 
-def _migrate_opts(dst, rows):
+def _migrate_opts(dst, rows, user_id: str):
     n = 0
     for r in rows:
         dst.insert_optimization({
-            "id": r["id"], "user_id": r["user_id"],
+            "id": r["id"],
             "resume_id": r.get("resume_id"), "jd_id": r["jd_id"],
             "chunk_id": r.get("chunk_id"),
             "optimization_type": r.get("optimization_type", "modify"),
@@ -175,22 +175,24 @@ def _migrate_opts(dst, rows):
             "reason": r.get("reason", ""),
             "user_adopted": r.get("user_adopted", 0),
             "user_rating": r.get("user_rating"),
-        })
+        }, user_id=user_id)
         n += 1
     return n
 
 
-def _migrate_qc(dst, rows):
+def _migrate_qc(dst, rows, user_id: str):
     n = 0
     for r in rows:
-        dst.insert_quality_check({
-            "check_type": r["check_type"],
-            "target_table": r.get("target_table"),
-            "target_id": r.get("target_id"),
-            "score": r.get("score"),
-            "details": _safe_json(r.get("details")),
-            "user_id": r.get("user_id", "default"),
-        })
+        dst.insert_quality_check(
+            {
+                "check_type": r["check_type"],
+                "target_table": r.get("target_table"),
+                "target_id": r.get("target_id"),
+                "score": r.get("score"),
+                "details": _safe_json(r.get("details")),
+            },
+            user_id=user_id,
+        )
         n += 1
     return n
 
@@ -218,6 +220,8 @@ def main():
                             "postgresql://jobhunter:jobhunter@localhost:5432/jobhunter"))
     parser.add_argument("--apply", action="store_true",
                         help="默认 dry-run；带此 flag 才实际写入")
+    parser.add_argument("--user-id", required=True,
+                        help="Owner of migrated rows (required — data is user-scoped)")
     args = parser.parse_args()
 
     logger.info(f"Source SQLite: {args.sqlite}")
@@ -236,18 +240,18 @@ def main():
             continue
 
         if table == "resumes":
-            n = _migrate_resumes(dst, rows)
+            n = _migrate_resumes(dst, rows, user_id)
         elif table == "jds":
-            n = _migrate_jds(dst, rows)
+            n = _migrate_jds(dst, rows, user_id)
         elif table == "knowledge_chunks":
             reembedded = _reembed_chunks(rows)
-            n = _migrate_chunks(dst, reembedded)
+            n = _migrate_chunks(dst, reembedded, user_id)
         elif table == "match_history":
-            n = _migrate_matches(dst, rows)
+            n = _migrate_matches(dst, rows, user_id)
         elif table == "optimizations":
-            n = _migrate_opts(dst, rows)
+            n = _migrate_opts(dst, rows, user_id)
         elif table == "quality_checks":
-            n = _migrate_qc(dst, rows)
+            n = _migrate_qc(dst, rows, user_id)
         else:
             continue
         logger.info(f"  → wrote {n} rows to PG")

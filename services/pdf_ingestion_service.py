@@ -57,7 +57,7 @@ class PdfIngestionService:
         if self.classifier is not None:
             self._apply_classifier(jd_data)
 
-        jd_id = db.insert_jd(jd_data)
+        jd_id = db.insert_jd(jd_data, user_id=user_id)
 
         # Defensive: re-resolve id via URL (INSERT OR IGNORE may have skipped)
         existing = db.get_jd(jd_id)
@@ -70,7 +70,7 @@ class PdfIngestionService:
         records = self._build_chunk_records(chunks, jd_id, user_id)
         if records:
             self._embed_and_attach(records)
-            inserted = db.insert_chunks_batch(jd_id, records)
+            inserted = db.insert_chunks_batch(jd_id, records, user_id=user_id)
             logger.info(f"PdfIngestionService: inserted {len(inserted)} chunks for JD {jd_id}")
 
         return jd_id
