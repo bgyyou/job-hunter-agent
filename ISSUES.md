@@ -14,6 +14,8 @@
 |---|---|---|
 | 2026-08-03 | v1 PRELIMINARY 创建（基于探查 27 文件 + 三路 subagent 报告） | pingce skill |
 | 2026-08-03 | P0-002 关闭：real_llm 默认 deselect + 断言放宽（commit `711618e`） | fix agent |
+| 2026-08-03 | P0-005 关闭：docker 明文密码改 env_file + POSTGRES_PASSWORD 强校验（commit `e105177`） | fix agent |
+| 2026-08-03 | P2-018 关闭：CI workflow 加 sqlite-vec==0.1.6（commit `36bf4e6`） | fix agent |
 | 2026-08-03 | v1 FROZEN — owner 拍板 Q1-Q4 + 终审 Q1-Q4 | pingce skill |
 | 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 
@@ -68,7 +70,7 @@
 ### P0-005 · 明文 docker 密码
 - **问题**：`docker-compose.yml:23-24` 明文 `POSTGRES_PASSWORD=jobhunter`。
 - **代码依据**：`docker-compose.yml:23-24`
-- **状态**：🔴 待修复 — P0 安全红线。需新增 commit：`docker-compose.yml` 改用 `env_file: .env` 或 `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?must be set}`；`docker-compose.prod.yml` 同步。
+- **状态**：✅ 已关闭 — `e105177`（2026-08-03）。修复：1) `docker-compose.yml` 改 `env_file: .env` + `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?must be set}` 强校验；2) `POSTGRES_USER/POSTGRES_DB` 也走 env_file（默认值 'jobhunter' 作 fallback）；3) healthcheck 改用 $$POSTGRES_USER / $$POSTGRES_DB 变量；4) `.env.example` 增三个 POSTGRES_* 模板变量，密码占位 `change_me_to_a_strong_random_password`。验证：`grep "POSTGRES_PASSWORD.*jobhunter" docker-compose.yml` 0 命中；pytest 547 passed / 3 deselected / 0 failed 无回归。
 - **关联**：REVIEW.md R5-1
 
 ### P0-006 · 登录错误信息泄露账号存在性
@@ -269,8 +271,8 @@
   - `tests/unit/test_translation_service.py:5` 直接 `import sqlite_vec`（CI minimal-deps 不装）
   - `database/migrations/014_embedding_binary_vec0.sql` migration 需要 sqlite-vec extension
   - `database/backends/sqlite_backend.py:115` 走 numpy fallback 但 collection 时仍触发 migration
-- **状态**：🟢 修复 P0-002 时发现（2026-08-03）。`pytest tests/ -q` 本地 547 passed，CI 红是环境问题（CI runner 没装 sqlite-vec）非代码回归。建议方案：a) CI workflow 加 `pip install sqlite-vec`；b) `test_translation_service.py` 改为 try/except import；c) 跳过有 vec0 依赖的测试（需 marker）。待 owner 决策。
-- **关联**：CI 历史（`gh run list --limit 30`）
+- **状态**：✅ 已关闭 — `36bf4e6`（2026-08-03）。owner 决议选项 a：CI workflow `pip install` 列表加 `sqlite-vec==0.1.6`（与本地 dev 版本一致）。CI 验证需 push 后看 GitHub Actions workflow run，本机无法直接跑 ubuntu-latest。
+- **关联**：CI 历史（`gh run list --limit 30`）/ REVIEW.md §1 R1 红线 CI 健康
 
 ---
 

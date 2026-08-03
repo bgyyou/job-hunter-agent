@@ -52,6 +52,13 @@
 ### R5 · 安全红线
 - **判定命令 1**（明文 docker 密码）：`grep -n "POSTGRES_PASSWORD.*jobhunter\|PASSWORD.*=.*jobhunter" docker-compose.yml docker-compose.prod.yml`
   - 通过条件：`docker-compose.prod.yml` 必须走 `--env-file .env.production` 读 `POSTGRES_PASSWORD`；dev `docker-compose.yml` 可保留 dev 默认值但需注释说明
+- **已修复（commit `e105177`）**：
+  - `docker-compose.yml:21-24` 改 `env_file: .env` + `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?must be set}` 强校验
+  - `POSTGRES_USER/POSTGRES_DB` 走 env_file，默认值 `'jobhunter'` 作 fallback
+  - `healthcheck` pg_isready 用 `$$POSTGRES_USER / $$POSTGRES_DB`
+  - `.env.example` 增三个 POSTGRES_* 模板变量，密码占位 `change_me_to_a_strong_random_password`
+  - 验证：`grep "POSTGRES_PASSWORD.*jobhunter" docker-compose.yml` 0 命中
+  - 注意：`docker-compose.prod.yml` 已用 `.env.production`（之前已就绪，不需改）
 - **判定命令 2**（登录错误信息脱敏）：`grep -n "用户不存在\|密码错误" services/auth_service.py`
   - 通过条件：错误信息统一为"邮箱/手机号或密码错误"，不再区分账号存在性
 - **判定命令 3**（硬编码 key）：`grep -rnE "sk-[a-zA-Z0-9]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}" --include="*.py" .`
@@ -280,6 +287,7 @@
 | 日期 | 节点 | 关键结论 | 操作 |
 |---|---|---|---|
 | 2026-08-03 | v1.1 PRELIMINARY 复审 | R7/R8 跳过实测（R7 命令过时 / R8 用户决策）；R1-R6 红线未达（6 项）；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9（≥3 红线未过触发下限）；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
+| 2026-08-03 | v1.1 增量修复 | P0-002 + P0-005 + P2-018 关闭（commit `711618e` / `e105177` / `36bf4e6`）；R2 + R5-1 已修复备注；R1/R3/R4/R5-2/R5-4/R6 仍未达；待 v1.2 复审 | fix agent |
 | 2026-08-03 | **R2 修复落地（commit `711618e`）**：P0-002 真 LLM flake 关闭；基线 547 passed / 3 deselected / 0 failed | fix agent |
 
 ### 7.6 评审 agent 工作流
