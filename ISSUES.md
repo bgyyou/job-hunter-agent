@@ -26,6 +26,7 @@
 | 2026-08-04 | **P1-016 GitHub Actions 闭环**：commit `18a60ef` + `18aa211`。CI workflow minimal test deps 补 `jinja2>=3.1` / `python-docx>=1.0` / `beautifulsoup4>=4.12` / `lxml>=4.9`；3 个 unit 测试 `_run` helper 从 `asyncio.get_event_loop()` 切到 `asyncio.new_event_loop()` 模式；新增 AST 守卫 `test_unit_tests_do_not_use_get_event_loop`。**GitHub Actions 3 workflow 全绿**：tests `#30833065241` + secret-scan `#30833065912` + docker-build `#30833065179`。本地基线 **627 passed, 20 skipped, 3 deselected, 0 failed**（+1 = 新增的 2 个守卫 - 1 个被替代的旧 scipy 守卫）| fix agent |
 | 2026-08-04 | **R8 关闭 P1-002 / P1-012**（commit `3a92ff0` / `9b6da08` / docs）：P1-002 `import_collected.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（同 `crawler/pipeline.py` 路径），数据流通到 Flow B 的 `list_visible_jds`；P1-012 `migrate_sqlite_to_pg.py` 改通用列拷贝（读 sqlite PRAGMA + PG `information_schema` 取交集，类型由 PG `udt_name` 驱动），清单扩到 14 张表按 FK 顺序排，**顺带修 3 个 P0 级 bug**：(a) `main()` 引用未定义 `user_id`（`NameError`，生产切换其实从未真的跑通）；(b) 旧 `_migrate_jds` 写已不存在的列 / 漏实际存在的列，schema 漂移；(c) `--user-id` 把多用户塌成单用户 → 改保留源值 + `--user-id` 只兜底空值。本地 **645 passed, 22 skipped, 3 deselected, 0 failed**（基线 627 + P1-002 的 4 + P1-012 的 10；2 e2e 缺 `DATABASE_URL` 自动 skip）。**P1-002 同根因残留**：`scripts/collectors/manual_collector.py:151` 同样调 v1 `KnowledgeBase`，**新开 P1-002b** | fix agent |
 | 2026-08-04 | **R9 关闭 P1-001 / P1-002b / P1-003 / P1-013**（commit `a141897` / `3b89fd6` / `5934753` / `8f424ee` / docs）：P1-001 `_lazy_score_jd` 加 advisory lock（threading.Lock per jd_id + SQLite `BEGIN IMMEDIATE` + `quality_checked_at` CAS / PG `SELECT ... FOR UPDATE`），10 并发撞同一未评分 JD 只算 1 次 LLM、全部拿到一致 score；P1-002b `scripts/collectors/manual_collector.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（P1-002 同根因补完，`--user-id` 必填）；P1-003 新增 `tests/integration/test_backfill_translate_chunks_retry.py` 4 条（永久失败 SELECT 跳过 / 偶发失败 retry 成功 / retry_count 跨 run 持久化 / stats 报 retry_exhausted 数）；P1-013 `.gitignore` 补 13 项 R2 评估 / 调试产物规则，新增 19 条 gitignore 守卫测试覆盖历史 + 未来两类。本地 **677 passed, 24 skipped, 3 deselected, 0 failed**（基线 658 + P1-001 的 5 + P1-002b 的 4 + P1-003 的 4 + P1-013 的 19 ≈ +32，部分受 24 skipped 吸收）。**自动关闭** P2-009（eval 数据文件 gitignored）+ P2-014（MAX_RETRIES_PER_RECORD grep 在测试中再命中 2 处，总 4 命中超过 ≥3 通过线）。**剩余 P1**：P1-004（setup_wizard set_page_config 冲突）/ P1-005（tempfile 简历无清理）；阻塞 3 项 P1-010 / P1-011 / P1-014 待 owner 说明 | fix agent |
+| 2026-08-04 | **R10 关闭 P1-004 / P1-005**（commit `8282929` / `586fee1` / docs）：P1-004 `setup_wizard.py:70` 移除 `st.set_page_config(...)`，统一由 `web_app.py:49-54` 控制，新 streamlit 多 page 模式不再抛 `StreamlitAPIException`；P1-005 `web_app.py` 加模块级清理机制（三层：命名规范 `prefix='jobhunter_resume_'` + atexit session 清理 + 启动 stale 清理 `>24h`），`pages/03_📝_Flow_A_Step1.py` 上传路径用 `_register_resume_tmp` 注册到 atexit 列表。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（基线 677 + P1-004 的 2 + P1-005 的 9 = +11）。**P1 阶段清零** — 阻塞 3 项 P1-010 / P1-011 / P1-014 仍待 owner 信息；R11 准备就绪：产品维度织入 REVIEW.md（5 条产品红线 + 基线测量 + §3 评分锚点修订 + §7 段位表加产品维度） | fix agent |
 
 ---
 
@@ -136,12 +137,12 @@
 ### P1-004 · setup_wizard.py 多 page set_page_config 冲突
 - **问题**：`setup_wizard.py:70` 自己 `st.set_page_config(...)`，与 `web_app.py:49-54` 的 `set_page_config` 冲突，多 page 行为依赖 streamlit 版本。
 - **代码依据**：`setup_wizard.py:70`
-- **状态**：🟡 待修复 — P1 改进。建议 setup_wizard.py 移除 set_page_config，统一由 web_app.py 控制。
+- **状态**：✅ 已关闭 — `8282929`（2026-08-04）。setup_wizard.py 移除 `st.set_page_config(...)`，统一由 web_app.py 控制。测试 `tests/unit/test_setup_wizard_no_page_config.py` 2 条：AST 静态扫描 setup_wizard.py 不含 set_page_config 字面量 + import smoke 不抛 StreamlitAPIException。
 
 ### P1-005 · tempfile 简历图片无清理
 - **问题**：`pages/03_📝_Flow_A_Step1.py:189-202` 上传图片保存到 `tempfile.gettempdir()` 全局临时目录，无清理机制。
 - **代码依据**：`pages/03_📝_Flow_A_Step1.py:189-202`
-- **状态**：🟡 待修复 — P1 改进。建议加定时清理 / atexit 注册清理。
+- **状态**：✅ 已关闭 — `586fee1`（2026-08-04）。三层清理机制：(1) 命名规范 `prefix='jobhunter_resume_'` + UUID 后缀便于批量匹配；(2) `web_app.py` 加 `_register_resume_tmp` + `_cleanup_resume_tmp_session`，`atexit.register` 当前 session 退出时全删；(3) 启动时 `_cleanup_resume_tmp_stale` 删 `>24h` 的同名前缀文件（兜底上次 session 异常退出残留）。模块级常量 `RESUME_TMP_PREFIX / RESUME_TMP_SUFFIXES / RESUME_TMP_STALE_SECONDS`。测试 `tests/unit/test_tempfile_resume_cleanup.py` 9 条：atexit handler 注册 + register 去重 + stale 清理只删 >24h + 空目录 / 非文件节点不抛 + 页面命名规范 wire + glob roundtrip。
 
 ### P1-006 · 死代码 `find_python_for_streamlit` 重复定义
 - **问题**：`scripts/jobhunter_launcher.py:41-80` `find_python_for_streamlit` 函数定义两次，第二次完全相同（copy-paste 残留）。
