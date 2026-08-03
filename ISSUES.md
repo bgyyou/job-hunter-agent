@@ -23,6 +23,7 @@
 | 2026-08-03 | v1.1 PRELIMINARY 复审 — R7/R8 跳过实测；R1-R6 红线未达；核心过 9 / 未达 6 / N/A 12；段位 0.0-2.9；P2 增量 7 项（P2-011~P2-017） | pingce evaluator |
 | 2026-08-03 | **R3 关闭 P0-001 / P0-007 / P0-008**（commit `a4e11dd` / `d7cb50e` / `65c6625`）；测试基线 552 → 568 passed, 3 deselected；P2-010 / P2-016 随 P0-001 自动消解 | fix agent |
 | 2026-08-03 | **R6 关闭 P1-006 / P1-007 / P1-008 / P1-009 / P1-016**：CI workflow 补 `scipy>=1.11` + asyncio 本地复现守卫；launcher 删除重复 `find_python_for_streamlit` 与 `_read_some`；`strip_thinking` 收敛为 `services._text_utils` 单点；ops_metrics 删除半成品 JSON 提取入口。全量基线 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%** | fix agent |
+| 2026-08-04 | **P1-016 GitHub Actions 闭环**：commit `18a60ef` + `18aa211`。CI workflow minimal test deps 补 `jinja2>=3.1` / `python-docx>=1.0` / `beautifulsoup4>=4.12` / `lxml>=4.9`；3 个 unit 测试 `_run` helper 从 `asyncio.get_event_loop()` 切到 `asyncio.new_event_loop()` 模式；新增 AST 守卫 `test_unit_tests_do_not_use_get_event_loop`。**GitHub Actions 3 workflow 全绿**：tests `#30833065241` + secret-scan `#30833065912` + docker-build `#30833065179`。本地基线 **627 passed, 20 skipped, 3 deselected, 0 failed**（+1 = 新增的 2 个守卫 - 1 个被替代的旧 scipy 守卫）| fix agent |
 
 ---
 
@@ -197,7 +198,7 @@
   - `RuntimeError: There is no current event loop in thread 'MainThread'` — CI pytest-asyncio 配置与本地不一致
   - `ModuleNotFoundError: No module named 'scipy'` — CI `pip install` 列表缺 scipy
 - **影响**：R1 红线 CI 健康（REVIEW §1 R1）未达
-- **状态**：✅ 已关闭 — `ff22f98`（2026-08-03）。CI workflow 增加 `scipy>=1.11`；`pytest.ini` 已启用 `asyncio_mode = auto`，新增 3 条本地 CI 复现守卫。Ubuntu GitHub Actions 需在 push 后确认 run 结果。
+- **状态**：✅ 已关闭 — `ff22f98`（2026-08-03）+ `18a60ef` + `18aa211`（2026-08-04）。CI workflow 增加 `scipy>=1.11` + `jinja2>=3.1` + `python-docx>=1.0` + `beautifulsoup4>=4.12` + `lxml>=4.9`；`pytest.ini` 已启用 `asyncio_mode = auto`；3 个 unit 测试 `_run` helper 切到 `asyncio.new_event_loop()` 模式。新增 2 条守卫（依赖 + AST 扫 `get_event_loop` 调用链）。**GitHub Actions 3 workflow 全绿**：tests `#30833065241`（3.11 + 3.12 + docstring-coverage 全 ✓）+ secret-scan `#30833065912` + docker-build `#30833065179`。
 
 ---
 

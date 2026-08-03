@@ -22,7 +22,7 @@
   - `README.md:138` + `CLAUDE.md:38` 已同步到该数字（原为 481 / 81）；README 里过时的 "worktree 会看到 461 passed / 3 skipped" 换成 deselected 的真实成因
   - 连带关闭 ISSUES P2-010（memory 快照不同步）/ P2-016（544 vs 545 字面偏差）
   - **下次评审注意**：R1 的通过条件应改为"0 failed + deselected 仅限 real_llm"，不要再钉死绝对数字 —— 每加一条测试就得改一次 rubric，是这条红线反复失准的根因
-  - **CI 健康已修复（commit `ff22f98`）**：`.github/workflows/test.yml` minimal test deps 增加 `scipy>=1.11`；`pytest.ini` 已启用 `asyncio_mode = auto`；新增 `tests/integration/test_ci_local_repro.py` 覆盖 SciPy 依赖、asyncio 配置和事件循环 smoke test。GitHub Actions 的 Ubuntu run 需在 push 后确认。
+  - **CI 健康已修复（commit `ff22f98` + `18a60ef` + `18aa211`）**：`.github/workflows/test.yml` minimal test deps 增加 `scipy>=1.11` + `jinja2>=3.1` + `python-docx>=1.0` + `beautifulsoup4>=4.12` + `lxml>=4.9`；`pytest.ini` 已启用 `asyncio_mode = auto`；新增 `tests/integration/test_ci_local_repro.py` 覆盖依赖、asyncio 配置、事件循环 smoke 与 AST 守卫（不许 `asyncio.get_event_loop()` 链式调用）；3 个 unit 测试 `_run` helper 切到 `new_event_loop()` 模式。**GitHub Actions 已实测 3 个 workflow 全绿**：tests `#30833065241`（3.11 + 3.12 + docstring-coverage 全 ✓）+ secret-scan `#30833065912` + docker-build `#30833065179`，P1-016 真正闭环。
 
 ### R2 · 真 LLM flake 必须修复（P0 红线）
 - **判定命令 1**：`grep -n "real_llm" pytest.ini`
@@ -345,6 +345,7 @@
 | 2026-08-03 | **v1.1 R4 增量修复** | **P0-003 / P0-004 关闭**（commit `f09c1d5` / `482b0c7` / `fe2d484` / `26d9cf6` / `6481880`），连带关闭 P2-017（45 行 legacy=1 残留随 018 DELETE 消解）；**R3 + R4 已修复备注就位**；基线 568 → **578 passed, 3 deselected, 0 failed**（+10 新测试）。注：migration 文件实际编号 017/018（plan 014/015 已被 vec0 / chunk_translation 占用）。**P0 全清** — 进入 P1 阶段，首批 P1-015（27 处 backend `user_id: str = "default"` 签名默认值清理，使能机制彻底堵死） | fix agent |
 | 2026-08-03 | **v1.1 R5 增量修复** | **P1-015 关闭**（commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323`）：R5-1 backends 27 处 `user_id: str = "default"` 改为 keyword-only `*, user_id: str` 必填；R5-2 services/tools StructuredJD 删 user_id 字段 + LLMClient 必填；R5-3 21 测试 fixture 切显式 + 新增 40 条守卫测试；R5-4 写路径 caller 全显式（pages/06 Flow_B + 7 scripts + agents/base.py）。**R6 判定命令 1 使能机制就位** — 下次 R6 跑判定命令 1 应 0 命中。基线 578 → **618 passed, 20 skipped, 3 deselected, 0 failed**（+40 守卫测试）。白名单 4 系统级方法（`get_llm_usage_today` / `list_audit_logs` / `vector_search` / `like_search_chunks`）说明在 `test_p1_015_no_default_user_id.py` | fix agent |
 | 2026-08-03 | **v1.1 R6 死代码与 CI 收口** | **P1-006 / P1-007 / P1-008 / P1-009 / P1-016 关闭**（commit `ff22f98` / `6c146f6` / `77f5032` / `4380c55` / `6be586a`）：CI 增加 `scipy>=1.11` 与 3 条本地复现守卫；launcher 删除重复定义与 `_read_some`；`strip_thinking` 统一到 `services._text_utils`；ops_metrics 删除泛化 NotImplementedError 入口。全量 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%**。下一阶段进入 P1 第二批：P1-001 / P1-002 / P1-003 / P1-012 | fix agent |
+| 2026-08-04 | **v1.1 P1-016 GitHub Actions 闭环** | P1-016 末尾 CI 红条根因修复（commit `18a60ef` + `18aa211`）：workflow `minimal test deps` 补 `jinja2>=3.1` / `python-docx>=1.0` / `beautifulsoup4>=4.12` / `lxml>=4.9`；3 个 unit 测试 `_run` helper 从 `asyncio.get_event_loop()` 切到 `asyncio.new_event_loop()` 模式。新增 AST 守卫 `test_unit_tests_do_not_use_get_event_loop` 防止退化。**GitHub Actions 3 个 workflow 全绿**：tests `#30833065241`（3.11 / 3.12 / docstring-coverage 全 ✓ 51-54s）+ secret-scan `#30833065912` + docker-build `#30833065179`。本地 **627 passed, 20 skipped, 3 deselected, 0 failed**（比基线 +1 = 新增的 2 个守卫 - 1 个被替代的旧 scipy 守卫）| fix agent |
 
 ### 7.6 评审 agent 工作流
 
