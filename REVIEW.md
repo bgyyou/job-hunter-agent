@@ -231,7 +231,7 @@
 | 数据 | lazy_score 锁（pages/07 race） | 加 advisory lock 或 version 字段 | `pages/07_📚_JD_Library.py:150-162` |
 | 工程 | untracked 调试产物（eval_baseline_*.json / miss_analysis_*.md） | 加 .gitignore | git status |
 | 工程 | tempfile 简历图片清理（pages/03） | 加定时清理 / 注册到 atexit | `pages/03_📝_Flow_A_Step1.py:189-202` |
-| 工程 | smart_collector.py 走 v1 KB | 迁移到 v2 jobhunter_v2.db | `scripts/collectors/import_collected.py:108-117` |
+| 工程 | smart_collector.py 走 v1 KB | ✅ 已修复（2026-08-04，`3a92ff0`） | `scripts/collectors/import_collected.py:108-117` → 改走 `insert_user_jd` + `embed_and_store_jd_chunks`（同 `crawler/pipeline.py` 路径） |
 | 检索 | Flow A 信息评分阈值（mode auto 切换） | 加 A/B 边界回测 | `services/information_scorer.py` |
 | Agent | chat_assistant 浮窗（README 声称，代码未实现） | Q3 owner 决议改 README，不补 | Q3 决议 |
 | Agent | update_optimization_adopted UI 入口 | Q3 owner 决议改 README，不补 | Q3 决议 |
@@ -346,6 +346,7 @@
 | 2026-08-03 | **v1.1 R5 增量修复** | **P1-015 关闭**（commit `cbf3124` / `2983e56` / `0abb5df` / `99f7323`）：R5-1 backends 27 处 `user_id: str = "default"` 改为 keyword-only `*, user_id: str` 必填；R5-2 services/tools StructuredJD 删 user_id 字段 + LLMClient 必填；R5-3 21 测试 fixture 切显式 + 新增 40 条守卫测试；R5-4 写路径 caller 全显式（pages/06 Flow_B + 7 scripts + agents/base.py）。**R6 判定命令 1 使能机制就位** — 下次 R6 跑判定命令 1 应 0 命中。基线 578 → **618 passed, 20 skipped, 3 deselected, 0 failed**（+40 守卫测试）。白名单 4 系统级方法（`get_llm_usage_today` / `list_audit_logs` / `vector_search` / `like_search_chunks`）说明在 `test_p1_015_no_default_user_id.py` | fix agent |
 | 2026-08-03 | **v1.1 R6 死代码与 CI 收口** | **P1-006 / P1-007 / P1-008 / P1-009 / P1-016 关闭**（commit `ff22f98` / `6c146f6` / `77f5032` / `4380c55` / `6be586a`）：CI 增加 `scipy>=1.11` 与 3 条本地复现守卫；launcher 删除重复定义与 `_read_some`；`strip_thinking` 统一到 `services._text_utils`；ops_metrics 删除泛化 NotImplementedError 入口。全量 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%**。下一阶段进入 P1 第二批：P1-001 / P1-002 / P1-003 / P1-012 | fix agent |
 | 2026-08-04 | **v1.1 P1-016 GitHub Actions 闭环** | P1-016 末尾 CI 红条根因修复（commit `18a60ef` + `18aa211`）：workflow `minimal test deps` 补 `jinja2>=3.1` / `python-docx>=1.0` / `beautifulsoup4>=4.12` / `lxml>=4.9`；3 个 unit 测试 `_run` helper 从 `asyncio.get_event_loop()` 切到 `asyncio.new_event_loop()` 模式。新增 AST 守卫 `test_unit_tests_do_not_use_get_event_loop` 防止退化。**GitHub Actions 3 个 workflow 全绿**：tests `#30833065241`（3.11 / 3.12 / docstring-coverage 全 ✓ 51-54s）+ secret-scan `#30833065912` + docker-build `#30833065179`。本地 **627 passed, 20 skipped, 3 deselected, 0 failed**（比基线 +1 = 新增的 2 个守卫 - 1 个被替代的旧 scipy 守卫）| fix agent |
+| 2026-08-04 | **v1.1 P1 第二批 R8 关闭 P1-002 / P1-012** | P1-002（commit `3a92ff0`）：`scripts/collectors/import_collected.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`，数据流通到 Flow B 的 `list_visible_jds`；P1-012（commit `9b6da08`）：`scripts/migrate_sqlite_to_pg.py` 改通用列拷贝（读 sqlite PRAGMA + PG information_schema 取交集，类型由 PG `udt_name` 驱动），清单扩到 14 张表按 FK 顺序排，**顺带修 3 个 P0 级 bug**：(a) `main()` 引用未定义 `user_id`（`NameError`，生产切换其实从未真的跑通）；(b) 旧 `_migrate_jds` 写已不存在的列 / 漏实际存在的列，schema 漂移；(c) `--user-id` 把多用户塌成单用户 → 改保留源值 + `--user-id` 只兜底空值。本地 **645 passed, 22 skipped, 3 deselected, 0 failed**（基线 627 + P1-002 的 4 + P1-012 的 10 + 12 新增，2 e2e 缺 `DATABASE_URL` 自动 skip）。**剩余 P1**：P1-001 / P1-002b（manual_collector 同根因，新开）/ P1-003 / P1-004 / P1-005 / P1-013 | fix agent |
 
 ### 7.6 评审 agent 工作流
 

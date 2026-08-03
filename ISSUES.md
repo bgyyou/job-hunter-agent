@@ -24,6 +24,7 @@
 | 2026-08-03 | **R3 关闭 P0-001 / P0-007 / P0-008**（commit `a4e11dd` / `d7cb50e` / `65c6625`）；测试基线 552 → 568 passed, 3 deselected；P2-010 / P2-016 随 P0-001 自动消解 | fix agent |
 | 2026-08-03 | **R6 关闭 P1-006 / P1-007 / P1-008 / P1-009 / P1-016**：CI workflow 补 `scipy>=1.11` + asyncio 本地复现守卫；launcher 删除重复 `find_python_for_streamlit` 与 `_read_some`；`strip_thinking` 收敛为 `services._text_utils` 单点；ops_metrics 删除半成品 JSON 提取入口。全量基线 **626 passed, 20 skipped, 3 deselected, 0 failed**；services 覆盖率 **81%** | fix agent |
 | 2026-08-04 | **P1-016 GitHub Actions 闭环**：commit `18a60ef` + `18aa211`。CI workflow minimal test deps 补 `jinja2>=3.1` / `python-docx>=1.0` / `beautifulsoup4>=4.12` / `lxml>=4.9`；3 个 unit 测试 `_run` helper 从 `asyncio.get_event_loop()` 切到 `asyncio.new_event_loop()` 模式；新增 AST 守卫 `test_unit_tests_do_not_use_get_event_loop`。**GitHub Actions 3 workflow 全绿**：tests `#30833065241` + secret-scan `#30833065912` + docker-build `#30833065179`。本地基线 **627 passed, 20 skipped, 3 deselected, 0 failed**（+1 = 新增的 2 个守卫 - 1 个被替代的旧 scipy 守卫）| fix agent |
+| 2026-08-04 | **R8 关闭 P1-002 / P1-012**（commit `3a92ff0` / `9b6da08` / docs）：P1-002 `import_collected.py` 改走 v2 `insert_user_jd` + `embed_and_store_jd_chunks`（同 `crawler/pipeline.py` 路径），数据流通到 Flow B 的 `list_visible_jds`；P1-012 `migrate_sqlite_to_pg.py` 改通用列拷贝（读 sqlite PRAGMA + PG `information_schema` 取交集，类型由 PG `udt_name` 驱动），清单扩到 14 张表按 FK 顺序排，**顺带修 3 个 P0 级 bug**：(a) `main()` 引用未定义 `user_id`（`NameError`，生产切换其实从未真的跑通）；(b) 旧 `_migrate_jds` 写已不存在的列 / 漏实际存在的列，schema 漂移；(c) `--user-id` 把多用户塌成单用户 → 改保留源值 + `--user-id` 只兜底空值。本地 **645 passed, 22 skipped, 3 deselected, 0 failed**（基线 627 + P1-002 的 4 + P1-012 的 10；2 e2e 缺 `DATABASE_URL` 自动 skip）。**P1-002 同根因残留**：`scripts/collectors/manual_collector.py:151` 同样调 v1 `KnowledgeBase`，**新开 P1-002b** | fix agent |
 
 ---
 
@@ -119,7 +120,12 @@
 ### P1-002 · smart_collector 走 v1 KB
 - **问题**：`scripts/collectors/import_collected.py:108-117` 调 v1 的 `KnowledgeBase`（多 DB 文件），与 v2 统一 `jobhunter_v2.db` 不互通，导入后数据在 Flow B 的 `list_visible_jds` 看不到。
 - **代码依据**：`scripts/collectors/import_collected.py:108-117`
-- **状态**：🟡 待修复 — P1 改进。建议改走 `db.insert_user_jd` + `embed_and_store_jd_chunks`。
+- **状态**：✅ 已关闭 — `3a92ff0`（2026-08-04）。改走 `insert_user_jd` + `embed_and_store_jd_chunks`，与 `crawler/pipeline.py` 同一条落库路径；分类从 v1 LLM `classify_jd` 换成 `database.classifier` 三层 Classifier（同步、无需 API key），脚本去掉 asyncio。`--user-id` 必填（与 `migrate_sqlite_to_pg.py` 一致），不再依赖 `web_app.current_user_id()` 的 Streamlit session。顺带修 `Path(__file__).parent` 指向错误（指到 `scripts/collectors/` 而非仓库根，sys.path 注入一直是无效的）。测试 `tests/integration/test_smart_collector_v2.py` 4 条全过：AST 守卫 `KnowledgeBase` import 清零 + v2 API 在位 + 端到端导入可见 + 跨用户隔离。**同根因残留**：`scripts/collectors/manual_collector.py:151` 同样调 v1 `KnowledgeBase`，**新开 P1-002b**。
+
+### P1-002b · manual_collector 走 v1 KB（P1-002 同根因）
+- **问题**：`scripts/collectors/manual_collector.py:151,168-188` 同样调 v1 `KnowledgeBase`（多 DB 文件），与 v2 `jobhunter_v2.db` 不互通。P1-002 关了 `import_collected.py` 的口子，但 manual collector 还在走老路。
+- **代码依据**：`scripts/collectors/manual_collector.py:151`
+- **状态**：🟡 待修复 — P1 改进。处理方法与 P1-002 一致：改走 `insert_user_jd` + `embed_and_store_jd_chunks`。
 
 ### P1-003 · 翻译 backfill 永久卡死兜底已加但未回归
 - **问题**：commit `3b854ef` 加 `MAX_RETRIES_PER_RECORD` 兜底，但 CHANGELOG 未回填最新 retry_count 实际值，2 条永久卡死的根因未根治。
@@ -169,7 +175,7 @@
 ### P1-012 · migrate_sqlite_to_pg.py 漏 v4 新表
 - **问题**：`scripts/migrate_sqlite_to_pg.py:32-33` 迁移表清单缺 v4 新表（users / flow_a_drafts / jd_structured / rewrite_history / rag_industry_function / interview_questions / llm_calls / audit_logs / skeleton_cache），PG 切回会丢。
 - **代码依据**：`scripts/migrate_sqlite_to_pg.py:32-33`
-- **状态**：🟡 待修复 — P1 改进（注：与 P0-004 的 rag_industry_function 删除有冲突，需协调：先 P0-004 删除，再 P1-012 同步迁移清单）。
+- **状态**：✅ 已关闭 — `9b6da08`（2026-08-04）。把"每张表手写 `_migrate_*()`"换成通用列拷贝：读 sqlite PRAGMA 列 + PG `information_schema` 列，取交集后拼参数化 INSERT，类型转换由 PG `udt_name` 驱动（jsonb/vector/array/其他）。清单扩到 14 张表（`users` / `resumes` / `jds` / `jd_structured` / `knowledge_chunks` / `match_history` / `optimizations` / `quality_checks` / `flow_a_drafts` / `rewrite_history` / `interview_questions` / `llm_calls` / `audit_logs` / `skeleton_cache`），按 FK 顺序排。顺带修 3 个 P0 级 bug：(1) `main()` 直接引用 `user_id` 变量未定义（应 `args.user_id`），带 `--apply` 跑第一张表就 `NameError`，**生产切换其实从没真的跑通过**；(2) 旧 `_migrate_jds` 往 `jds` 写 `requirements/skills_required/parsed_data`（列已不存在），同时丢 `parsed_sections/tags/quality_score/deleted_at`（列实际存在）—— 整段对着 004 前的旧 schema 漂移；(3) `--user-id` 把多用户归属塌成单用户，改为保留源值 + `--user-id` 只兜底 `user_id` 为空的历史行。`ON CONFLICT DO NOTHING` + serial 序列 resync → 重跑幂等。测试 `tests/integration/test_migrate_v4_tables.py` 12 条：5 静态守卫（含 PG 侧 `CREATE TABLE` 验证避免清单/PG 漂移）+ 5 纯函数单测 + 2 e2e（缺 `DATABASE_URL` 自动 skip，真 PG 跑时做 sqlite→PG round-trip 行数一致）。
 
 ### P1-013 · untracked 调试产物建议加 .gitignore
 - **问题**：`data/eval_baseline_*.json`（7 个）+ `data/miss_analysis_*.md`（5 个）+ `data/post_backfill_eval_*.md` + `AI Agent产品经理_简历.md` + `data/*.bak_*.db` 等是用户调试产物，建议加 .gitignore。
