@@ -27,6 +27,10 @@ _PBKDF2_ITERATIONS = 200_000
 _LOCKOUT_MAX_FAILURES = 5
 _LOCKOUT_WINDOW_MINUTES = 15
 
+# P0-006:登录错误信息脱敏。前端不会泄露「用户不存在 / 密码错误 / 账号锁定」三种状态。
+# Backend 侧 audit_logs.error_message 仍保留具体错误码,详见 login_user 内部 log_action 调用。
+_LOGIN_OBFUSCATED_MESSAGE = "邮箱/手机号或密码错误"
+
 
 class AuthError(ValueError):
     """Raised when auth input is invalid or credentials are rejected."""
@@ -107,7 +111,7 @@ class AuthService:
                 error_message="user_not_found",
                 details={"identifier": ident[:80]},
             )
-            raise AuthError("账号或密码不正确")
+            raise AuthError(_LOGIN_OBFUSCATED_MESSAGE)
         if self._is_locked_out(user["id"]):
             log_action(
                 self.db,
@@ -119,9 +123,7 @@ class AuthService:
                 error_message="locked_out",
                 details={"identifier": ident[:80]},
             )
-            raise AuthError(
-                f"登录失败次数过多，账号已临时锁定，请 {_LOCKOUT_WINDOW_MINUTES} 分钟后再试"
-            )
+            raise AuthError(_LOGIN_OBFUSCATED_MESSAGE)
         stored = self._get_user_secret(user["id"])
         if not stored or not self._verify_password(password, stored["password_salt"], stored["password_hash"]):
             log_action(
@@ -134,7 +136,7 @@ class AuthService:
                 error_message="bad_password",
                 details={"identifier": ident[:80]},
             )
-            raise AuthError("账号或密码不正确")
+            raise AuthError(_LOGIN_OBFUSCATED_MESSAGE)
         log_action(
             self.db,
             user_id=user["id"],

@@ -121,8 +121,8 @@ class TestLoginLockout:
 
         self._fail_n_times(auth, "a@example.com", 5)
 
-        # 第 6 次即使密码正确也被锁定
-        with pytest.raises(AuthError, match="锁定"):
+        # 第 6 次即使密码正确也被锁定 (P0-006:对外 message 脱敏,统一文案)
+        with pytest.raises(AuthError, match="邮箱/手机号或密码错误"):
             auth.login_user(identifier="a@example.com", password="password123")
 
     def test_under_threshold_not_locked(self, tmp_db):
