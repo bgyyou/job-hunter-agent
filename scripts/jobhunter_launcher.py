@@ -58,28 +58,6 @@ def find_python_for_streamlit() -> str:
     # 最后兜底
     return sys.executable
 
-
-def find_python_for_streamlit() -> str:
-    """返回用来跑 `streamlit` 的可执行路径。
-
-    - 未 frozen：直接用当前 sys.executable（包含 venv 时也对）
-    - frozen (pyinstaller .exe)：当前 sys.executable 是 .exe 自己 — 不能用它跑 -m streamlit。
-      退回 PATH 上的 python / py launcher。
-    """
-    if not getattr(sys, "frozen", False):
-        return sys.executable
-
-    # frozen: 试 PATH 上的 python / py
-    import shutil
-
-    for candidate in ("python", "python3", "py"):
-        path = shutil.which(candidate)
-        if path:
-            return path
-    # 最后兜底
-    return sys.executable
-
-
 def is_server_ready(url: str, timeout: float = 2.0) -> bool:
     """HTTP HEAD localhost:port 是否有响应。streamlit 启动中可能返 503，
     只要连得上且拿到 HTTP 响应（任意 status code），就算"服务在"。
