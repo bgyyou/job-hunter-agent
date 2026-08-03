@@ -261,6 +261,86 @@ class PostgresBackend(BaseBackend):
             (score, checked_at, jd_id),
         )
 
+    def update_jd_quality_score_cas(self, jd_id: str, score: Optional[float],
+                                    checked_at: Optional[str],
+                                    expected_checked_at: Optional[str]) -> bool:
+        """M-v4-2 P1-001: 事务化 CAS 写。``SELECT ... FOR UPDATE`` 拿行锁 + ``WHERE`` 双层防 race。"""
+        conn = self._get_conn()
+        prev_autocommit = conn.autocommit
+        try:
+            conn.autocommit = False
+            cur = conn.cursor()
+            try:
+                if expected_checked_at is None:
+                    cur.execute(
+                        "UPDATE jds SET quality_score = %s, quality_checked_at = %s "
+                        "WHERE id = %s AND quality_checked_at IS NULL "
+                        "RETURNING id",
+                        (score, checked_at, jd_id),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE jds SET quality_score = %s, quality_checked_at = %s "
+                        "WHERE id = %s AND quality_checked_at = %s "
+                        "RETURNING id",
+                        (score, checked_at, jd_id, expected_checked_at),
+                    )
+                wrote = cur.fetchone() is not None
+                conn.commit()
+                return wrote
+            except Exception:
+                conn.rollback()
+                raise
+        finally:
+            conn.autocommit = prev_autocommit
+
+    def compute_or_get_jd_quality(self, jd_id: str, compute_fn) -> Optional[float]:
+        """M-v4-2 P1-001: 同进程锁 + 行级 FOR UPDATE 双层防并发 race。"""
+        import threading as _threading
+        if not hasattr(self, "_quality_locks"):
+            self._quality_locks = {}
+            self._quality_locks_guard = _threading.Lock()
+        with self._quality_locks_guard:
+            lock = self._quality_locks.get(jd_id)
+            if lock is None:
+                lock = _threading.Lock()
+                self._quality_locks[jd_id] = lock
+        with lock:
+            conn = self._get_conn()
+            prev_autocommit = conn.autocommit
+            try:
+                conn.autocommit = False
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT quality_score FROM jds WHERE id = %s FOR UPDATE",
+                    (jd_id,),
+                )
+                row = cur.fetchone()
+                conn.commit()
+            finally:
+                conn.autocommit = prev_autocommit
+            if row and row[0] is not None:
+                return row[0]
+
+            try:
+                new_score = compute_fn()
+            except Exception:
+                return None
+            if new_score is None:
+                return None
+
+            ts = self._now_iso() if hasattr(self, "_now_iso") else datetime.now(timezone.utc).isoformat()
+            wrote = self.update_jd_quality_score_cas(
+                jd_id, new_score, ts, expected_checked_at=None,
+            )
+            if wrote:
+                return new_score
+            cur = self._execute(
+                "SELECT quality_score FROM jds WHERE id = %s", (jd_id,),
+            )
+            row2 = cur.fetchone()
+            return row2[0] if (row2 and row2[0] is not None) else new_score
+
     # ==================== Match History ====================
 
     def insert_match(self, data: Dict, *, user_id: str) -> str:

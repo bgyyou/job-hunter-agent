@@ -3,10 +3,11 @@
 import json
 import sqlite3
 import struct
+import threading
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from loguru import logger
 
 from database.backends import BaseBackend
@@ -28,6 +29,9 @@ class SqliteBackend(BaseBackend):
         self.db_path = db_path
         # v4 P0-模块 3: 标记 sqlite-vec 是否可用；vector_search 据此选择 vec0 路径或 numpy fallback
         self._sqlite_vec_available: bool = False
+        # M-v4-2 P1-001: 同进程按 jd_id 维度懒创建 threading.Lock（防懒评分并发 race）
+        self._quality_locks: Dict[str, threading.Lock] = {}
+        self._quality_locks_guard = threading.Lock()
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -503,6 +507,90 @@ class SqliteBackend(BaseBackend):
             conn.commit()
         finally:
             conn.close()
+
+    def update_jd_quality_score_cas(self, jd_id: str, score: Optional[float],
+                                    checked_at: Optional[str],
+                                    expected_checked_at: Optional[str]) -> bool:
+        """M-v4-2 P1-001: 事务化 CAS 写。
+
+        ``BEGIN IMMEDIATE`` 拿 DB 文件写锁；同一 backend 实例的所有写
+        串行化。``WHERE quality_checked_at = ? OR (NULL handling)``
+        再加一层 SQL 兜底，防止理论上的多进程并发写。
+
+        ``expected_checked_at`` 与 DB 当前值不符 → 不写。"""
+        conn = self._get_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if expected_checked_at is None:
+                    cur = conn.execute(
+                        "UPDATE jds SET quality_score = ?, quality_checked_at = ? "
+                        "WHERE id = ? AND quality_checked_at IS NULL",
+                        (score, checked_at, jd_id),
+                    )
+                else:
+                    cur = conn.execute(
+                        "UPDATE jds SET quality_score = ?, quality_checked_at = ? "
+                        "WHERE id = ? AND quality_checked_at = ?",
+                        (score, checked_at, jd_id, expected_checked_at),
+                    )
+                conn.commit()
+                return cur.rowcount > 0
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.OperationalError:
+                    pass
+                raise
+        finally:
+            conn.close()
+
+    def compute_or_get_jd_quality(self, jd_id: str, compute_fn) -> Optional[float]:
+        """M-v4-2 P1-001: 同进程锁 + 跨进程 CAS 双层防并发 race。"""
+        lock = self._quality_lock_for(jd_id)
+        with lock:
+            conn = self._get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT quality_score FROM jds WHERE id = ?", (jd_id,),
+                ).fetchone()
+                if row and row["quality_score"] is not None:
+                    return row["quality_score"]
+            finally:
+                conn.close()
+
+            try:
+                new_score = compute_fn()
+            except Exception:
+                return None
+
+            if new_score is None:
+                return None
+
+            ts = datetime.now(timezone.utc).isoformat()
+            wrote = self.update_jd_quality_score_cas(
+                jd_id, new_score, ts, expected_checked_at=None,
+            )
+            if wrote:
+                return new_score
+            # 跨进程对手抢写成功：回读拿对方分数
+            conn = self._get_conn()
+            try:
+                row = conn.execute(
+                    "SELECT quality_score FROM jds WHERE id = ?", (jd_id,),
+                ).fetchone()
+                return row["quality_score"] if (row and row["quality_score"] is not None) else new_score
+            finally:
+                conn.close()
+
+    def _quality_lock_for(self, jd_id: str) -> "threading.Lock":
+        """按 jd_id 懒创建 threading.Lock（无锁层级）。"""
+        with self._quality_locks_guard:
+            lk = self._quality_locks.get(jd_id)
+            if lk is None:
+                lk = threading.Lock()
+                self._quality_locks[jd_id] = lk
+            return lk
 
     # ==================== Match History ====================
 

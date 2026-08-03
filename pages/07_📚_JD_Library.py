@@ -149,16 +149,21 @@ def _render_jd_meta_row(jd: Dict, quality_score: Optional[float]) -> str:
 
 
 def _lazy_score_jd(db: Any, jd: Dict) -> Optional[float]:
-    """若 jd 没有 quality_score，立即计算并写回。返回 score 或 None。"""
+    """若 jd 没有 quality_score，立即计算并写回。返回 score 或 None。
+
+    M-v4-2 P1-001: 走 ``db.compute_or_get_jd_quality`` — 后端同进程锁
+    + 跨进程 CAS 双层防并发回写 race，10 个线程撞同一未评分 JD
+    只算 1 次 LLM、全部拿到相同 score。"""
     if jd.get("quality_score") is not None:
         return jd["quality_score"]
-    try:
+
+    def _compute():
         from services.jd_quality_service import compute_jd_quality
 
-        result = compute_jd_quality(jd)
-        now_iso = datetime.now(timezone.utc).isoformat()
-        db.update_jd_quality_score(jd["id"], result["composite"], now_iso)
-        return result["composite"]
+        return compute_jd_quality(jd)["composite"]
+
+    try:
+        return db.compute_or_get_jd_quality(jd["id"], _compute)
     except Exception:
         return None
 

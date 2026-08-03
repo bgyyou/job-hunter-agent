@@ -109,6 +109,43 @@ class BaseBackend(ABC):
         Idempotent: safe to call repeatedly. ``None`` should clear the cache.
         """
 
+    @abstractmethod
+    def update_jd_quality_score_cas(self, jd_id: str, score: float,
+                                    checked_at: str,
+                                    expected_checked_at: Optional[str]) -> bool:
+        """M-v4-2 P1-001: 事务化 CAS 写 — 防止懒评分并发回写 race。
+
+        同进程：``BEGIN IMMEDIATE`` 拿写锁，单 DB 文件写入串行化。
+        跨进程：``WHERE quality_checked_at = expected`` 在 SQL 层
+        挡掉任何绕过文件锁的并发写。
+
+        Returns:
+            True: 本调用真写了行（``rowcount > 0``）。
+            False: ``quality_checked_at`` 已被别人改成其它值，写被 SQL 层拒。
+            调用方二次 SELECT 拿别人刚算好的 score 即可。
+
+        ``expected_checked_at=None`` 视为"未评分"（NULL），只有 DB 中
+        ``quality_checked_at`` 仍为 NULL 时才会写入。
+        """
+
+    @abstractmethod
+    def compute_or_get_jd_quality(
+        self, jd_id: str,
+        compute_fn: Any,  # Callable[[], Optional[float]]
+    ) -> Optional[float]:
+        """M-v4-2 P1-001: 同进程锁 + 跨进程 CAS 双层防并发 race 的懒评分。
+
+        调用方传入 :class:`compute_fn`（无参返回 ``Optional[float]``）；后端负责：
+        1. 拿同进程 ``threading.Lock``（按 jd_id 维度 — 不同 jd 不互锁）
+        2. 锁内二次 ``SELECT quality_score FROM jds``；已存在直接返回
+        3. 调 :class:`compute_fn`（LLM/heuristic 调用）
+        4. ``update_jd_quality_score_cas`` 跨进程兜底
+
+        Returns:
+            最终的 ``quality_score``（可能是本调用算的，也可能是跨进程对手算的）。
+            ``compute_fn`` 抛错 / 返 None → 返 None。
+        """
+
     # -------------------- Matches --------------------
 
     @abstractmethod
