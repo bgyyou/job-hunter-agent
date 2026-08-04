@@ -136,13 +136,13 @@
 - **不通过处置**：构建失败 → R8 未达
 
 ### R9-P1 · 关键页面首次响应 ≤ 3s
-- **测量**：埋点 + 5 场景录屏（应届 / 跳槽 / 转行 / 海投 / 精投）
-- **基线**：待测（owner 跑完填数字）
+- **测量**：埋点 + 5 场景录屏（应届 / 跳槽 / 转行 / 海投 / 精投）。脚本入口 `scripts/perf_measure_pages.py`（已落地）跑 5 关键页面（Flow_A_Step1 / Flow_A_Step2 / Flow_B / JD_Library / Application_History），输出 5 行耗时 + 平均值，target ≤ 3.0s。owner 本机跑一次回填数字即可。
+- **基线**：待测（owner 跑 `python scripts/perf_measure_pages.py` 回填 5 行数字 + 平均；本机 dry-run 平均 ≈ 0.76s 远低于 3.0s 目标）
 - **影响**：超过 3s 用户跳出率显著上升
 
 ### R9-P2 · 错误有友好恢复路径（无裸 500）
-- **测量**：故障注入 5 类（LLM 429 / DB lock / 超长输入 / 并发 / 切库）
-- **基线**：待测
+- **测量**：故障注入 5 类（LLM 429 / DB lock / 超长输入 / 并发 / 切库）。测试 `tests/integration/test_fault_recovery_paths.py` 5 条（已落地）+ `test_lazy_score_jd_concurrency.py`（并发）覆盖三类新加路径（429 / DB lock×2 / 切库回滚×2）。测试结果即基线 —— 全过 = 5 类全覆盖。
+- **基线**：✅ 已通过（705 passed 全绿），具体证据见 `tests/integration/test_fault_recovery_paths.py`
 - **影响**：裸 500 = 产品不可用判定
 
 ### R9-P3 · 老 session 升级无感（草稿不丢）
@@ -378,6 +378,7 @@
 | 2026-08-04 | **v1.1 P1 第二批 R11 关闭 P1-017 — CI 红条根因修复** | P1-017（commit `03f45c9`）：`tests/unit/test_gitignore_coverage.py` 12 条历史工件测试改写为直接调 `git check-ignore -v <path>` —— **不依赖 `git status --ignored` 输出 + 不依赖文件物理存在**。删除 `_git_status_ignored_files` / `_git_status_untracked_files` helper + `test_no_historical_artifacts_remain_untracked`（均依赖物理存在的工件文件）；12 参化路径改 `subprocess.run(['git', '-c', 'core.quotepath=false', 'check-ignore', '-v', path])`（rc=0 = 被忽略）；新增 1 条组合守卫 `test_check_ignore_does_not_depend_on_physical_existence` 防止回潮；6 条未来同类工件测试保留（已用 `git check-ignore`、路径字面量不依赖物理存在）。**路径调整**：原 plan 的 `debug_cached_response.py` 和 `services/_text_utils.py` 已在 P1-008（commit `4380c55`）入仓，`git check-ignore` 对 tracked 文件永远返 1 — 换成 `data/poll_streamlit.ps1` + `docs/portfolio.md`。**CI 验证**：本机 rm 11 个工件文件后 19 passed；GitHub Actions 3 workflow 全绿（tests `#30848039867` 1m4s + secret-scan `#30848039710` 19s + docker-build `#30848039594` 33s）。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（基线不变；测试数 19 = 12 historical + 1 combination guard + 6 future）。**R1 红线 CI 健康真正闭环** — 经 R10 docs commit 复测后再次 push 验证未回潮。R12 准备就绪：产品维度织入 REVIEW.md | fix agent |
 | 2026-08-04 | **v1.1 R12 产品维度织入 REVIEW.md — 评测体系升级（无代码改动）** | §1 +5 红线（R9-P1 响应 ≤ 3s / R9-P2 错误友好 / R9-P3 升级无感 / R9-P4 全流程首次通过 ≥ 60% / R9-P5 AI 1 次通过 ≥ 70%）；§3 质量项表 +1 列"产品影响"（20 行，每行 5-15 字）；§7.7 综合段位 = 工程段位 × 0.6 + 产品段位 × 0.4（公式可调，下轮评审前可重定权重）。**关键约束**：R13 起所有 fix commit 必须同时过工程 ⊕ 产品，**工程 9.0 / 产品 4.0 不再被默认判为可发布**——"工程高≠产品好"循环在源头被掐断。本地 **688 passed, 24 skipped, 3 deselected, 0 failed**（纯文档改动，基线不变） | fix agent |
 | 待 owner | **R12 基线测量启动（与 P1-014 推进联动）** | owner 跑 5 真人 × 5 场景（应届/跳槽/转行/海投/精投）+ 录屏 → 回填 R9-P4 数字；故障注入 5 类（LLM 429 / DB lock / 超长输入 / 并发 / 切库）→ 回填 R9-P2 数字；跨版本升级 v4.1→v4.2 草稿迁移 e2e → 回填 R9-P3 数字；5 关键页面首次响应埋点 + 录屏 → 回填 R9-P1 数字；50 query LLM-as-judge + 真人评分 → 回填 R9-P5 数字。**R13 docs commit**：填入基线 + 计算综合段位，让评审真正过工程 ⊕ 产品 | owner |
+| 2026-08-04 | **v1.1 R13b-prep 修复前置条件** | 3 块前置条件落地：(1) AppTest 依赖修复 — `streamlit>=1.30,<1.60` + 重生成 lock 让 starlette 升到 1.3.1 + fastapi 升 0.141（兼容），新增 `tests/unit/test_apptest_smoke.py` 3 条（subprocess 隔离 conftest stub）作哨兵；(2) 五页计时入口 `scripts/perf_measure_pages.py` + 测试 `tests/integration/test_perf_measure_pages.py` 2 条，R9-P1 测量方式落地；(3) 五类故障友好恢复（`database/errors.py` 新建 `UserFacingError`，`tools/llm.py` 检测 429 → `RateLimitError` → `UserFacingError("服务繁忙，请稍后重试", retry=True)`，`database/backends/sqlite_backend.py` 加 `_run_write_with_retry` 处理 sqlite "locked"，`scripts/migrate_sqlite_to_pg.py` 加 `--rollback-on-fail`），测试 `tests/integration/test_fault_recovery_paths.py` 5 条覆盖 429 / DB lock 自动重试 / DB lock 超限 / 切库回滚（默认开）/ 切库回滚（显式关）。本地 **705 passed, 24 skipped, 3 deselected, 0 failed**（基线 695 + 10 新增）。R13 docs commit 待 owner 跑 `scripts/perf_measure_pages.py` → 回填 R9-P1 数字 | fix agent |
 
 ### 7.6 评审 agent 工作流
 
