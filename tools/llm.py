@@ -16,6 +16,16 @@ from loguru import logger
 from diskcache import Cache
 import aiohttp
 
+from database.errors import UserFacingError
+
+
+class LLMError(Exception):
+    """LLM 调用层基础异常。"""
+
+
+class RateLimitError(LLMError):
+    """429 Too Many Requests。重试耗尽后由 analyze() 转 UserFacingError。"""
+
 
 class LLMModel(str, Enum):
     """支持的 LLM 模型（火山引擎）"""
@@ -564,6 +574,16 @@ class OpenAICompatibleClient(LLMClient):
 
             return result
 
+        except RateLimitError:
+            # R13b-prep R9-P2: 429 重试耗尽，转 UserFacingError 让 UI 显示"服务繁忙" + 重试按钮。
+            self._record_llm_call(
+                latency_ms=int((_time.perf_counter() - _t0) * 1000),
+                tokens=0,
+                cache_hit=False,
+                ok=False,
+                error="429 rate limit (retries exhausted)",
+            )
+            raise UserFacingError("服务繁忙，请稍后重试", retry=True) from None
         except Exception as e:
             self.logger.error(f"LLM 调用失败: {e}")
             # v2.1 P1-14: 失败也落一条
@@ -781,6 +801,9 @@ class OpenAICompatibleClient(LLMClient):
                 headers=self.headers,
                 json=payload
             ) as response:
+                if response.status == 429:
+                    error_text = await response.text()
+                    raise RateLimitError(f"Anthropic 429 ({response.status}): {error_text}")
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"API 调用失败 ({response.status}): {error_text}")
@@ -825,6 +848,9 @@ class OpenAICompatibleClient(LLMClient):
                 headers=self.headers,
                 json=payload
             ) as response:
+                if response.status == 429:
+                    error_text = await response.text()
+                    raise RateLimitError(f"OpenAI-compat 429 ({response.status}): {error_text}")
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"API 调用失败 ({response.status}): {error_text}")

@@ -216,11 +216,16 @@ def main():
                         help="默认 dry-run；带此 flag 才实际写入")
     parser.add_argument("--user-id", required=True,
                         help="user_id 为空的历史行的兜底归属（不覆盖已有 user_id）")
+    parser.add_argument("--rollback-on-fail", dest="rollback_on_fail",
+                        action=argparse.BooleanOptionalAction, default=True,
+                        help="迁移任一张表失败时自动 rollback 整个事务（默认 True；"
+                             "传 --no-rollback-on-fail 关闭）")
     args = parser.parse_args()
 
     logger.info(f"Source SQLite: {args.sqlite}")
     logger.info(f"Target PG:     {args.pg_url}")
     logger.info(f"Mode: {'APPLY' if args.apply else 'DRY-RUN'}")
+    logger.info(f"Rollback-on-fail: {args.rollback_on_fail}")
 
     import psycopg2
 
@@ -228,6 +233,7 @@ def main():
     pg_conn.autocommit = False
 
     summary: Dict[str, str] = {}
+    failed_table: Optional[str] = None
     try:
         for table in TABLE_ORDER:
             if table in SKIP_TABLES or table.startswith(SKIP_PREFIXES):
@@ -261,8 +267,22 @@ def main():
             pg_conn.commit()
             logger.info(f"  → wrote {n} rows to PG")
             summary[table] = f"{n} rows"
-    except Exception:
-        pg_conn.rollback()
+    except Exception as exc:
+        failed_table = table if "table" in locals() else None
+        if args.rollback_on_fail:
+            try:
+                pg_conn.rollback()
+                logger.error(
+                    f"迁移失败：表 {failed_table or '?'} 异常 {type(exc).__name__}: {exc}；"
+                    f"已 rollback，PG 侧不会留半成品数据。"
+                )
+            except Exception as rb_exc:  # noqa: BLE001
+                logger.error(f"rollback 自身失败：{rb_exc}")
+        else:
+            logger.error(
+                f"迁移失败：表 {failed_table or '?'} 异常 {type(exc).__name__}: {exc}；"
+                f"--no-rollback-on-fail 已传，PG 侧可能留半成品事务，需手动清理。"
+            )
         raise
     finally:
         pg_conn.close()

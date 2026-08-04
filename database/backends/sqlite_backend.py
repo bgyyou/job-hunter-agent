@@ -4,6 +4,7 @@ import json
 import sqlite3
 import struct
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from database.backends import BaseBackend
+from database.errors import UserFacingError
 
 
 # v4 P0-模块 3: BGE-small-zh-v1.5 固定 512 维，vec0 虚拟表 schema 对齐这个常量
@@ -381,7 +383,46 @@ class SqliteBackend(BaseBackend):
 
     # ==================== JDs ====================
 
+    def _run_write_with_retry(
+        self,
+        method,
+        *args,
+        max_retries: int = 3,
+        base_delay: float = 0.05,
+        **kwargs,
+    ):
+        """R13b-prep R9-P2: 把"database is locked"自动重试到 max_retries，超限转 UserFacingError。
+
+        SQLite 多写并发时偶发 OperationalError("database is locked")，本来一次就抛；
+        UI 上表现为"我什么都没做错但写入失败"。这里最多重试 3 次（指数退避 base*1, base*2, base*3），
+        仍失败则 raise UserFacingError，让 streamlit 显示"数据写入冲突"+ 重试按钮。
+
+        只对"locked"消息做重试；其他 sqlite 异常（如 UNIQUE 冲突、磁盘满）原样抛。
+        """
+        last_exc: Optional[sqlite3.OperationalError] = None
+        for attempt in range(max_retries):
+            try:
+                return method(*args, **kwargs)
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                last_exc = exc
+                if attempt + 1 >= max_retries:
+                    break
+                delay = base_delay * (attempt + 1)
+                logger.warning(
+                    f"sqlite write locked; retry {attempt + 1}/{max_retries} in {delay:.3f}s: {exc}"
+                )
+                time.sleep(delay)
+        raise UserFacingError(
+            f"数据写入冲突，请稍后重试 (sqlite locked × {max_retries})",
+            retry=True,
+        ) from last_exc
+
     def insert_jd(self, data: Dict, *, user_id: str) -> str:
+        return self._run_write_with_retry(self._insert_jd_impl, data, user_id=user_id)
+
+    def _insert_jd_impl(self, data: Dict, *, user_id: str) -> str:
         jd_id = data.get("id") or str(uuid.uuid4())
         now = datetime.now().isoformat()
         conn = self._get_conn()
